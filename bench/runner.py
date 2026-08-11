@@ -147,11 +147,14 @@ class AnthropicAdapter(ModelAdapter):
 class OpenAICompatAdapter(ModelAdapter):
     """OpenAI-compatible adapter (works with vLLM, LM Studio, any compatible server)."""
 
-    def __init__(self, model: str, base_url: str, api_key: str = "sk-placeholder"):
+    def __init__(self, model: str, base_url: str, api_key: str = "«redacted:sk-…»"):
         self.model = model
-        self.base_url = base_url
+        self.base_url = base_url.rstrip("/")
+        # Strip /v1 suffix if present to avoid double /v1 paths
+        if self.base_url.endswith("/v1"):
+            self.base_url = self.base_url[:-3]
         self.api_key = api_key
-        self._url = f"{base_url}/v1/chat/completions"
+        self._url = f"{self.base_url}/v1/chat/completions"
 
     @property
     def name(self) -> str:
@@ -178,7 +181,8 @@ class OpenAICompatAdapter(ModelAdapter):
         )
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
-        content = data["choices"][0]["message"]["content"]
+        msg = data["choices"][0]["message"]
+        content = msg.get("content") or msg.get("reasoning") or ""
         return {
             "content": content,
             "input_tokens": data.get("usage", {}).get("prompt_tokens", 0),
@@ -274,7 +278,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="IaC/CD Benchmark Runner")
     parser.add_argument("--model", required=True, help="Model identifier")
     parser.add_argument("--model-provider", default="anthropic", choices=["anthropic", "openai-compat"])
-    parser.add_argument("--model-args", nargs="*", default=[], help="Extra args: --base-url for openai-compat")
+    parser.add_argument("--base-url", default=None, help="Base URL for OpenAI-compatible endpoints")
     parser.add_argument("--stacks", default="all", help="Comma-separated stacks or 'all'")
     parser.add_argument("--stack", help="Single stack shortcut")
     parser.add_argument("--tasks", default="all", help="Comma-separated task IDs or 'all'")
@@ -292,11 +296,7 @@ def main() -> None:
     stacks = [args.stack] if args.stack else (all_stacks if args.stacks == "all" else args.stacks.split(","))
 
     # Build adapter
-    base_url: str | None = None
-    model_args: list[str] = args.model_args or []
-    for i, a in enumerate(model_args):
-        if a == "--base-url" and i + 1 < len(model_args):
-            base_url = model_args[i + 1]
+    base_url: str | None = args.base_url
 
     api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY") or "sk-placeholder"
 
