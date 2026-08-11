@@ -1,0 +1,32 @@
+# SEED REPO: Crossplane with incorrect fromFieldPath + missing ReadinessChecks
+# Defect 1: incorrect fromFieldPath in Composition patch
+# Defect 2: missing ReadinessChecks on RDS resource
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xawswebservices.app.example.com
+spec:
+  group: app.example.com
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                instanceClass:
+                  type: string
+                  default: db.t3.medium
+                deletionProtection:
+                  type: boolean
+                  default: true
+              required:
+                - instanceClass
+  claimNames:
+    kind: AWSWebService
+    plural: awswebservices

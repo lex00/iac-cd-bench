@@ -1,0 +1,36 @@
+# SEED REPO: Crossplane Composition with defects
+# Defect 1: wrong fromFieldPath (spec.parameters.storageClass should be spec.parameters.instanceClass)
+# Defect 2: missing ReadinessChecks on RDS instance
+
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: aws-web-service
+  labels:
+    crossplane.io/xrd: xawswebservices.app.example.com
+spec:
+  group: app.example.com
+  mode: Pipeline
+  resources:
+    - name: rds-instance
+      base:
+        apiVersion: database.aws.upbound.io/v1beta1
+        kind: Instance
+        spec:
+          forProvider:
+            region: us-east-1
+            engine: postgres
+            engineVersion: "16.1"
+            allocatedStorage: 20
+          providerConfigRef:
+            name: default
+      patches:
+        # DEFECT: wrong fromFieldPath — references non-existent storageClass
+        - fromFieldPath: spec.parameters.storageClass
+          toFieldPath: spec.forProvider.instanceClass
+          transforms:
+            - type: String
+              string:
+                type: Format
+                format: "db.t3.%s"
+      readiness: {}  # DEFECT: missing ReadinessChecks — Composition never reaches Ready
