@@ -1,3 +1,0 @@
-[console_scripts]
-bench-report = bench.report:main
-bench-run = bench.runner:main
