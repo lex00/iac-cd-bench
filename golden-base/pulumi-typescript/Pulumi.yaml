@@ -1,0 +1,3 @@
+name: iac-cd-bench-pulumi-typescript
+runtime: nodejs
+description: Golden reference implementation for IaC/CD benchmark - TypeScript

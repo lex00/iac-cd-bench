@@ -1,0 +1,92 @@
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: User
+metadata:
+  name: myapp-service-account
+  namespace: infra
+spec:
+  forProvider:
+    path: /
+    tags:
+      Name: myapp-service-account
+      Environment: dev
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: AccessKey
+metadata:
+  name: myapp-service-account-key
+  namespace: infra
+spec:
+  forProvider:
+    userName: myapp-service-account
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Role
+metadata:
+  name: myapp-assumed-role
+  namespace: infra
+spec:
+  forProvider:
+    assumeRolePolicyDocument: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Principal": {
+              "AWS": "arn:aws:iam::123456789012:root"
+            },
+            "Action": "sts:AssumeRole"
+          }
+        ]
+      }
+    path: /
+    maxSessionDuration: 3600
+    tags:
+      Name: myapp-assumed-role
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: Policy
+metadata:
+  name: myapp-service-policy
+  namespace: infra
+spec:
+  forProvider:
+    policyDocument: |
+      {
+        "Version": "2012-10-17",
+        "Statement": [
+          {
+            "Effect": "Allow",
+            "Action": [
+              "s3:GetObject",
+              "s3:PutObject"
+            ],
+            "Resource": "arn:aws:s3:::myapp-assets-dev/*"
+          }
+        ]
+      }
+    policyName: myapp-service-policy
+  providerConfigRef:
+    name: default
+---
+apiVersion: iam.aws.upbound.io/v1beta1
+kind: UserPolicyAttachment
+metadata:
+  name: myapp-service-policy-attach
+  namespace: infra
+spec:
+  forProvider:
+    policyArn:
+      name: myapp-service-policy
+      namespace: infra
+      from:
+        fieldPath: metadata.annotations.upbound.io.policy-arn
+    userName: myapp-service-account
+  providerConfigRef:
+    name: default

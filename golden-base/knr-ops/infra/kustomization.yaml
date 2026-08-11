@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - s3/bucket.yaml
+  - rds/instance.yaml
+  - iam/access.yaml
+  - app/deployment.yaml
+secretGenerator:
+  - name: db-password-dev
+    literals:
+      - password=dev-db-password
+    type: Opaque

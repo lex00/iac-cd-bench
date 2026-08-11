@@ -1,0 +1,33 @@
+apiVersion: s3.aws.upbound.io/v1beta1
+kind: Bucket
+metadata:
+  name: myapp-assets-dev
+  namespace: infra
+spec:
+  forProvider:
+    region: us-east-1
+    versioningConfiguration:
+      status: Enabled
+    serverSideEncryptionConfiguration:
+      rules:
+        - applyServerSideEncryptionByDefault:
+            sseAlgorithm: AES256
+    objectLockEnabled: false
+  providerConfigRef:
+    name: default
+---
+apiVersion: s3.aws.upbound.io/v1beta1
+kind: BucketPublicAccessBlock
+metadata:
+  name: myapp-assets-dev-block
+  namespace: infra
+spec:
+  forProvider:
+    region: us-east-1
+    bucket: myapp-assets-dev
+    blockPublicAcls: true
+    blockPublicPolicy: true
+    ignorePublicAcls: true
+    restrictPublicBuckets: true
+  providerConfigRef:
+    name: default

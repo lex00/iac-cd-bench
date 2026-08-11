@@ -1,0 +1,45 @@
+apiVersion: rds.aws.upbound.io/v1beta1
+kind: Instance
+metadata:
+  name: myapp-dev-db
+  namespace: infra
+spec:
+  forProvider:
+    region: us-east-1
+    allocatedStorage: 20
+    engine: postgres
+    engineVersion: "16"
+    instanceClass: db.t3.micro
+    dbName: appdb
+    dbUsername: app-user
+    dbPasswordSecretRef:
+      name: db-password-dev
+      namespace: infra
+      key: password
+    deletionProtection: true
+    backupRetentionPeriod: 7
+    backupWindow: "03:00-04:00"
+    multiAz: false
+    publiclyAccessible: false
+    storageEncrypted: true
+    vpcSecurityGroupIds:
+      - sg-example
+    dbSubnetGroupName: myapp-dev-subnet
+    skipFinalSnapshot: true
+  providerConfigRef:
+    name: default
+---
+apiVersion: rds.aws.upbound.io/v1beta1
+kind: SubnetGroup
+metadata:
+  name: myapp-dev-subnet
+  namespace: infra
+spec:
+  forProvider:
+    region: us-east-1
+    description: Dev RDS subnet group
+    subnetIds:
+      - subnet-dev-1
+      - subnet-dev-2
+  providerConfigRef:
+    name: default

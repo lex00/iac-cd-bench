@@ -1,0 +1,13 @@
+config:
+  aws:region: us-east-1
+  app:env: prod
+  app:instanceClass: db.t3.large
+  app:instanceCount: "4"
+  app:dbPassword:
+    value: prod-db-password
+    secure: true
+  app:dbUser: app-user
+  app:dbName: appdb
+  app:bucketName: myapp-assets-prod
+  app:replicationTargetBucket: arn:aws:s3:::myapp-assets-replica
+  app:oidcProviderArn: arn:aws:iam::123456789012:oidc-provider/eks

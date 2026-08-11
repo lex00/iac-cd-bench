@@ -1,0 +1,6 @@
+# SOPS configuration
+creation_rules:
+  - path: '*.yaml'
+    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg
+  - path: '*.yml'
+    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg

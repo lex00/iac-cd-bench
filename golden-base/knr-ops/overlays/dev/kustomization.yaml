@@ -1,0 +1,7 @@
+# Dev overlay
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../clusters/kustomization.yaml
+  - ../../infra/kustomization.yaml
+namePrefix: dev-

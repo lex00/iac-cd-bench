@@ -1,0 +1,13 @@
+{
+  "name": "iac-cd-bench-pulumi-typescript",
+  "version": "1.0.0",
+  "description": "Golden reference implementation for IaC/CD benchmark - TypeScript",
+  "main": "index.ts",
+  "dependencies": {
+    "@pulumi/pulumi": "^3.0.0",
+    "@pulumi/aws": "^5.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^18.0.0"
+  }
+}

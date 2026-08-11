@@ -1,0 +1,48 @@
+# Prod overlay
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../clusters/kustomization.yaml
+  - ../../infra/kustomization.yaml
+namePrefix: prod-
+patches:
+  - target:
+      kind: KubeadmControlPlane
+      name: myapp-dev
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 4
+  - target:
+      kind: AWSMachineTemplate
+      name: myapp-dev-workers
+    patch: |
+      - op: replace
+        path: /spec/template/spec/instanceType
+        value: t3.large
+  - target:
+      kind: Instance
+      group: rds.aws.upbound.io
+      name: myapp-dev-db
+    patch: |
+      - op: replace
+        path: /spec/forProvider/instanceClass
+        value: db.t3.medium
+      - op: replace
+        path: /spec/forProvider/multiAz
+        value: true
+  - target:
+      kind: Bucket
+      group: s3.aws.upbound.io
+      name: myapp-assets-dev
+    patch: |
+      - op: replace
+        path: /spec/forProvider/versioningConfiguration/status
+        value: Enabled
+  - target:
+      kind: MachineDeployment
+      name: myapp-dev-workers
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 4

@@ -1,0 +1,11 @@
+config:
+  aws:region: us-east-1
+  app:env: dev
+  app:instanceClass: db.t3.medium
+  app:instanceCount: "2"
+  app:dbPassword:
+    value: dev-db-password
+    secure: true
+  app:dbUser: app-user
+  app:dbName: appdb
+  app:bucketName: myapp-assets-dev
