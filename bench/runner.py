@@ -130,6 +130,8 @@ class AnthropicAdapter(ModelAdapter):
             },
             timeout=120,
         )
+        if not resp.is_success:
+            log.error("Anthropic API error %s: %s", resp.status_code, resp.text[:1000])
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         content = "".join(
@@ -241,6 +243,7 @@ def run_task(
             # Write model output to workspace for validation
             output_file = workspace / "model_output.md"
             output_file.write_text(completion["content"])
+            result["content"] = completion["content"]
 
             # Stage 1: lint
             result["stages"]["lint"] = lint.run_lint(workspace, stack)
@@ -329,7 +332,7 @@ def main() -> None:
 
             # Write results
             model_name = adapter.name.replace("/", "-")
-            result_dir = RESULTS_DIR / model_name / stack
+            result_dir = RESULTS_DIR / model_name / stack / args.condition
             result_dir.mkdir(parents=True, exist_ok=True)
             for r in results:
                 out_path = result_dir / f"{task_dir.name}_run{r['run']}.json"

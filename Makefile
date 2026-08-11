@@ -1,24 +1,24 @@
 # IaC/CD Understanding Benchmark
-# Usage: make run MODEL=claude-sonnet-4-20250514
+# Usage: make run MODEL=claude-sonnet-4-5-20250929
 
 SHELL := bash
-VENV := .venv/bin/activate
+PYTHON := .venv/bin/python3
 RESULTS := results
 
-.PHONY: deps test run report run-e2e
+.PHONY: deps test run report run-e2e run-cold compare
 
 deps:
-	($(VENV) && pip install -e . -e ".[dev]")
+	($(PYTHON) -m pip install -e . -e ".[dev]")
 
 test:
-	($(VENV) && python3 -m pytest tests/ -v)
+	($(PYTHON) -m pytest tests/ -v)
 
 # Run benchmark for a single model
-# Make run MODEL=claude-sonnet-4-20250514 STACK=knr-ops
-# Make run MODEL=claude-sonnet-4-20250514 STACK=all TASK=T2-generate
-# Make run MODEL=claude-sonnet-4-20250514 PROVIDER=openai-compat BASE_URL=http://localhost:8000
+# Make run MODEL=claude-sonnet-4-5-20250929 STACK=knr-ops
+# Make run MODEL=claude-sonnet-4-5-20250929 STACK=all TASK=T2-generate
+# Make run MODEL=claude-sonnet-4-5-20250929 PROVIDER=openai-compat BASE_URL=http://localhost:8000
 run:
-	($(VENV) && python3 -m bench.runner \
+	($(PYTHON) -m bench.runner \
 		--model $(MODEL) \
 		--model-provider $(or $(PROVIDER),anthropic) \
 		$(if $(BASE_URL),--model-args --base-url $(BASE_URL)) \
@@ -26,11 +26,12 @@ run:
 		$(if $(TASK),--task $(TASK)) \
 		$(if $(TASKS),--tasks $(TASKS)) \
 		-k $(or $(K),3) \
-		--condition $(or $(CONDITION),warm))
+		--condition $(or $(CONDITION),warm) \
+		$(if $(API_KEY),--api-key $(API_KEY)))
 
 # Run with e2e validation (requires kind + docker)
 run-e2e:
-	($(VENV) && python3 -m bench.runner \
+	($(PYTHON) -m bench.runner \
 		--model $(MODEL) \
 		--model-provider $(or $(PROVIDER),anthropic) \
 		$(if $(BASE_URL),--model-args --base-url $(BASE_URL)) \
@@ -38,22 +39,24 @@ run-e2e:
 		$(if $(TASK),--task $(TASK)) \
 		-k $(or $(K),3) \
 		--condition $(or $(CONDITION),warm) \
-		--e2e)
+		--e2e \
+		$(if $(API_KEY),--api-key $(API_KEY)))
 
 # Generate markdown report from results
 report:
-	($(VENV) && python3 -m bench.report $(if $(OUTPUT),--output $(OUTPUT)))
+	($(PYTHON) -m bench.report $(if $(OUTPUT),--output $(OUTPUT)))
 
 # Generate comparative report across models
 compare:
-	($(VENV) && python3 -m bench.report --compare $(RESULTS)/*)
+	($(PYTHON) -m bench.report --compare $(RESULTS)/*)
 
-# Run cold condition (no docs injected) — for knr-ops documentation dependency tests
+# Run cold condition (no docs injected)
 run-cold:
-	($(VENV) && python3 -m bench.runner \
+	($(PYTHON) -m bench.runner \
 		--model $(MODEL) \
 		--model-provider $(or $(PROVIDER),anthropic) \
 		$(if $(BASE_URL),--model-args --base-url $(BASE_URL)) \
 		$(if $(STACK),--stack $(STACK)) \
 		-k $(or $(K),3) \
-		--condition cold)
+		--condition cold \
+		$(if $(API_KEY),--api-key $(API_KEY)))
