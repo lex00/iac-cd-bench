@@ -2,13 +2,23 @@
 name = "iac-cd-bench"
 version = "0.1.0"
 requires-python = ">=3.11"
-
-[dependency-groups]
-dev = [
+dependencies = [
     "pydantic>=2.0",
     "pyyaml>=6.0",
     "jsonschema>=4.0",
     "httpx>=0.28",
+]
+
+[project.optional-dependencies]
+dev = [
     "pytest>=8.0",
     "pytest-json-report>=1.0",
+    "mypy>=1.0",
 ]
+
+[project.scripts]
+bench-run = "bench.runner:main"
+bench-report = "bench.report:main"
+
+[tool.setuptools.packages]
+find = {include = ["bench", "bench.*"]}
