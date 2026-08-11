@@ -1,0 +1,21 @@
+stack: pulumi-typescript
+archetype: generate
+id: "T2-generate"
+title: "Create ComponentResource wrapping service + bucket + DB"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - tsc --noEmit
+      - eslint
+  static:
+    enabled: true
+    tools:
+      - pulumi preview
+  semantic:
+    enabled: true
+    assertion_count: 4
+  e2e:
+    enabled: false

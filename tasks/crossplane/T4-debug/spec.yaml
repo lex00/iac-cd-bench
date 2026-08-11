@@ -1,0 +1,23 @@
+stack: crossplane
+archetype: debug
+id: "T4-debug"
+title: "Fix Composition never Ready"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - kubeconform
+  static:
+    enabled: true
+    tools:
+      - crossplane beta render
+  semantic:
+    enabled: true
+    assertion_count: 2
+  e2e:
+    enabled: false
+
+defect:
+  description: "Composition never Ready: incorrect fromFieldPath, missing ReadinessChecks"

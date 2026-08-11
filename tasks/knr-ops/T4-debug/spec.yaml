@@ -1,0 +1,25 @@
+stack: knr-ops
+archetype: debug
+id: "T4-debug"
+title: "Fix SOPS secret referencing wrong age key"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - yq
+      - kubeconform
+  static:
+    enabled: true
+    tools:
+      - kustomize build
+  semantic:
+    enabled: true
+    assertion_count: 2
+  e2e:
+    enabled: false
+
+defect:
+  description: "SOPS secret references wrong age key"
+  fix: ".sops.yaml has incorrect age key; kustomize patch targets renamed resource"

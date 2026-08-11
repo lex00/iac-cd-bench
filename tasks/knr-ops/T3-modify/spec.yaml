@@ -1,0 +1,21 @@
+stack: knr-ops
+archetype: modify
+id: "T3-modify"
+title: "Add prod overlay changes without touching dev"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - yq
+      - kubeconform
+  static:
+    enabled: true
+    tools:
+      - kustomize build
+  semantic:
+    enabled: true
+    assertion_count: 4
+  e2e:
+    enabled: false

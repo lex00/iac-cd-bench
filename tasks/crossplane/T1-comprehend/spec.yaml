@@ -1,0 +1,27 @@
+stack: crossplane
+archetype: comprehend
+id: "T1-comprehend"
+title: "Trace Composition reconciliation"
+answer_format: rubric
+
+stages:
+  lint:
+    enabled: false
+  static:
+    enabled: false
+  semantic:
+    enabled: false
+  e2e:
+    enabled: false
+
+rubric:
+  - criterion: "Correctly traces XRD → Composition → managed resource path"
+    weight: 2
+  - criterion: "Identifies that storageGB change triggers patch → RDS update"
+    weight: 2
+  - criterion: "States that RDS instanceClass change is in-place update"
+    weight: 1
+  - criterion: "Explains ReadinessChecks gate the reconciliation"
+    weight: 2
+  - criterion: "Describes Crossplane's continuous reconciliation loop"
+    weight: 1

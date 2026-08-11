@@ -1,0 +1,22 @@
+stack: terraform
+archetype: generate
+id: "T2-generate"
+title: "Create Terraform module for bucket + RDS"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - terraform fmt -check
+      - tflint
+      - checkov
+  static:
+    enabled: true
+    tools:
+      - terraform validate
+  semantic:
+    enabled: true
+    assertion_count: 4
+  e2e:
+    enabled: false

@@ -1,0 +1,20 @@
+stack: crossplane
+archetype: modify
+id: "T3-modify"
+title: "Add second region via provider config"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - kubeconform
+  static:
+    enabled: true
+    tools:
+      - crossplane beta render
+  semantic:
+    enabled: true
+    assertion_count: 3
+  e2e:
+    enabled: false

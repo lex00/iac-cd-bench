@@ -1,0 +1,27 @@
+stack: knr-ops
+archetype: comprehend
+id: "T1-comprehend"
+title: "Predict delivery behavior from repo slice"
+answer_format: rubric
+
+stages:
+  lint:
+    enabled: false
+  static:
+    enabled: false
+  semantic:
+    enabled: false
+  e2e:
+    enabled: false
+
+rubric:
+  - criterion: "Identifies that Flux reconciles kustomizations on Git merge"
+    weight: 1
+  - criterion: "Correctly predicts reconciliation order (dev before prod due to dependsOn)"
+    weight: 2
+  - criterion: "Identifies that RDS instanceClass change is in-place update, not recreate"
+    weight: 2
+  - criterion: "States that ACK operator deletes S3 bucket when manifest is removed (pruning)"
+    weight: 2
+  - criterion: "Explains that prod overlay patches are scoped to prod kustomization only"
+    weight: 1

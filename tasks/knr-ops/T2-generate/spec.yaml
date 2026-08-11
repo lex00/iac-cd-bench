@@ -1,0 +1,22 @@
+stack: knr-ops
+archetype: generate
+id: "T2-generate"
+title: "Add new ACK-managed S3 bucket with IRSA"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - yq
+      - kubeconform
+  static:
+    enabled: true
+    tools:
+      - kustomize build
+      - flux build kustomization
+  semantic:
+    enabled: true
+    assertion_count: 6
+  e2e:
+    enabled: false

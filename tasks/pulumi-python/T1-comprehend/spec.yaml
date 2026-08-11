@@ -1,0 +1,25 @@
+stack: pulumi-python
+archetype: comprehend
+id: "T1-comprehend"
+title: "Predict Pulumi preview behavior"
+answer_format: rubric
+
+stages:
+  lint:
+    enabled: false
+  static:
+    enabled: false
+  semantic:
+    enabled: false
+  e2e:
+    enabled: false
+
+rubric:
+  - criterion: "Identifies that instanceClass change triggers RDS replacement"
+    weight: 2
+  - criterion: "Explains that --target only applies to specified resources"
+    weight: 2
+  - criterion: "States that secrets are encrypted in state and masked in outputs"
+    weight: 1
+  - criterion: "Describes Pulumi's preview lifecycle"
+    weight: 2

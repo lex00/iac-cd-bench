@@ -1,0 +1,27 @@
+stack: knr-ops
+archetype: review
+id: "T5-review"
+title: "Review PR diff for security issues"
+answer_format: rubric
+
+stages:
+  lint:
+    enabled: false
+  static:
+    enabled: false
+  semantic:
+    enabled: false
+  e2e:
+    enabled: false
+
+rubric:
+  - criterion: "Identifies plaintext password in deployment"
+    weight: 3
+  - criterion: "Identifies public S3 bucket access"
+    weight: 3
+  - criterion: "Identifies missing resource limits"
+    weight: 1
+  - criterion: "Ranks issues by severity correctly"
+    weight: 2
+  - criterion: "Provides specific remediation steps"
+    weight: 1

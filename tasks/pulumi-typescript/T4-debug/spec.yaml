@@ -1,0 +1,24 @@
+stack: pulumi-typescript
+archetype: debug
+id: "T4-debug"
+title: "Fix preview crash: async misuse + wrong pulumi.output() wrapping"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - tsc --noEmit
+      - eslint
+  static:
+    enabled: true
+    tools:
+      - pulumi preview
+  semantic:
+    enabled: true
+    assertion_count: 2
+  e2e:
+    enabled: false
+
+defect:
+  description: "Async misuse + wrong pulumi.output() wrapping"

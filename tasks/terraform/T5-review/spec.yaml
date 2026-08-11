@@ -1,0 +1,25 @@
+stack: terraform
+archetype: review
+id: "T5-review"
+title: "Review Terraform plan for hidden destructive changes"
+answer_format: rubric
+
+stages:
+  lint:
+    enabled: false
+  static:
+    enabled: false
+  semantic:
+    enabled: false
+  e2e:
+    enabled: false
+
+rubric:
+  - criterion: "Identifies RDS destroy + create as data loss risk"
+    weight: 3
+  - criterion: "Identifies 0.0.0.0/0 ingress as security risk"
+    weight: 3
+  - criterion: "Ranks issues by severity correctly"
+    weight: 2
+  - criterion: "Provides specific remediation steps"
+    weight: 1

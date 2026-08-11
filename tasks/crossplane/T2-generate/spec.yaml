@@ -1,0 +1,20 @@
+stack: crossplane
+archetype: generate
+id: "T2-generate"
+title: "Author XRD + Composition for versioned bucket"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - kubeconform
+  static:
+    enabled: true
+    tools:
+      - crossplane beta render
+  semantic:
+    enabled: true
+    assertion_count: 4
+  e2e:
+    enabled: false

@@ -1,0 +1,21 @@
+stack: pulumi-python
+archetype: modify
+id: "T3-modify"
+title: "Add auto-scaling policy without replacing existing resources"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - ruff check
+      - mypy --strict
+  static:
+    enabled: true
+    tools:
+      - pulumi preview
+  semantic:
+    enabled: true
+    assertion_count: 3
+  e2e:
+    enabled: false

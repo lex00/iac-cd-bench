@@ -1,0 +1,27 @@
+stack: pulumi-typescript
+archetype: review
+id: "T5-review"
+title: "Review Pulumi preview JSON for security issues"
+answer_format: rubric
+
+stages:
+  lint:
+    enabled: false
+  static:
+    enabled: false
+  semantic:
+    enabled: false
+  e2e:
+    enabled: false
+
+rubric:
+  - criterion: "Identifies secret in plaintext outputs as security risk"
+    weight: 3
+  - criterion: "Identifies stateful resource replacement as data loss risk"
+    weight: 3
+  - criterion: "Identifies missing protect flag as destructive risk"
+    weight: 2
+  - criterion: "Ranks issues by severity correctly"
+    weight: 2
+  - criterion: "Provides specific remediation steps"
+    weight: 1

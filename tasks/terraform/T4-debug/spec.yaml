@@ -1,0 +1,24 @@
+stack: terraform
+archetype: debug
+id: "T4-debug"
+title: "Fix circular dependency + count/for_each error"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - terraform fmt -check
+      - tflint
+  static:
+    enabled: true
+    tools:
+      - terraform validate
+  semantic:
+    enabled: true
+    assertion_count: 2
+  e2e:
+    enabled: false
+
+defect:
+  description: "Circular dependency + count vs for_each type error"

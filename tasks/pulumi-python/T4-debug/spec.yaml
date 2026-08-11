@@ -1,0 +1,24 @@
+stack: pulumi-python
+archetype: debug
+id: "T4-debug"
+title: "Fix stack failure: secret read as plain string, .apply() misuse"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - ruff check
+      - mypy --strict
+  static:
+    enabled: true
+    tools:
+      - pulumi preview
+  semantic:
+    enabled: true
+    assertion_count: 2
+  e2e:
+    enabled: false
+
+defect:
+  description: "Secret read as plain string, .apply() result used where Output expected"

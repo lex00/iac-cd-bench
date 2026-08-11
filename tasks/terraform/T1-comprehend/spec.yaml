@@ -1,0 +1,25 @@
+stack: terraform
+archetype: comprehend
+id: "T1-comprehend"
+title: "Predict Terraform plan behavior"
+answer_format: rubric
+
+stages:
+  lint:
+    enabled: false
+  static:
+    enabled: false
+  semantic:
+    enabled: false
+  e2e:
+    enabled: false
+
+rubric:
+  - criterion: "Identifies that state file deletion loses all tracked resources"
+    weight: 3
+  - criterion: "Correctly predicts plan shows instanceClass change"
+    weight: 2
+  - criterion: "Explains that RDS instanceClass change may trigger recreate"
+    weight: 1
+  - criterion: "Distinguishes state (current reality) from config (desired state)"
+    weight: 2

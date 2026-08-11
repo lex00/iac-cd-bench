@@ -1,0 +1,22 @@
+stack: terraform
+archetype: modify
+id: "T3-modify"
+title: "Refactor duplicated dev/prod blocks into module with for_each"
+answer_format: code
+
+stages:
+  lint:
+    enabled: true
+    tools:
+      - terraform fmt -check
+      - tflint
+  static:
+    enabled: true
+    tools:
+      - terraform validate
+      - terraform plan
+  semantic:
+    enabled: true
+    assertion_count: 3
+  e2e:
+    enabled: false
