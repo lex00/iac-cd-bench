@@ -1,0 +1,7 @@
+# SEED REPO: .sops.yaml with WRONG age key (defect)
+# The correct age key is in age-key.txt but this file references a different key
+creation_rules:
+  - path: '*.yaml'
+    age: age1wr0ngk3y1234567890abcdefghijklmnop
+  - path: '*.yml'
+    age: age1wr0ngk3y1234567890abcdefghijklmnop
