@@ -1,0 +1,17 @@
+# Crossplane Functions for web service composition
+# function-patch-and-transform: Patches and transforms XR fields into composed resources
+apiVersion: meta.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-patch-and-transform
+spec:
+  package: xpkg.upbound.io/crossplane/function-patch-and-transform:v0.2.0
+
+---
+# function-automated-edits: Auto-manages metadata labels and annotations
+apiVersion: meta.crossplane.io/v1
+kind: Function
+metadata:
+  name: function-automated-edits
+spec:
+  package: xpkg.upbound.io/crossplane/function-automated-edits:v0.5.0

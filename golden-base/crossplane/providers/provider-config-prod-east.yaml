@@ -1,0 +1,14 @@
+apiVersion: aws.upbound.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: prod-us-east-1
+  labels:
+    environment: prod
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: aws-prod-credentials
+      key: creds
+  region: us-east-1

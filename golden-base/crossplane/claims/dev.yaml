@@ -1,0 +1,40 @@
+apiVersion: composite.example.com/v1
+kind: XAWSWebService
+metadata:
+  name: web-service-dev
+  labels:
+    environment: dev
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: aws
+      environment: "*"
+  environment: dev
+  region: us-east-1
+  providerConfigName: dev-us-east-1
+
+  bucket:
+    name: web-assets
+    enableVersioning: true
+    encryptionKmsKeyArn: ""
+
+  database:
+    instanceClass: db.t3.micro
+    allocatedStorage: 20
+    multiAZ: false
+    backupRetentionDays: 7
+    deletionProtection: true
+    engineVersion: "16"
+
+  iam:
+    roleName: web-service-dev-role
+    trustPolicyType: user
+
+  vpc:
+    vpcId: vpc-dev-001
+    subnetIds:
+      - subnet-dev-001
+      - subnet-dev-002
+
+  secret:
+    kmsKeyArn: ""

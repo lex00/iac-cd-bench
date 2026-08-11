@@ -1,0 +1,44 @@
+apiVersion: composite.example.com/v1
+kind: XAWSWebService
+metadata:
+  name: web-service-prod
+  labels:
+    environment: prod
+spec:
+  compositionSelector:
+    matchLabels:
+      provider: aws
+      environment: "*"
+  environment: prod
+  region: us-east-1
+  providerConfigName: prod-us-east-1
+  secondaryProviderConfigName: prod-us-west-2
+
+  bucket:
+    name: web-assets
+    enableVersioning: true
+    encryptionKmsKeyArn: ""
+    replicationDestinationRegion: us-west-2
+
+  database:
+    instanceClass: db.t3.medium
+    allocatedStorage: 100
+    multiAZ: true
+    backupRetentionDays: 14
+    deletionProtection: true
+    engineVersion: "16"
+
+  iam:
+    roleName: web-service-prod-role
+    trustPolicyType: oidc
+    oidcProviderArn: arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE
+
+  vpc:
+    vpcId: vpc-prod-001
+    subnetIds:
+      - subnet-prod-001
+      - subnet-prod-002
+      - subnet-prod-003
+
+  secret:
+    kmsKeyArn: ""

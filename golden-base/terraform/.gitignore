@@ -1,0 +1,7 @@
+# SOPS decrypted secrets - never commit these
+*.auto.tfvars
+*.auto.tfvars.json
+*.tfstate
+*.tfstate.backup
+.terraform/
+.terraform.lock.hcl

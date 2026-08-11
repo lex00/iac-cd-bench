@@ -1,0 +1,135 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xawsservicestools.composite.example.com
+spec:
+  group: composite.example.com
+  names:
+    kind: XAWSWebService
+    listKind: XAWSWebServiceList
+    plural: xawsservicestools
+    singular: xawsservicestool
+  versions:
+    - name: v1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                environment:
+                  description: Deployment environment (dev or prod).
+                  type: string
+                  enum:
+                    - dev
+                    - prod
+                region:
+                  description: Primary AWS region.
+                  type: string
+                  default: us-east-1
+                providerConfigName:
+                  description: ProviderConfig for the primary region.
+                  type: string
+                secondaryProviderConfigName:
+                  description: ProviderConfig for the secondary region (prod replication).
+                  type: string
+                bucket:
+                  description: S3 bucket configuration.
+                  type: object
+                  properties:
+                    name:
+                      description: Bucket name prefix (environment is appended).
+                      type: string
+                    enableVersioning:
+                      description: Enable versioning on the bucket.
+                      type: boolean
+                      default: true
+                    encryptionKmsKeyArn:
+                      description: KMS key ARN for server-side encryption.
+                      type: string
+                    replicationDestinationRegion:
+                      description: Destination region for cross-region replication (prod only).
+                      type: string
+                database:
+                  description: RDS PostgreSQL instance configuration.
+                  type: object
+                  properties:
+                    instanceClass:
+                      description: DB instance class.
+                      type: string
+                    allocatedStorage:
+                      description: Allocated storage in GB.
+                      type: integer
+                      default: 20
+                    multiAZ:
+                      description: Multi-AZ deployment.
+                      type: boolean
+                      default: false
+                    backupRetentionDays:
+                      description: Backup retention period in days.
+                      type: integer
+                      default: 7
+                    deletionProtection:
+                      description: Deletion protection flag.
+                      type: boolean
+                      default: true
+                    engineVersion:
+                      description: PostgreSQL engine version.
+                      type: string
+                      default: "16"
+                iam:
+                  description: IAM role and user configuration.
+                  type: object
+                  properties:
+                    roleName:
+                      description: IAM role name.
+                      type: string
+                    trustPolicyType:
+                      description: Trust policy type (user or oidc).
+                      type: string
+                      default: user
+                      enum:
+                        - user
+                        - oidc
+                    oidcProviderArn:
+                      description: OIDC provider ARN for trust policy (prod).
+                      type: string
+                vpc:
+                  description: VPC/subnet configuration for RDS.
+                  type: object
+                  properties:
+                    vpcId:
+                      description: VPC ID for RDS placement.
+                      type: string
+                    subnetIds:
+                      description: Subnet IDs for DB subnet group.
+                      type: array
+                      items:
+                        type: string
+                secret:
+                  description: Secret management configuration.
+                  type: object
+                  properties:
+                    kmsKeyArn:
+                      description: KMS key ARN for encrypting secrets.
+                      type: string
+              required:
+                - environment
+            status:
+              type: object
+              properties:
+                bucketArn:
+                  description: ARN of the managed S3 bucket.
+                  type: string
+                databaseEndpoint:
+                  description: RDS instance endpoint.
+                  type: string
+                databasePort:
+                  description: RDS instance port.
+                  type: integer
+                iamRoleArn:
+                  description: ARN of the managed IAM role.
+                  type: string
