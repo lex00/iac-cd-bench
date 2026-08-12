@@ -11,6 +11,7 @@ import argparse
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +26,89 @@ TASKS_DIR = ROOT / "tasks"
 RESULTS_DIR = ROOT / "results"
 
 log = logging.getLogger(__name__)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Code block extractor — writes model-generated code blocks as files
+# ──────────────────────────────────────────────────────────────────────────
+
+def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -> list[Path]:
+    """Extract fenced code blocks from model output and write them as files."""
+    # Find all backticked file paths and fenced code blocks
+    path_re = re.compile(r'`([^`\s]+(?:\.(yaml|yml|py|ts|tf|json|sh))[^`\s]*)`')
+    block_re = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
+
+    path_matches = [(m.start(), m.group(1)) for m in path_re.finditer(content)]
+    block_matches = [(m.start(), m.group(1), m.group(2).strip()) for m in block_re.finditer(content)]
+
+    if not block_matches:
+        return []
+
+    # Only extract YAML/JSON/Python/TypeScript/HCL blocks (skip shell, text, markdown)
+    extract_langs = {"yaml", "yml", "json", "python", "py", "typescript", "ts", "hcl", "terraform"}
+    # For K8s stacks (knr-ops, crossplane), only extract manifests that look like K8s resources
+    k8s_stacks = {"knr-ops", "crossplane"}
+    # For terraform, only extract .tf files
+    tf_stacks = {"terraform"}
+
+    written: list[Path] = []
+    used_blocks: set[int] = set()
+
+    # Match each path with its nearest subsequent code block
+    for path_pos, path_str in path_matches:
+        # Skip dotfiles and non-standard extensions
+        if path_str.startswith(".") or path_str.endswith(".gz"):
+            continue
+
+        for block_pos, lang, code in block_matches:
+            if block_pos in used_blocks:
+                continue
+            # Only extract blocks with recognized language tags
+            if lang not in extract_langs and lang not in ("", "yaml"):
+                continue
+            # For K8s stacks, skip non-K8s manifests (must have apiVersion)
+            if stack in k8s_stacks and lang in ("yaml", "yml"):
+                lines = [l for l in code.split("\n") if not l.strip().startswith("#")]
+                clean_code = "\n".join(lines)
+                if "apiVersion" not in clean_code:
+                    continue
+            # For terraform, skip non-HCL blocks
+            if stack in tf_stacks and lang not in ("hcl", "terraform", ""):
+                continue
+            if block_pos > path_pos:
+                dest = workspace / path_str
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.write_text(code + "\n")
+                written.append(dest)
+                used_blocks.add(block_pos)
+                log.info("Wrote extracted file: %s (%d chars)", path_str, len(code))
+                break
+
+    # Write any remaining unused blocks with generic names (only recognized langs)
+    for block_pos, lang, code in block_matches:
+        if block_pos not in used_blocks:
+            if lang not in extract_langs and lang not in ("", "yaml"):
+                continue
+            # For K8s stacks, skip non-K8s manifests
+            if stack in k8s_stacks and lang in ("yaml", "yml"):
+                clean_lines = [l for l in code.split("\n") if not l.strip().startswith("#")]
+                if "apiVersion" not in "\n".join(clean_lines):
+                    continue
+            # For K8s stacks, don't write non-YAML files (also skip empty-lang blocks)
+            if stack in k8s_stacks and lang not in ("yaml", "yml"):
+                continue
+            # For terraform, don't write non-HCL files
+            if stack in tf_stacks and lang not in ("hcl", "terraform", ""):
+                continue
+            ext = {"yaml": ".yaml", "yml": ".yaml", "json": ".json", "python": ".py",
+                   "py": ".py", "typescript": ".ts", "ts": ".ts", "hcl": ".tf",
+                   "bash": ".sh", "sh": ".sh"}.get(lang, ".txt")
+            name = f"generated_{len([p for p in written if str(p).endswith(ext)])}{ext}"
+            dest = workspace / name
+            dest.write_text(code + "\n")
+            written.append(dest)
+
+    return written
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -125,7 +209,6 @@ class AnthropicAdapter(ModelAdapter):
             json={
                 "model": self.model,
                 "max_tokens": 8192,
-                "temperature": 0,
                 "messages": messages,
             },
             timeout=120,
@@ -248,6 +331,11 @@ def run_task(
             output_file = workspace / "model_output.md"
             output_file.write_text(completion["content"])
             result["content"] = completion["content"]
+
+            # Extract code blocks from model output and write as files in workspace
+            extracted = extract_code_blocks(completion["content"], workspace, stack)
+            if extracted:
+                result["extracted_files"] = [str(p) for p in extracted]
 
             # Stage 1: lint
             result["stages"]["lint"] = lint.run_lint(workspace, stack)
