@@ -49,11 +49,19 @@ def run_lint(workspace: Path, stack: str) -> dict:
         # If no YAML files exist, lint passes (nothing to lint)
         if not files:
             return {"passed": True, "logs": "no YAML files in workspace"}
+    elif stack == "pulumi-typescript":
+        files = [str(f) for f in workspace.rglob("*.ts")]
+        # If no TS files exist, lint passes (nothing to lint)
+        if not files:
+            return {"passed": True, "logs": "no TypeScript files in workspace"}
     else:
         files = ["."]
 
     for cmd, args, description in commands:
-        cmd_args: list[str] = [cmd] + args + files if stack in ("knr-ops", "crossplane") else [cmd] + args
+        if stack in ("knr-ops", "crossplane", "pulumi-typescript"):
+            cmd_args: list[str] = [cmd] + args + files
+        else:
+            cmd_args = [cmd] + args
         log.info("Running lint: %s (%s)", cmd, description)
         try:
             proc = subprocess.run(
