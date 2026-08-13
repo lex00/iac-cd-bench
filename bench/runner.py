@@ -263,7 +263,7 @@ class OpenAICompatAdapter(ModelAdapter):
 
         import time
         resp = None
-        for attempt in range(5):
+        for attempt in range(10):
             resp = httpx.post(
                 self._url,
                 headers={
@@ -274,13 +274,13 @@ class OpenAICompatAdapter(ModelAdapter):
                 timeout=timeout,
             )
             if resp.status_code == 429:
-                wait = min(2 ** attempt + 5, 60)
+                wait = min(5 * 2 ** attempt + 10, 300)
                 log.warning("Rate limited (%s), retrying in %ds", resp.status_code, wait)
                 time.sleep(wait)
                 continue
             break
         if resp is None or resp.status_code == 429:
-            raise RuntimeError("Rate limited after 5 retries")
+            raise RuntimeError("Rate limited after 10 retries")
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         msg = data["choices"][0]["message"]
@@ -314,7 +314,13 @@ def run_task(
 
     results: list[dict[str, Any]] = []
 
+    import time
+
     for run_idx in range(k):
+        # Delay between runs to avoid rate limiting
+        if run_idx > 0:
+            log.info("Waiting 15s before run %d...", run_idx)
+            time.sleep(15)
         # Create fresh workspace
         workspace = Path(tempfile.mkdtemp(prefix=f"bench-{stack}-"))
         log.info("Run %d: workspace %s", run_idx, workspace)
@@ -432,6 +438,12 @@ def main() -> None:
             if not task_dir.exists():
                 log.warning("Task dir not found: %s", task_dir)
                 continue
+
+            # Delay between tasks to avoid rate limiting
+            if task_dir != task_dirs[0]:
+                log.info("Waiting 10s between tasks...")
+                import time
+                time.sleep(10)
 
             log.info("Running %s/%s (condition=%s)", stack, task_dir.name, args.condition)
             results = run_task(task_dir, adapter, args.k, args.e2e, args.condition)
