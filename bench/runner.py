@@ -261,15 +261,26 @@ class OpenAICompatAdapter(ModelAdapter):
             payload["temperature"] = 0
             timeout = 120
 
-        resp = httpx.post(
-            self._url,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "content-type": "application/json",
-            },
-            json=payload,
-            timeout=timeout,
-        )
+        import time
+        resp = None
+        for attempt in range(5):
+            resp = httpx.post(
+                self._url,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "content-type": "application/json",
+                },
+                json=payload,
+                timeout=timeout,
+            )
+            if resp.status_code == 429:
+                wait = min(2 ** attempt + 5, 60)
+                log.warning("Rate limited (%s), retrying in %ds", resp.status_code, wait)
+                time.sleep(wait)
+                continue
+            break
+        if resp is None or resp.status_code == 429:
+            raise RuntimeError("Rate limited after 5 retries")
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         msg = data["choices"][0]["message"]
