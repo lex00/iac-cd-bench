@@ -248,19 +248,27 @@ class OpenAICompatAdapter(ModelAdapter):
 
         messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
 
+        payload = {
+            "model": self.model,
+            "max_tokens": 8192,
+            "messages": messages,
+        }
+        # kimi-k3 does not accept temperature; use reasoning_effort instead
+        if "kimi" in self.model.lower():
+            payload["reasoning_effort"] = "max"
+            timeout = 300
+        else:
+            payload["temperature"] = 0
+            timeout = 120
+
         resp = httpx.post(
             self._url,
             headers={
                 "Authorization": f"Bearer {self.api_key}",
                 "content-type": "application/json",
             },
-            json={
-                "model": self.model,
-                "max_tokens": 8192,
-                "temperature": 0,
-                "messages": messages,
-            },
-            timeout=120,
+            json=payload,
+            timeout=timeout,
         )
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
