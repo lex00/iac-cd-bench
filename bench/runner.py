@@ -250,9 +250,13 @@ class OpenAICompatAdapter(ModelAdapter):
 
         payload = {
             "model": self.model,
-            "max_tokens": 8192,
             "messages": messages,
         }
+        # gpt-5+ models use max_completion_tokens instead of max_tokens
+        if self.model.startswith("gpt-5"):
+            payload["max_completion_tokens"] = 8192
+        else:
+            payload["max_tokens"] = 8192
         # kimi-k3 does not accept temperature; use reasoning_effort instead
         if "kimi" in self.model.lower():
             payload["reasoning_effort"] = "max"
