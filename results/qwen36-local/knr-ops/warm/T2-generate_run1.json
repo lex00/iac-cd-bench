@@ -1,0 +1,36 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: logs-irsa-role\n  labels:\n    app.kubernetes.io/component: irsa\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": { \"Federated\": \"arn:aws:iam::ACCOUNT_ID:oidc-provider/oidc.eks.REGION.amazonaws.com/id/OIDC_ID\" },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": { \"StringEqua\n[validate CRDs] kubeconform: exit=0\nSummary: 7 resources found in 5 files - Valid: 1, Invalid: 0, Errors: 0, Skipped: 6\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/base: exit=0\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/overlays/dev: exit=1\nERR: Error: trouble configuring builtin PatchTransformer with config: `\npath: patch-env.yaml\n`: failed to get the patch file from path(patch-env.yaml): evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/overlays/dev/patch-env.yaml' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/overlays/dev/patch-env.yaml: no such file or directory\n"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 940,
+    "output": 8192
+  },
+  "content": "\n\nHere\u2019s the idiomatic `knr-ops` implementation for the new logs bucket, IRSA role, and Flux kustomization.\n\n### \ud83d\udcc1 Directory Structure\n```\ninfra/s3-logs/\n\u251c\u2500\u2500 base/\n\u2502   \u251c\u2500\u2500 kustomization.yaml\n\u2502   \u251c\u2500\u2500 bucket.yaml\n\u2502   \u251c\u2500\u2500 iam.yaml\n\u2502   \u2514\u2500\u2500 serviceaccount.yaml\n\u251c\u2500\u2500 overlays/\n\u2502   \u251c\u2500\u2500 dev/\n\u2502   \u2502   \u251c\u2500\u2500 kustomization.yaml\n\u2502   \u2502   \u2514\u2500\u2500 patch-env.yaml\n\u2502   \u2514\u2500\u2500 prod/\n\u2502       \u251c\u2500\u2500 kustomization.yaml\n\u2502       \u2514\u2500\u2500 patch-env.yaml\nflux/\n\u2514\u2500\u2500 kustomizations.yaml  # (append new entries)\n```\n\n---\n\n### \ud83d\udcc4 Base Manifests\n\n**`infra/s3-logs/base/kustomization.yaml`**\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bucket.yaml\n  - iam.yaml\n  - serviceaccount.yaml\n```\n\n**`infra/s3-logs/base/bucket.yaml`**\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: logs-bucket\n  labels:\n    app.kubernetes.io/component: s3-logs\n    app.kubernetes.io/managed-by: flux\nspec:\n  forProvider:\n    region: us-east-1\n    bucket: myapp-logs-ENV\n    versioning:\n      enabled: true\n    serverSideEncryptionConfiguration:\n      rule:\n        applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n    publicAccessBlock:\n      blockPublicAcls: true\n      blockPublicPolicy: true\n      ignorePublicAcls: true\n      restrictPublicBuckets: true\n```\n\n**`infra/s3-logs/base/iam.yaml`**\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: logs-irsa-role\n  labels:\n    app.kubernetes.io/component: irsa\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": { \"Federated\": \"arn:aws:iam::ACCOUNT_ID:oidc-provider/oidc.eks.REGION.amazonaws.com/id/OIDC_ID\" },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": { \"StringEquals\": { \"oidc.eks.REGION.amazonaws.com/id/OIDC_ID:sub\": \"system:serviceaccount:NAMESPACE:logs-irsa-sa\" } }\n          }\n        ]\n      }\n---\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Policy\nmetadata:\n  name: logs-irsa-policy\n  labels:\n    app.kubernetes.io/component: irsa\nspec:\n  forProvider:\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Action\": [\"s3:GetObject\", \"s3:PutObject\", \"s3:ListBucket\", \"s3:DeleteObject\"],\n            \"Resource\": [\"arn:aws:s3:::myapp-logs-ENV\", \"arn:aws:s3:::myapp-logs-ENV/*\"]\n          }\n        ]\n      }\n---\napiVersion: iam.aws.upbound.io/v1beta1\nkind: RolePolicyAttachment\nmetadata:\n  name: logs-irsa-attachment\nspec:\n  forProvider:\n    policyArn: \"arn:aws:iam::ACCOUNT_ID:policy/logs-irsa-policy\"\n    roleName: logs-irsa-role\n```\n\n**`infra/s3-logs/base/serviceaccount.yaml`**\n```yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: logs-irsa-sa\n  namespace: NAMESPACE\n  annotations:\n    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/logs-irsa-role\n```\n\n---\n\n### \ud83d\udcc4 Environment Overlays\n\n**`infra/s3-logs/overlays/dev/kustomization.yaml`**\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base\npatches:\n  - path: patch-env.yaml\n```\n\n**`infra/s3-logs/overlays/dev/patch-env.yaml`**\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: logs-bucket\nspec:\n  forProvider:\n    bucket: myapp-logs-dev\n---\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Policy\nmetadata:\n  name: logs-irsa-policy\nspec:\n  forProvider:\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/base/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/base/bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/base/iam.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/base/serviceaccount.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/overlays/dev/kustomization.yaml"
+  ]
+}

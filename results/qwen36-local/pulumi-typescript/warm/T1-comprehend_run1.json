@@ -1,0 +1,29 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 683,
+    "output": 2644
+  },
+  "content": "\n\nBased on the canonical scenario and Pulumi's TypeScript behavior, here are the precise answers:\n\n### 1. Which property triggered the replace on the DB?\nIn AWS RDS, certain properties are **immutable** and cannot be modified in-place. When Pulumi detects a change to any of these, it schedules a `replace` (destroy + create). Based on your spec, the most likely triggers are:\n- `instanceClass` (e.g., changing from `db.t3.micro` to `db.t3.medium`)\n- `multiAZ` (changing from `false` to `true`)\n- `storageEncrypted` (changing from `false` to `true`)\n\nPulumi's preview will explicitly mark the changed property with a `replace` indicator (e.g., `~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\" [replace]`). AWS RDS requires a new instance for these changes, and Pulumi's `aws.rds.Instance` resource correctly maps this constraint.\n\n### 2. What does `pulumi up --target` skip?\n`pulumi up --target <resource-urn>` restricts the deployment to **only the explicitly named resource(s)**. It skips:\n- All other resources in the stack (no creates, updates, or deletes)\n- Dependency resolution and graph traversal for non-targeted resources\n- Any configuration drift or pending changes outside the target list\n\nIt does **not** skip dependencies of the targeted resource (Pulumi will still update/create them if required), but it completely bypasses everything else. This is primarily used for targeted rollbacks, fixing a single broken resource, or applying a change without triggering a full stack deployment.\n\n### 3. How does Pulumi handle secrets in outputs?\nPulumi's secret management aligns directly with your acceptance criteria:\n- **Encryption at rest**: Values marked as secrets (via `pulumi.ConfigSecret` or `pulumi.secret()`) are encrypted in the state file using the stack's configured secret provider (e.g., AWS KMS, Azure Key Vault, GCP KMS, or HashiCorp Vault). Plaintext is never written to state or Git.\n- **CLI/Output masking**: In `pulumi preview` or `pulumi up` output, secret values are masked as `[secret]` or `***`. They are never printed to stdout or logged.\n- **Runtime decryption**: When accessed in code (e.g., `config.requireSecret(\"dbConnectionString\")`), Pulumi decrypts the value on-demand in memory. The decrypted value is never persisted.\n- **Stack config integration**: In `dev.yaml`/`prod.yaml`, secrets are stored as encrypted strings. Pulumi automatically handles encryption/decryption during stack operations, ensuring environment isolation and compliance with the \"never stored in plaintext\" requirement."
+}

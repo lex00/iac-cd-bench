@@ -1,0 +1,32 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 685,
+    "output": 8192
+  },
+  "content": "\n\nHere is the complete Crossplane XRD and Composition using the modern `function-patch-and-transform` mode. The implementation strictly follows the canonical scenario spec and acceptance criteria.\n\n### 1. Composite Resource Definition (XRD)\nDefines the contract for consumers. Parameters drive environment-specific sizing, region, and naming.\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: spineinfrastructures.infra.example.com\nspec:\n  group: infra.example.com\n  names:\n    kind: SpineInfrastructure\n    plural: spineinfrastructures\n  versions:\n  - name: v1alpha1\n    served: true\n    referenceable: true\n    schema:\n      openAPIV3Schema:\n        type: object\n        properties:\n          spec:\n            type: object\n            properties:\n              parameters:\n                type: object\n                properties:\n                  environment:\n                    type: string\n                    enum: [dev, prod]\n                    description: Target environment (dev or prod)\n                  region:\n                    type: string\n                    description: AWS region for resource deployment\n                  bucketName:\n                    type: string\n                    description: Base name for the S3 bucket\n                  instanceClass:\n                    type: string\n                    description: RDS instance class (e.g., db.t3.micro, db.t3.medium)\n                  multiAZ:\n                    type: boolean\n                    description: Enable multi-AZ deployment (prod only)\n                  iamRoleName:\n                    type: string\n                    description: Base name for the IAM service role\n                required:\n                - environment\n                - region\n                - bucketName\n                - instanceClass\n```\n\n### 2. Composition (Function Mode)\nProvisions S3, RDS, and IAM resources. Uses `function-patch-and-transform` for declarative patching and environment-aware transforms.\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: spine-infrastructure\nspec:\n  type:\n    apiVersion: infra.example.com/v1alpha1\n    kind: SpineInfrastructure\n  mode: Functions\n  functions:\n  - reference:\n      name: function-patch-and-transform\n  resources:\n  # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  # 1. S3 Bucket: Versioned, Encrypted, Public Access Blocked\n  # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  - name: s3-bucket\n    base:\n      apiVersion: s3.aws.crossplane.io/v1beta1\n      kind: Bucket\n      spec:\n        forProvider:\n          region: us-east-1\n          versioningConfiguration:\n            status: Enabled\n          bucketEncryption:\n            serverSideEncryptionConfiguration:\n            - algorithm: AES256\n          publicAccessBlockConfiguration:\n            blockPublicAcls: true\n            blockPublicPolicy: true\n            ignorePublicAcls: true\n            restrictPublicBuckets: true\n    function:\n      patch:\n      - from: metadata.name\n        to: metadata.name\n        policy:\n          from: Required\n      - from: spec.parameters.region\n        to: spec.forProvider.region\n      - from: spec.parameters.bucketName\n        to: spec.forProvider.bucketName\n        transform:\n        - type: String\n          string:\n            type:",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-3y9ar1a8/generated_0.yaml"
+  ]
+}

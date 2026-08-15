@@ -1,0 +1,35 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 2741
+  },
+  "content": "\n\nPlease provide the `pulumi preview --json` output. Once you paste it, I will run a targeted security review against your canonical spec.\n\nIn the meantime, here is the exact framework I will use to evaluate your preview JSON, mapped to your acceptance criteria and the three specific checks you requested.\n\n---\n\n## \ud83d\udd0d How I Will Review Your Pulumi Preview JSON\n\nPulumi's `--json` output follows a predictable structure. I will scan the `changes` array for the following patterns:\n\n### 1. \ud83d\udea8 Secret in Plaintext Outputs\n**What I look for:**\n```json\n{\n  \"op\": \"create\",\n  \"name\": \"db-conn-string\",\n  \"type\": \"pulumi:providers:aws:ConfigValue\",\n  \"newOutputs\": {\n    \"value\": \"postgresql://admin:SuperSecret123@prod-db.xxxx.us-east-1.rds.amazonaws.com:5432/app\"\n  }\n}\n```\n**\u2705 Safe Pattern:**\n```json\n\"newOutputs\": {\n  \"value\": \"[secret]\"\n},\n\"isSecret\": true\n```\n**Checks:**\n- Any `newOutputs` or `oldOutputs` containing DB credentials, API keys, or certificates without `\"isSecret\": true` or `\"[secret]\"` markers.\n- Pulumi `ConfigSecret` or `pulumi.secret()` must be used. If the JSON exposes raw values, it indicates a leak in stack config or code.\n- Crossplane/Terraform/SOPS integrations should not surface plaintext in Pulumi's preview outputs.\n\n### 2. \u26a0\ufe0f Replacement of Stateful Resource\n**What I look for:**\n```json\n{\n  \"op\": \"replace\",\n  \"name\": \"prod-rds\",\n  \"type\": \"aws:rds/instance:Instance\",\n  \"deleteBeforeReplace\": true,\n  \"oldInputs\": { \"instanceClass\": \"db.t3.micro\" },\n  \"newInputs\": { \"instanceClass\": \"db.t3.medium\" }\n}\n```\n**Checks:**\n- `op: \"replace\"` on `aws:rds/instance:Instance`, `aws:eks/cluster:Cluster`, or `aws:s3/bucket:Bucket` (if versioning/encryption changes).\n- Verify if the replacement is **intentional** (e.g., prod sizing upgrade) vs **accidental** (e.g., changing a non-critical tag or metadata).\n- Confirm `backupRetentionPeriod >= 7` and `deletionProtection: true` are present in `newInputs`. If missing, replacement risks data loss.\n- EKS cluster replacement is highly disruptive; should only occur for control plane version upgrades or VPC changes.\n\n### 3. \ud83d\udee1\ufe0f Missing `protect` Flag\n**What I look for:**\n```json\n{\n  \"op\": \"create\",\n  \"name\": \"prod-rds\",\n  \"type\": \"aws:rds/instance:Instance\",\n  \"protect\": false\n}\n```\n**Checks:**\n- Critical resources (`RDS`, `EKS`, `S3` with app data, `IAM` service roles) must have `\"protect\": true`.\n- Missing `protect` means `pulumi destroy` or accidental stack deletion will remove the resource without confirmation.\n- I will verify that `protect: true` is explicitly set in the TypeScript code (`{ protect: true }`) and reflected in the preview.\n\n---\n\n## \ud83d\udccb Acceptance Criteria Mapping to JSON Fields\n\n| Criterion | JSON Path to Verify | Expected Value |\n|-----------|---------------------|----------------|\n| **S3 Bucket** | `newInputs.versioning`, `newInputs.serverSideEncryptionConfiguration`, `newInputs.publicAccessBlock` | `enabled: true`, `AES-256` or `aws:kms`, `blockPublicAcls: true` |\n| **RDS** | `newInputs.deletionProtection`, `newInputs.backupRetentionPeriod`, `newInputs.publiclyAccessible` | `true`, `>=7`, `false` |\n| **Secret** | `newOutputs.value`, `isSecret` | `\"[secret]\"`, `true` |\n| **IAM** | `newInputs.assumeRolePolicy`, `newInputs.policy` | No `\"Action\": \"*\"`, OIDC trust for prod |\n| **EKS** | `newInputs.instanceType`, `newInputs.scalingConfig` | `t3.medium`/`2` (dev), `t3.large`/`4` (prod) |\n| **HTTPS** | `newInputs.port`, `newInputs.defaultAction`, `newInputs.certificateArn` | `443`, `forward`, valid ACM ARN |\n| **Env Isolation** | Resource `name`/`tags`, stack config references | `dev-`/`prod-` prefixes, no cross-stack state overlap |\n\n---\n\n## \ud83d\udce5 Next Steps\n\n1. **Paste your `pulumi preview --json` output** (or a sanitized excerpt focusing on the resources above).\n2. I will return:\n   - \u2705 Pass/Fail per check\n   - \ud83d\udd0d Exact JSON paths with violations\n   - \ud83d\udee0\ufe0f TypeScript fixes (e.g., `pulumi.secret()`, `{ protect: true }`, input corrections)\n   - \ud83d\udcca Mapping to your acceptance criteria\n\nIf you'd prefer, I can also provide a **Node.js script** that programmatically parses the preview JSON and flags these issues automatically. Let me know how you'd like to proceed.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wpkjwqse/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wpkjwqse/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wpkjwqse/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wpkjwqse/generated_3.json"
+  ]
+}

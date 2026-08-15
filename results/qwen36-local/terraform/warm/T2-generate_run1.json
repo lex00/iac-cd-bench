@@ -1,0 +1,33 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 687,
+    "output": 8192
+  },
+  "content": "\n\nHere is a complete, production-ready Terraform module structure that fulfills the canonical scenario specification. It uses a modular design, environment-specific `tfvars`, and idiomatic AWS resource configurations.\n\n### \ud83d\udcc1 Directory Structure\n```\n.\n\u251c\u2500\u2500 main.tf              # Root configuration\n\u251c\u2500\u2500 variables.tf         # Root variables\n\u251c\u2500\u2500 dev.tfvars           # Dev environment overrides\n\u251c\u2500\u2500 prod.tfvars          # Prod environment overrides\n\u2514\u2500\u2500 modules/\n    \u2514\u2500\u2500 app-infra/\n        \u251c\u2500\u2500 main.tf      # Core resources\n        \u251c\u2500\u2500 variables.tf # Module inputs\n        \u2514\u2500\u2500 outputs.tf   # Module outputs\n```\n\n---\n\n### \ud83d\udce6 `modules/app-infra/variables.tf`\n```hcl\nvariable \"environment\" {\n  description = \"Environment name (dev or prod)\"\n  type        = string\n}\n\nvariable \"bucket_name_prefix\" {\n  description = \"Prefix for the S3 bucket name\"\n  type        = string\n}\n\nvariable \"rds_instance_class\" {\n  description = \"RDS instance class\"\n  type        = string\n}\n\nvariable \"rds_multi_az\" {\n  description = \"Enable multi-AZ deployment\"\n  type        = bool\n}\n\nvariable \"rds_backup_retention_period\" {\n  description = \"Number of days to retain automated backups\"\n  type        = number\n}\n\nvariable \"rds_storage_encrypted\" {\n  description = \"Enable storage encryption for RDS\"\n  type        = bool\n}\n\nvariable \"db_username\" {\n  description = \"Database master username\"\n  type        = string\n}\n\nvariable \"db_password\" {\n  description = \"Database master password\"\n  type        = string\n  sensitive   = true\n}\n\nvariable \"iam_role_name\" {\n  description = \"Name of the IAM service account role\"\n  type        = string\n}\n\nvariable \"iam_oidc_provider_arn\" {\n  description = \"OIDC provider ARN for prod trust policy (null for dev)\"\n  type        = string\n  default     = null\n}\n\nvariable \"iam_oidc_sub\" {\n  description = \"OIDC subject claim for prod trust policy (null for dev)\"\n  type        = string\n  default     = null\n}\n\nvariable \"vpc_id\" {\n  description = \"VPC ID for RDS deployment\"\n  type        = string\n}\n\nvariable \"subnet_ids\" {\n  description = \"Subnet IDs for RDS subnet group\"\n  type        = list(string)\n}\n\nvariable \"security_group_ids\" {\n  description = \"Security group IDs for RDS\"\n  type        = list(string)\n}\n\nvariable \"replication_target_region\" {\n  description = \"Target region for cross-region replication (prod only)\"\n  type        = string\n  default     = null\n}\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-v76f3dve/modules/app-infra/variables.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-v76f3dve/generated_0.txt"
+  ]
+}

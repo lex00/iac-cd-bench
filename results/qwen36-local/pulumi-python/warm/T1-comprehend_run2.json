@@ -1,0 +1,29 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] python3: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 682,
+    "output": 4438
+  },
+  "content": "\n\nHere are the direct answers based on Pulumi's behavior and AWS RDS constraints:\n\n### 1. Which property triggered the replace on the DB?\n**`storage_encrypted`** (exposed as `encrypted` in Pulumi's `aws.rds.Instance`).  \nAWS RDS does not support enabling encryption on an existing unencrypted instance. Changing this property from `false` \u2192 `true` is a hard constraint that forces a replacement. Pulumi's AWS provider explicitly marks `storage_encrypted` as `replaceOnChanges: true`, so the preview will show `+/-` (replace) rather than `~` (update).  \n*(Note: `engine` or `engine_version` changes would also trigger a replace, but based on the canonical spec's dev/prod differences, encryption is the differentiator.)*\n\n### 2. What does `pulumi up --target` skip?\nIt **skips all non-targeted resources** in the stack.  \n- Bypasses full stack reconciliation: no creates, updates, or deletes are applied to resources not explicitly listed in the `--target` flag.\n- Still validates dependencies (will warn/fail if the targeted resource depends on a non-targeted resource that is out of sync), but does not attempt to fix or update those dependencies.\n- Used for surgical updates, targeted rollbacks, or debugging specific resource drift without touching the rest of the infrastructure.\n\n### 3. How does Pulumi handle secrets in outputs?\nPulumi treats secrets as first-class citizens with a built-in management layer:\n- **Encryption at Rest**: Values are encrypted in the state file using the configured secret provider (AWS KMS, Azure Key Vault, GCP KMS, HashiCorp Vault, or local passphrase).\n- **CLI/Log Masking**: During `pulumi preview` or `pulumi up`, secret values are masked in output (`[secret]` or `***`) to prevent accidental exposure in logs or CI/CD artifacts.\n- **Runtime Decryption**: In Python, `pulumi.ConfigSecret` or `.secret()` ensures the value is decrypted only when explicitly accessed in code, never logged in plaintext.\n- **State Safety**: `pulumi stack export` keeps secrets encrypted. If state is stored in Git (local backend), plaintext secrets are never committed. Cloud backends store encrypted blobs in the provider's secure storage.\n\nThese behaviors align with Pulumi's design principles: predictable replacement triggers, surgical update capabilities, and zero-trust secret handling."
+}

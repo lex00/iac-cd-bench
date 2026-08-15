@@ -1,0 +1,32 @@
+{
+  "model": "qwen36-local",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base/infra\n  - ../../base/clusters\npatches:\n  # 1. Scale app deployment to 4 replicas for prod\n  - patch: |\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: app-deployment\n      spec:\n        replicas: 4\n    target:\n      kind: Deployment\n      name: app-deployment\n  # 2 & 3. Upgrade RDS instance class and enable multi-AZ\n  - patch: |\n      apiVersion: database.k8s.io/v1alpha1\n     \n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zmh26htn/overlays/prod: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from '../../base/infra': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zmh26htn/base/infra' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zmh26htn/base: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zmh26htn/base/infra' :"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 828,
+    "output": 4868
+  },
+  "content": "\n\nHere is the complete, production-ready `overlays/prod/kustomization.yaml` that satisfies all requirements while strictly isolating changes to the prod environment.\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base/infra\n  - ../../base/clusters\n\npatches:\n  # 1. Scale app deployment to 4 replicas for prod\n  - patch: |\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: app-deployment\n      spec:\n        replicas: 4\n    target:\n      kind: Deployment\n      name: app-deployment\n\n  # 2 & 3. Upgrade RDS instance class and enable multi-AZ\n  - patch: |\n      apiVersion: database.k8s.io/v1alpha1\n      kind: RDSInstance\n      metadata:\n        name: app-database\n      spec:\n        instanceClass: db.t3.medium\n        multiAZ: true\n    target:\n      kind: RDSInstance\n      name: app-database\n\n  # 4. Add S3 cross-region replication to us-west-2\n  - patch: |\n      apiVersion: s3.k8s.io/v1alpha1\n      kind: S3Bucket\n      metadata:\n        name: app-assets\n      spec:\n        replication:\n          - destination:\n              region: us-west-2\n              bucket: app-assets-us-west-2\n    target:\n      kind: S3Bucket\n      name: app-assets\n```\n\n### Why this meets your constraints:\n1. **Isolation**: Only `overlays/prod/kustomization.yaml` is modified. The `overlays/dev/kustomization.yaml` remains untouched, guaranteeing independent deployment states.\n2. **Kustomize Patches**: Uses modern inline strategic merge patches with explicit `target` selectors. This ensures patches only apply to the exact resources in the base, avoiding accidental overwrites.\n3. **Prod-Specific Overrides**:\n   - `replicas: 4` overrides the base `2`\n   - `instanceClass: db.t3.medium` & `multiAZ: true` override base RDS config\n   - `replication` block adds cross-region config without touching base S3 settings\n4. **Flux Compatibility**: Flux's `Kustomization` controller will render this overlay independently. Dev and prod clusters will each pull their respective overlay, apply patches, and reconcile without cross-contamination.\n\n### Implementation Notes:\n- Ensure the `kind` and `name` values in the `target` blocks match the exact resources defined in your `base/` directory.\n- If your base uses different CRD names (e.g., `PostgreSQLInstance` instead of `RDSInstance`), update the `kind` accordingly. The patch structure remains identical.\n- No additional files are required; inline patches keep the overlay self-contained and Git-friendly.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zmh26htn/overlays/prod/kustomization.yaml"
+  ]
+}

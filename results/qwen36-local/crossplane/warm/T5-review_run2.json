@@ -1,0 +1,29 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 652,
+    "output": 2807
+  },
+  "content": "\n\n## Crossplane Composition Diff Review\n\n### \ud83d\udd0d Executive Verdict\n**\u274c REJECT / REVISION REQUIRED**  \nThe diff introduces a critical regression against the canonical specification. While the provider-wide `deletionPolicy: Delete` is operationally acceptable (with caveats), **dropping S3 bucket versioning directly violates Acceptance Criterion #1** and breaks the required data protection posture.\n\n---\n\n### \ud83d\udcdd Detailed Change Analysis\n\n#### 1. `deletionPolicy: Delete` added provider-wide\n| Aspect | Assessment |\n|--------|------------|\n| **What it does** | Instructs Crossplane to destroy underlying cloud resources when their parent Claim/Composition is deleted. Default is `Orphan`. |\n| **Pros** | Prevents orphaned resources, ensures clean teardown, aligns with IaC lifecycle expectations. |\n| **Cons/Risks** | Accidental claim deletion in `prod` will trigger immediate resource destruction. Requires strict RBAC/GitOps guardrails. |\n| **Spec Alignment** | Not explicitly required or forbidden. Compatible with all acceptance criteria. |\n| **Recommendation** | \u2705 **Accept with safeguards**. Ensure:<br>\u2022 RDS `deletionProtection: true` is still set at the cloud level (Crossplane's policy won't bypass AWS safeguards).<br>\u2022 Prod environments use GitOps approval gates or `Orphan` policy if accidental teardown risk is unacceptable.<br>\u2022 Document the policy in runbooks. |\n\n#### 2. Bucket versioning dropped\n| Aspect | Assessment |\n|--------|------------|\n| **What it does** | Removes `spec.versioning` configuration from the S3 bucket composition template or parameter mapping. |\n| **Impact** | Bucket will be provisioned without versioning. Previous object versions cannot be recovered. |\n| **Spec Alignment** | \u274c **Direct violation of Acceptance Criterion #1**: `\"Bucket: versioning enabled, server-side encryption (AES-256 or KMS), no public access\"` |\n| **Risk** | Data loss, compliance failure, inability to roll back asset deployments. |\n| **Recommendation** | \ud83d\uded1 **Revert immediately**. Restore versioning configuration in the composition. If using parameterized compositions, ensure `versioning: true` is passed from the Claim or Composition parameters. |\n\n---\n\n### \ud83d\udcca Acceptance Criteria Compliance Matrix\n\n| Criterion | Status | Notes |\n|-----------|--------|-------|\n| 1. Bucket: versioning, encryption, no public access | \u274c **FAIL** | Versioning removed. Verify encryption & public access blocks remain intact. |\n| 2. RDS: deletion protection, backup \u22657d, private | \u2705 **PASS** | `deletionPolicy: Delete` does not override AWS RDS deletion protection. |\n| 3. Secret: encrypted at rest, no plaintext in Git | \u2705 **PASS** | Unaffected by diff. |\n| 4. IAM: least privilege, no wildcards in prod | \u2705 **PASS** | Unaffected by diff. |\n| 5. Cluster: managed node groups, correct sizing | \u2705 **PASS** | Unaffected by diff. |\n| 6. HTTPS: 443 listener, valid cert, no forced redirect | \u2705 **PASS** | Unaffected by diff. |\n| 7. Env isolation: independent dev/prod | \u2705 **PASS** | Unaffected by diff. |\n\n---\n\n### \ud83d\udee0\ufe0f Actionable Recommendations\n\n1. **Restore S3 Versioning**\n   - Re-add `versioning: true` (or equivalent) to the S3 bucket composition template.\n   - If using composition parameters, ensure the parameter is mapped correctly in the `xrd` and `composition` spec.\n   - Verify encryption (`serverSideEncryption: AES256` or `aws:kms`) and `publicAccessBlock` remain configured.\n\n2. **Validate `deletionPolicy: Delete` Behavior**\n   - Test claim deletion in `dev` to confirm resources are properly cleaned up.\n   - Confirm RDS instances retain `deletionProtection: true` at the AWS level (Crossplane will attempt deletion, but AWS will block it; ensure your composition explicitly sets this).\n   - Consider environment-specific `ProviderConfig` overrides if `prod` requires `Orphan` for safety.\n\n3. **Crossplane-Specific Checks**\n   - Ensure the diff doesn't accidentally remove `spec.versioning` from the `S3Bucket` managed resource template.\n   - If using `Composition` parameters, verify the `versioning` parameter isn't being overridden by a default `false` or missing mapping.\n   - Run `kubectl get managed` and `kubectl describe claim` post-apply to verify versioning is reflected in the underlying AWS bucket.\n\n---\n\n### \ud83d\udccc Final Note\nThe diff is **not merge-ready** due to the bucket versioning regression. Once versioning is restored and `deletionPolicy` behavior is validated in a non-prod environment, the diff will align with the canonical spec and acceptance criteria."
+}

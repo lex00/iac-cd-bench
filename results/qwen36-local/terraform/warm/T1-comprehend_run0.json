@@ -1,0 +1,29 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 685,
+    "output": 2747
+  },
+  "content": "\n\nHere\u2019s how Terraform behaves in each scenario, grounded in the canonical spec and Terraform\u2019s core mechanics:\n\n### 1. What does the next plan show?\nWhen a variable flips (e.g., `instance_type`, `environment`, or `region`), `terraform plan` computes a diff between the **current state** and the **new desired configuration**. The output will show:\n- `~` (update) for attributes that can change in-place (e.g., S3 bucket tags, ALB listener rules).\n- `-/+` (destroy/create) for attributes marked `ForceNew` in the provider schema (e.g., RDS `instance_class`, S3 bucket name, EKS cluster name).\n- `+` (create) for entirely new resources if the variable change introduces new topology.\n- Dependency graph updates: Terraform will reorder operations to respect `depends_on` and implicit references.\n\n*Example:* If `instance_type` flips from `t3.medium` to `t3.large` on the EKS node group, the plan shows `-/+` for `aws_eks_node_group` because `instance_types` is `ForceNew`. If `environment` flips from `dev` to `prod`, the plan shows full replacement of environment-scoped resources (RDS, S3, IAM) due to naming/region differences.\n\n### 2. What happens if the state file is deleted?\nTerraform state is the **source of truth for what exists**. If it\u2019s deleted:\n- `terraform plan` will show **all resources as `+` (to be created)** because Terraform no longer knows what\u2019s deployed.\n- `terraform apply` will attempt to recreate everything, likely **failing on conflicts**:\n  - S3 bucket names are globally unique \u2192 `BucketAlreadyExists`\n  - RDS instance identifiers are region-unique \u2192 `DBInstanceAlreadyExists`\n  - IAM users/roles already exist \u2192 `EntityAlreadyExists`\n- **Existing infrastructure is NOT destroyed.** It remains running, but Terraform loses tracking.\n- **Recovery:** You must run `terraform import` for each resource to re-map it to state, or restore from a state backup/version control. Remote state (S3 + DynamoDB locking) is strongly recommended to prevent this.\n\n### 3. How does Terraform handle the RDS instance class change?\nIn the AWS provider, `instance_class` on `aws_db_instance` is a **`ForceNew`** attribute. Terraform handles it as follows:\n- **Plan:** Shows `-/+` (replace) for the RDS instance.\n- **Apply lifecycle:**\n  1. Creates a new RDS instance with the new class.\n  2. Waits for it to reach `available` state.\n  3. Destroys the old instance.\n- **Critical constraints from your spec:**\n  - `deletion_protection = true` (acceptance criteria) will **block destruction** unless you temporarily set it to `false` in config, apply, then revert.\n  - `backup_retention_period >= 7` means Terraform will automatically create a final snapshot before destroying (unless `skip_final_snapshot = true`).\n  - Multi-AZ (`multi_az = true`) changes also trigger replacement and require a maintenance window or explicit `instance_class` update via AWS API (Terraform handles this safely but may cause brief downtime).\n\n### 4. What is the difference between state and configuration?\n| Aspect | Configuration | State |\n|--------|---------------|-------|\n| **What it is** | `.tf` files, variables, modules, providers | `terraform.tfstate` (local or remote) |\n| **Purpose** | Declares *desired* infrastructure | Tracks *actual* deployed resources & attributes |\n| **Version Control** | Safe to commit to Git | Should **not** be committed (contains sensitive data, IDs, secrets) |\n| **Mutability** | Idempotent, declarative, human-readable | Machine-generated, auto-updated on `apply` |\n| **Role in Plan** | Defines the target state | Provides the baseline for diff calculation |\n| **Failure Impact** | Syntax/provider errors \u2192 plan fails | Missing/corrupted \u2192 plan shows full create, apply fails on conflicts |\n\n**In practice:** Configuration is your blueprint; state is the ledger. Terraform uses state to answer: *\"What do I need to create, update, or destroy to match the config?\"* Drift occurs when state and reality diverge (e.g., manual AWS console changes), which `terraform plan` will detect as `~` or `-` changes.\n\nLet me know if you want a concrete `.tf` snippet demonstrating the RDS replacement lifecycle or state recovery workflow."
+}

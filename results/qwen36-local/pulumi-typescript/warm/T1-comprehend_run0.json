@@ -1,0 +1,29 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 683,
+    "output": 2565
+  },
+  "content": "\n\nHere\u2019s how Pulumi behaves for each of your questions, grounded in the canonical scenario and Pulumi\u2019s execution model:\n\n### 1. Which property triggered the replace on the DB?\nIn Pulumi, an RDS instance replacement (`+/-`) is triggered when a property that AWS RDS treats as **immutable** is changed. Based on your spec, the most likely triggers are:\n- `instanceClass` (e.g., `db.t3.micro` \u2192 `db.t3.medium`)\n- `multiAZ` (`false` \u2192 `true`)\n- `storageEncrypted` (`false` \u2192 `true`)\n\nPulumi\u2019s preview will explicitly mark the resource with `+/-` and list the changed properties in the diff. Properties like `deletionProtection`, `backupRetentionPeriod`, or `dbSubnetGroupName` are updatable in-place (`~`) and **do not** trigger replacement. If your preview shows a replace, check the diff for one of the immutable properties above.\n\n### 2. What does `pulumi up --target` skip?\n`pulumi up --target <resource-urn>` restricts the deployment to **only** the explicitly named resource(s). It skips:\n- \u2705 All other resources in the stack, even if they have pending changes.\n- \u2705 Resources not in the direct dependency graph of the target (unless `--target-dependencies` is also passed).\n- \u2705 Automatic cascading updates to dependent resources (e.g., changing the RDS instance won\u2019t update dependent Lambda functions, ALB target groups, or Kubernetes secrets unless explicitly targeted).\n\nThis flag is designed for isolated, surgical updates. If you need related resources updated, use `--target-dependencies` or run a full `pulumi up`.\n\n### 3. How does Pulumi handle secrets in outputs?\nPulumi\u2019s native secret management ensures secrets are never exposed in plaintext:\n- \ud83d\udd12 **At Rest:** Secrets are encrypted in the state file using the stack\u2019s configured encryption provider (AWS KMS, Azure Key Vault, GCP KMS, or local passphrase). They are never committed to Git or stored unencrypted in state.\n- \ud83d\ude48 **In Preview/Logs:** Outputs marked as secrets are masked as `[secret]` or `***` in `pulumi preview` and `pulumi up` logs.\n- \u26a1 **At Runtime:** When accessed via `.apply()` or exported, Pulumi decrypts them on-the-fly using the configured provider. `ConfigSecret` automatically wraps values as secrets, ensuring secure handling throughout the lifecycle.\n- \ud83d\udce6 **State Portability:** Exported state files keep secrets encrypted. Importing requires the same encryption provider and credentials to decrypt.\n\nThis directly satisfies your acceptance criterion: *\"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism.\"*\n\nLet me know if you want the exact TypeScript snippet showing how `ConfigSecret` is wired to the RDS connection string or how to safely target-dependent updates."
+}

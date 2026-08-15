@@ -1,0 +1,34 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] python3: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 657,
+    "output": 3093
+  },
+  "content": "\n\nPlease paste the Pulumi preview JSON output. Once provided, I will run a line-by-line security review against your three focus areas and the acceptance criteria.\n\nIn the meantime, here is the exact review framework I will apply. You can also use it to self-audit the JSON before sharing.\n\n---\n\n### \ud83d\udd0d How to Read a Pulumi Preview JSON\nPulumi's `--json` output is an array of resource change objects. Key fields:\n- `urn`: identifies the resource & stack (e.g., `urn:pulumi:dev::app::aws:rds/instance:Instance::db`)\n- `type`: AWS/Pulumi resource type\n- `oldInputs` / `newInputs`: configuration before/after\n- `oldOutputs` / `newOutputs`: computed values\n- `changes`: `add`, `update`, `delete`, `replace`\n- `protect`: boolean (prevents accidental deletion)\n- `secret`: boolean on outputs (marks sensitive values)\n\n---\n\n### \ud83d\udee1\ufe0f Focus Area 1: Secret in Plaintext Outputs\n**What to look for:**\n- Any resource with `newOutputs` or `oldOutputs` containing sensitive values (DB connection string, API keys, passwords) where `secret: false` or the field is missing.\n- Pulumi natively marks secrets with `\"secret\": true` and masks values as `\"[secret]\"` in previews.\n- **Python ConfigSecret check:** Ensure `pulumi.Config(\"app\").get_secret(\"db_conn_str\")` is used. If declared as `get()` instead, it leaks in plaintext.\n\n**Red Flags in JSON:**\n```json\n\"newOutputs\": {\n  \"connectionString\": {\n    \"value\": \"postgresql://user:pass@host:5432/db\",\n    \"secret\": false  // \u274c VIOLATION\n  }\n}\n```\n\n---\n\n### \ud83d\udd04 Focus Area 2: Replacement of Stateful Resources\n**What to look for:**\n- `\"replace\": true` or `\"changes\": [\"replace\"]` on stateful resources:\n  - `aws:rds/instance:Instance`\n  - `aws:eks/nodeGroup:NodeGroup`\n  - `aws:s3/bucket:Bucket` (if versioning/encryption changes)\n  - `aws:iam/role:Role` / `aws:iam/user:User`\n- Verify if the replacement is **intentional** (e.g., scaling `instance_class` from `db.t3.micro` \u2192 `db.t3.medium`) vs **accidental** (e.g., changing `allocated_storage` or `engine_version` without `skip_final_snapshot`/`allow_minor_version_upgrade`).\n- Check `oldInputs` vs `newInputs` for properties that force replacement.\n\n**Red Flags in JSON:**\n```json\n\"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::db\",\n\"changes\": [\"replace\"],\n\"replaceReasons\": [\"instance_class changed\"]  // \u26a0\ufe0f Verify backup/snapshot strategy\n```\n\n---\n\n### \ud83d\udeab Focus Area 3: Missing `protect` Flag\n**What to look for:**\n- Critical resources must have `\"protect\": true` in `newInputs` or explicitly set in code.\n- Missing or `\"protect\": false` on:\n  - RDS instance\n  - EKS cluster & node groups\n  - S3 bucket (application assets)\n  - IAM roles/users\n  - ALB/CloudFront distributions\n\n**Red Flags in JSON:**\n```json\n\"newInputs\": {\n  \"deletionProtection\": true,\n  \"protect\": false  // \u274c VIOLATION (or missing entirely)\n}\n```\n\n---\n\n### \u2705 Acceptance Criteria Mapping (Preview Validation)\n| Criteria | JSON Field to Verify | Expected Value |\n|---|---|---|\n| **Bucket** | `newInputs.versioning`, `serverSideEncryptionConfiguration`, `publicAccessBlock` | `enabled: true`, `AES-256`/`KMS`, `blockPublicAcls: true` |\n| **RDS** | `deletionProtection`, `backupRetentionPeriod`, `publiclyAccessible` | `true`, `>=7`, `false` |\n| **Secret** | `newOutputs.*.secret` | `true` (value masked) |\n| **IAM** | `policy` in `newInputs` | No `\"Action\": \"*\"` in prod stack URN |\n| **Cluster** | `instanceTypes`, `desiredCapacity` | Dev: `t3.medium`, 2 \\| Prod: `t3.large`, 4 |\n| **HTTPS** | `listener.port`, `certificateArn` | `443`, valid ARN, no `80\u2192443` redirect rule |\n| **Env Isolation** | `urn` prefix | `urn:pulumi:dev::...` vs `urn:pulumi:prod::...` (no cross-stack references) |\n\n---\n\n### \ud83d\udce5 Next Step\nPaste your Pulumi preview JSON (or a sanitized excerpt). I will:\n1. Flag any plaintext secrets\n2. Highlight stateful replacements & assess data-loss risk\n3. Identify missing `protect` flags\n4. Validate against all 7 acceptance criteria\n5. Provide exact code fixes (Python/Pulumi) for any violations\n\nReady when you are.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-bpm_sho8/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-bpm_sho8/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-bpm_sho8/generated_2.json"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 713,
+    "output": 3863
+  },
+  "content": "\n\nHere is a precise, architecture-aligned trace of how Crossplane handles the `storageGB: 20 \u2192 50` change, mapped to your canonical scenario.\n\n---\n\n### 1. Trace: XRD \u2192 Composition \u2192 Managed Resources\n1. **Claim Update**: A user patches the Claim spec (`spec.parameters.storageGB: 50`).\n2. **XR Sync**: The `claim` controller detects the change and updates the associated Composite Resource (XR) spec with the new value.\n3. **Composition Re-render**: The `composition` controller watches the XR. On spec change, it re-evaluates the Composition's Go templates, generating a new desired state for all managed resources (MRs).\n4. **MR Diff & Apply**: \n   - The Composition outputs updated specs for each MR.\n   - The `composition` controller creates/updates MR objects (e.g., `RDSInstance`, `S3Bucket`) in the cluster.\n   - Provider-specific controllers (`aws-rds`, `aws-s3`) pick up the MR spec changes.\n5. **Cloud API Invocation**: \n   - The RDS provider calls AWS `ModifyDBInstance` with `AllocatedStorage: 50`.\n   - The S3 provider sees no spec diff and skips reconciliation.\n6. **Status Propagation**: AWS returns operation status \u2192 RDS provider updates MR status \u2192 XR status aggregates MR statuses \u2192 Claim status mirrors XR status.\n\n---\n\n### 2. Is the RDS instance updated in-place or recreated?\n**Updated in-place.** \n- AWS RDS supports storage increases without instance recreation. Crossplane's `aws-rds` provider respects this by issuing a `ModifyDBInstance` API call.\n- Crossplane marks the RDS MR as `Updating` and waits for AWS to report `status: available`. No destroy/recreate cycle occurs unless explicitly forced via `managementPolicy` or immutable field constraints (which do not apply to `allocatedStorage`).\n\n---\n\n### 3. What happens to the S3 bucket?\n**Nothing.** \n- S3 is an object store with no fixed capacity parameter. The Composition template likely binds `storageGB` only to the RDS resource.\n- The S3 MR's desired spec remains identical to its actual state. The `aws-s3` controller performs a diff, finds zero changes, and skips reconciliation. The bucket retains its versioning, encryption, and replication configuration unchanged.\n\n---\n\n### 4. What role do `ReadinessChecks` play?\n`ReadinessChecks` gate the XR/Claim `Ready` condition to prevent premature downstream actions:\n- **During Storage Modification**: AWS may take minutes to apply the storage increase. The RDS MR status will show `Modifying` or `Upgrading`.\n- **Readiness Evaluation**: The Composition's `ReadinessChecks` (typically `type: Revision` or `type: Status`) monitor MR conditions. The XR remains in `Reconciling` until the RDS provider reports `status: available` and the storage change is complete.\n- **Downstream Safety**: Only when all MRs satisfy readiness conditions does the XR transition to `Ready`. This ensures dependent resources (e.g., application deployments, secret stores, or ALB targets) don't attempt to connect to a database that is still applying the storage change.\n\n---\n\n### 5. How does Crossplane handle the reconciliation loop?\nCrossplane uses Kubernetes `controller-runtime` to run a continuous, event-driven reconciliation loop:\n1. **Watch & Queue**: Controllers watch Claims, XRs, Compositions, and MRs. Changes enqueue reconciliation requests.\n2. **Desired State Computation**: The composition controller renders templates to compute the desired MR state.\n3. **Actual State Comparison**: Provider controllers fetch cloud state via SDKs, compare with desired state, and compute diffs.\n4. **Apply & Wait**: Diffs trigger cloud API calls. If an operation is async (like RDS storage increase), the controller requeues with exponential backoff until the cloud reports completion.\n5. **Status Aggregation**: MR statuses flow up to XR, then to Claim. Conditions (`Ready`, `Synced`, `Available`) are updated accordingly.\n6. **Drift Correction**: The loop runs continuously. If cloud state diverges from desired state (e.g., manual AWS console changes), Crossplane detects the drift on the next cycle and reconciles back to the Composition-defined state.\n\n---\n\n### Key Takeaways for Your Scenario\n- **Parameter Flow**: `storageGB` lives in the XRD spec \u2192 consumed by Composition templates \u2192 mapped to RDS `allocatedStorage`.\n- **Idempotency**: Crossplane's diff-based reconciliation ensures safe, repeatable updates without side effects.\n- **Environment Isolation**: Dev and prod Claims reference the same XRD/Composition but pass different parameters. Changing prod's `storageGB` only triggers reconciliation for the prod XR and its MRs; dev remains untouched.\n- **Provider Behavior**: Crossplane delegates cloud-specific semantics (like in-place RDS updates) to providers, while managing lifecycle, readiness, and status propagation at the control plane level."
+}
