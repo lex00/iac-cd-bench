@@ -6,27 +6,9 @@
   "condition": "warm",
   "stages": {
     "lint": {
-      "passed": true,
-      "logs": "[ruff check] python3: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
-    },
-    "static": {
-      "passed": true,
-      "logs": "NOT FOUND: pulumi"
-    },
-    "semantic": {
-      "passed": true,
-      "logs": "no semantic tests",
-      "passed_count": 0,
-      "total_count": 0,
-      "safety_pass": true
+      "passed": false,
+      "logs": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
     }
   },
-  "tokens": {
-    "input": 682,
-    "output": 3979
-  },
-  "content": "\n\nHere are the precise Pulumi behaviors for your scenario:\n\n### 1. Which property triggered the replace on the DB?\nIn a Pulumi preview, a replacement is explicitly annotated next to the changed property with `(requires replacement)` and the resource diff shows `+/-`. For an AWS RDS PostgreSQL instance, the properties that **always** trigger replacement are:\n- `multi_az` (e.g., `false` \u2192 `true` per your prod spec)\n- `storage_encrypted` (e.g., `false` \u2192 `true`)\n- `kms_key_id` (when encryption is enabled or the key is changed)\n- `engine_version` (major version changes, e.g., `14.x` \u2192 `15.x`)\n- `db_subnet_group_name`\n\nGiven your dev\u2192prod spec (`single AZ` \u2192 `multi-AZ`, `unencrypted` \u2192 `encrypted`), the preview is almost certainly flagging **`multi_az`** or **`storage_encrypted`**. `instance_class` changes (`db.t3.micro` \u2192 `db.t3.medium`) are in-place updates (reboot) in AWS RDS and do **not** trigger replacement in Pulumi.\n\n**How to verify:** Run `pulumi preview --diff` and look for lines like:\n```\n  ~ aws:rds/instance:Instance  mydb  replace  [id=...]; properties: [~multiAz, ~storageEncrypted (requires replacement)]\n```\n\n---\n\n### 2. What does `pulumi up --target` skip?\n`pulumi up --target <urn>` (or `--targets`) **skips**:\n- **All non-targeted resources**: They are excluded from both the planning phase and execution. Pulumi does not compute diffs, register, or mutate them.\n- **Unrelated dependency resolution**: Only the direct/indirect dependencies required to satisfy the targeted URN(s) are evaluated. Upstream resources that are already current are skipped entirely.\n- **Parallel execution branches**: The deployment engine only schedules operations within the target subgraph, bypassing concurrency for the rest of the stack.\n- **State updates for unrelated resources**: Only the targeted URN(s) and their evaluated dependencies get state refreshes or mutations.\n\n\u26a0\ufe0f **Caveat**: `--target` does **not** skip stack validation or policy checks. Misusing it (e.g., targeting a resource while its required dependencies are out-of-sync) can result in deployment failures or partial state. Pulumi will warn if the target graph is incomplete.\n\n---\n\n### 3. How does Pulumi handle secrets in outputs?\nPulumi manages secrets via the `pulumi.Output<T>` type with built-in cryptographic handling:\n- **Declaration**: Outputs are wrapped with `pulumi.secret()` or read via `config.requireSecret()`. In Python: `output_val.apply(lambda x: pulumi.Output.secret(x))`.\n- **Encryption at rest**: The stack's configured secret provider (Pulumi Cloud, AWS KMS, GCP KMS, Azure Key Vault, or passphrase) automatically encrypts secret values in the `.pulumi/stacks/*.json` state file. **Never stored in plaintext in Git**.\n- **CLI/Log masking**: Console output, `pulumi logs`, and diff previews replace secret values with `<<secret>>`.\n- **Transparent decryption**: When accessed at runtime via `.apply()`, `pulumi stack output`, or the Pulumi API, values are decrypted automatically using the stack's provider. Code treats them as normal `Output` objects; no manual decryption step is required.\n- **Config secrets**: For your dev spec, `config.requireSecret(\"db_connection_string\")` pulls from encrypted stack config (`pulumi config set --secret`). Prod can integrate with AWS Secrets Manager or KMS via `pulumi.Config` + provider, maintaining the same abstraction.\n\nThis aligns with your acceptance criteria: secrets are encrypted at rest, masked in transit/logs, and never exposed in plaintext to version control or runtime logs.",
-  "extracted_files": [
-    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-v1h000ch/generated_0.txt"
-  ]
+  "error": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
 }

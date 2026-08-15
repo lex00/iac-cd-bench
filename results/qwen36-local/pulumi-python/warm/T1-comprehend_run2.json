@@ -6,24 +6,9 @@
   "condition": "warm",
   "stages": {
     "lint": {
-      "passed": true,
-      "logs": "[ruff check] python3: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
-    },
-    "static": {
-      "passed": true,
-      "logs": "NOT FOUND: pulumi"
-    },
-    "semantic": {
-      "passed": true,
-      "logs": "no semantic tests",
-      "passed_count": 0,
-      "total_count": 0,
-      "safety_pass": true
+      "passed": false,
+      "logs": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
     }
   },
-  "tokens": {
-    "input": 682,
-    "output": 4166
-  },
-  "content": "\n\nHere\u2019s a precise breakdown of Pulumi\u2019s behavior for each question, grounded in Python SDK mechanics and AWS RDS provider semantics:\n\n### 1. Which property triggered the replace on the DB?\nPulumi explicitly annotates the offending property in the preview diff with a `[replaces]` tag. For `aws.rds.Instance`, replacement is triggered when a property marked as `requiresReplacement` in the provider schema changes. Common triggers in your scenario include:\n- `multi_az` (flipping `False \u2192 True` forces replacement)\n- `storage_encrypted` (enabling encryption on an unencrypted instance)\n- `instance_class` (changing instance type in some provider versions)\n- Major `engine_version` upgrades or `engine` type changes\n\n**How to identify it in the preview:**\n```text\n~ aws:rds/instance:prod-db [replace]\n    ~ instanceClass : \"db.t3.micro\" => \"db.t3.medium\"\n    + multiAz       : true [replaces]\n    ~ allocatedStorage: 20 => 100\n```\nThe `[replaces]` suffix on `multiAz` tells you exactly which change broke in-place upgradability. Pulumi delegates this to the AWS RDS provider schema; it never guesses.\n\n### 2. What does `pulumi up --target` skip?\n`--target <URN>` restricts execution to **only** the specified resource(s). It skips:\n- All other resources flagged for `create`, `update`, or `delete` in the preview\n- Non-targeted resources and their upstream/downstream dependencies (unless `--target-dependents` is explicitly added)\n- Any cross-resource outputs that aren't part of the target subgraph\n\n**Behavioral notes:**\n- It executes a surgical deployment against a subset of the resource graph.\n- Pulumi still computes the full plan, but the executor filters the operation queue to match `--target`.\n- \u26a0\ufe0f Risk: Leaves partial stack state if the target resource depends on or blocks other resources. Use sparingly (typically for debugging or rolling back a single failed resource).\n\n### 3. How does Pulumi handle secrets in outputs?\nPulumi\u2019s secret lifecycle is layered across marking, state encryption, and CLI masking:\n\n| Layer | Behavior |\n|-------|----------|\n| **Marking** | `pulumi.secret(value)` or `pulumi.ConfigSecret(\"key\")` tags an output as sensitive. Python SDK respects this at the `Output` level. |\n| **State Storage** | Values are encrypted at rest using the stack\u2019s configured encryption provider (passphrase, AWS KMS, Azure Key Vault, GCP KMS, etc.). The state file never contains plaintext. |\n| **Preview/CLI** | All diffs, logs, and UI render secrets as `[secret]` or `***`. Plaintext is never streamed to stdout, telemetry, or audit logs. |\n| **Retrieval** | Decrypted on-demand via `pulumi stack output <name>` (or `pulumi stack output --show-secrets` in older versions). In Python, accessing via `.apply()` or direct interpolation automatically decrypts within the program execution context. |\n\n**Python-specific nuance:**  \n`ConfigSecret` reads encrypted stack config and returns an `Output[str]` that behaves like any other output but carries the `secret` flag. When exported (`pulumi.export(\"conn_str\", secret_output)`), the state encrypts it, and subsequent `stack output` calls decrypt it transparently. The CLI never leaks it unless explicitly requested.\n\n---\nLet me know if you want a concrete Python snippet demonstrating secret handling or a breakdown of how to safely recover from a `--target` partial deployment."
+  "error": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
 }

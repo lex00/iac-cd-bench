@@ -7,30 +7,8 @@
   "stages": {
     "lint": {
       "passed": false,
-      "logs": "[ruff check] python3: exit=1\nF401 [*] `pulumi` imported but unused\n --> generated_0.py:1:8\n  |\n1 | import pulumi\n  |        ^^^^^^\n2 | import pulumi_aws as aws\n3 | import pulumi_eks as eks\n  |\nhelp: Remove unused import: `pulumi`\n  |\n  - import pulumi\n1 | import pulumi_aws as aws\n  |\n\nF821 Undefined name `eks`\n --> generated_1.py:1:14\n  |\n1 | node_group = eks.ManagedNodeGroup(\n  |              ^^^\n2 |     \"app-node-group\",\n3 |     ...,\n  |\n\nF821 Undefined name `pulumi`\n --> generated_1.py:4:10\n  |\n2 |     \"app-node-group\",\n"
-    },
-    "static": {
-      "passed": true,
-      "logs": "NOT FOUND: pulumi"
-    },
-    "semantic": {
-      "passed": true,
-      "logs": "no semantic tests",
-      "passed_count": 0,
-      "total_count": 0,
-      "safety_pass": true
+      "logs": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
     }
   },
-  "tokens": {
-    "input": 649,
-    "output": 5252
-  },
-  "content": "\n\nHere\u2019s the idiomatic Pulumi (Python) implementation to add an auto-scaling policy without triggering any replacements, aligned with your canonical spine and environment separation model.\n\n### 1. Pulumi Python Implementation\n```python\nimport pulumi\nimport pulumi_aws as aws\nimport pulumi_eks as eks\nfrom pulumi import Config\n\ncfg = Config(\"app\")\n\n# 1. Reference existing infrastructure (already deployed & in state)\ncluster = eks.Cluster(\"app-cluster\", ...)\nnode_group = eks.ManagedNodeGroup(\n    \"app-node-group\",\n    ...,\n    cluster=cluster.core\n)\n\n# 2. Add auto-scaling policy (PURELY ADDITIVE)\nscaling_policy = aws.autoscaling.Policy(\n    \"cpu-target-tracking-policy\",\n    auto_scaling_group_name=node_group.autoscaling_group_name,\n    policy_name=\"CpuTargetTracking\",\n    policy_type=\"TargetTrackingScaling\",\n    target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n        predefined_metric_specification=aws.autoscaling.PolicyPredefinedMetricSpecificationArgs(\n            predefined_metric_type=\"ASGCpuUtilization\",\n            resource_label=f\"autoscalinggroup/{node_group.autoscaling_group_name}\",\n        ),\n        target_value=cfg.get_float(\"scaling:targetCpu\", 50.0),\n    ),\n    # No pulumi.ResourceOptions needed. Default behavior: CREATE only.\n)\n```\n\n### 2. Why This Guarantees Zero Replacements\n| Concern | Pulumi Behavior |\n|---|---|\n| **New Resource** | `aws.autoscaling.Policy` is a standalone resource. Pulumi marks it `(create)` and leaves all existing resources untouched. |\n| **No Input Mutation** | The existing `ManagedNodeGroup`/ASG is only *referenced*, not modified. Pulumi never replaces when a resource is only read. |\n| **Idempotent Diff** | Running `pulumi preview` will show exactly **1 `(create)`** and **0 `(replace)`** or `(update)`. |\n| **State Safety** | Pulumi\u2019s DAG-based engine isolates resource boundaries. Adding a dependent policy does not re-plan the parent. |\n\n### 3. Dev/Prod Environment Separation\nAlign with your `dev.yaml` / `prod.yaml` stack config pattern:\n\n```yaml\n# infra/Pulumi.dev.yaml\napp:\n  scaling:\n    targetCpu: 40\n    minCapacity: 2\n    maxCapacity: 6\n\n# infra/Pulumi.prod.yaml\napp:\n  scaling:\n    targetCpu: 50\n    minCapacity: 4\n    maxCapacity: 12\n```\nRead them idiomatically:\n```python\ntarget_cpu = cfg.get_float(\"scaling:targetCpu\", 50.0)\n# min/max capacity scaling is handled by the ASG itself, not the policy\n```\n\n### 4. Safe Deployment Workflow\n1. **Isolate the change**: Commit *only* the policy addition. Do not modify existing resource blocks in the same PR.\n2. **Preview strictly**:\n   ```bash\n   pulumi preview -s dev\n   ```\n   Verify output shows:\n   ```\n     + creating aws:autoscaling/policy:Policy cpu-target-tracking-policy\n   ```\n   \u26a0\ufe0f If you see `(replace)` anywhere, an existing resource input changed. Revert that change or use `ignore_changes` defensively (see below).\n3. **Apply**:\n   ```bash\n   pulumi up -s dev\n   ```\n\n### 5. Defensive Pattern (If You Ever Must Modify Existing)\nIf future changes require updating a property that AWS/Pulumi marks as replacement-triggering, protect against it:\n```python\nnode_group = eks.ManagedNodeGroup(\n    \"app-node-group\",\n    ...,\n    opts=pulumi.ResourceOptions(\n        ignore_changes=[\"instance_types\", \"scaling_config.desired_size\"]\n    )\n)\n```\n*Note: Not needed for this task, but useful for spine maintenance.*\n\n### 6. Alignment with Acceptance Criteria\n- \u2705 **Environment Isolation**: Stack configs drive scaling targets; `dev` and `prod` deployments are independent.\n- \u2705 **No Replacement Risk**: Additive resource creation respects Pulumi\u2019s default update semantics.\n- \u2705 **Idiomatic Pulumi**: Uses `Config` for env separation, native AWS provider classes, and explicit type args.\n- \u2705 **Zero Downtime**: Target tracking policies can be created/attached while the ASG is running.\n\nRun `pulumi preview` before merging. If the diff only shows `(create)` for the policy, you\u2019re safe to deploy.",
-  "extracted_files": [
-    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b7b9z4nn/dev.yaml",
-    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b7b9z4nn/prod.yaml",
-    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b7b9z4nn/generated_0.py",
-    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b7b9z4nn/generated_0.txt",
-    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b7b9z4nn/generated_1.py"
-  ]
+  "error": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
 }
