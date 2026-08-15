@@ -260,7 +260,7 @@ class OpenAICompatAdapter(ModelAdapter):
         # kimi-k3 and qwen reasoning models do not accept temperature; use reasoning_effort instead
         if "kimi" in self.model.lower() or "qwen" in self.model.lower():
             payload["reasoning_effort"] = "max"
-            timeout = 300
+            timeout = 600
         else:
             payload["temperature"] = 0
             timeout = 120
