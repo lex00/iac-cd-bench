@@ -257,8 +257,8 @@ class OpenAICompatAdapter(ModelAdapter):
             payload["max_completion_tokens"] = 8192
         else:
             payload["max_tokens"] = 8192
-        # kimi-k3 does not accept temperature; use reasoning_effort instead
-        if "kimi" in self.model.lower():
+        # kimi-k3 and qwen reasoning models do not accept temperature; use reasoning_effort instead
+        if "kimi" in self.model.lower() or "qwen" in self.model.lower():
             payload["reasoning_effort"] = "max"
             timeout = 300
         else:
