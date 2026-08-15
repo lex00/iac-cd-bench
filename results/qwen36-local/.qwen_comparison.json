@@ -1,0 +1,186 @@
+{
+  "qwen36": {
+    "label": "Qwen 3.6 (cold, Aug 11)",
+    "condition": "cold",
+    "n_runs": 15,
+    "tasks": {
+      "T1-comprehend": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 0.0,
+        "static": 1.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.7777777777777778,
+        "tokens_in": 993.0,
+        "tokens_out": 4023.0
+      },
+      "T2-generate": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 0.0,
+        "static": 1.0,
+        "semantic": 0.0,
+        "sem_coverage": null,
+        "avg_composite": 0.6666666666666666,
+        "tokens_in": 940.0,
+        "tokens_out": 8192.0
+      },
+      "T3-modify": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 0.0,
+        "static": 1.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.7777777777777778,
+        "tokens_in": 828.0,
+        "tokens_out": 5255.0
+      },
+      "T4-debug": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 0.0,
+        "static": 1.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.7777777777777778,
+        "tokens_in": 811.0,
+        "tokens_out": 3281.0
+      },
+      "T5-review": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 0.0,
+        "static": 1.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.7777777777777778,
+        "tokens_in": 789.0,
+        "tokens_out": 3317.0
+      }
+    },
+    "overall": {
+      "pass1_mean": 0.0,
+      "avg_composite": 0.7555555555555555,
+      "tokens_in": 872.2,
+      "tokens_out": 4813.6
+    },
+    "lint_failure_sigs": {
+      "kubeconform stdin/no-files": 12,
+      "kubeconform: ERR: Error: 1:1: lexer: invalid input text \"'.'\"": 3
+    },
+    "static_failure_logs": {},
+    "semantic_detail": {},
+    "truncated_8192": [
+      "T2-generate_run0.json",
+      "T2-generate_run1.json",
+      "T2-generate_run2.json"
+    ]
+  },
+  "qwen38": {
+    "label": "Qwen 3.8 (warm, Aug 15)",
+    "condition": "warm",
+    "n_runs": 15,
+    "tasks": {
+      "T1-comprehend": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 1.0,
+        "passk": 1.0,
+        "lint": 1.0,
+        "static": 1.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.8888888888888888,
+        "tokens_in": 993.0,
+        "tokens_out": 4795.0
+      },
+      "T2-generate": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 1.0,
+        "static": 0.0,
+        "semantic": 0.0,
+        "sem_coverage": null,
+        "avg_composite": 0.6666666666666666,
+        "tokens_in": 940.0,
+        "tokens_out": 8192.0
+      },
+      "T3-modify": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 1.0,
+        "static": 0.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.7777777777777778,
+        "tokens_in": 828.0,
+        "tokens_out": 4868.0
+      },
+      "T4-debug": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 0.0,
+        "passk": 0.0,
+        "lint": 0.0,
+        "static": 1.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.7777777777777778,
+        "tokens_in": 811.0,
+        "tokens_out": 3326.0
+      },
+      "T5-review": {
+        "runs": 3,
+        "consistency": 1.0,
+        "pass1": 1.0,
+        "passk": 1.0,
+        "lint": 1.0,
+        "static": 1.0,
+        "semantic": 1.0,
+        "sem_coverage": null,
+        "avg_composite": 0.8888888888888888,
+        "tokens_in": 789.0,
+        "tokens_out": 3647.0
+      }
+    },
+    "overall": {
+      "pass1_mean": 0.4,
+      "avg_composite": 0.7999999999999999,
+      "tokens_in": 872.2,
+      "tokens_out": 4965.6
+    },
+    "lint_failure_sigs": {
+      "kubeconform: exit1": 3
+    },
+    "static_failure_logs": {
+      "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-k17otx9d/infra/s3-logs/base: exit=0 | kusto": 1,
+      "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6gvykj8f/infra/s3-logs/base: exit=0 | kusto": 1,
+      "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-1kc5vl1r/infra/s3-logs/base: exit=0 | kusto": 1,
+      "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zmh26htn/overlays/prod: exit=1 | ERR: Error": 1,
+      "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-48hdtxo7/overlays/prod: exit=1 | ERR: Error": 1,
+      "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-czl5olqv/overlays/prod: exit=1 | ERR: Error": 1
+    },
+    "semantic_detail": {},
+    "truncated_8192": [
+      "T2-generate_run0.json",
+      "T2-generate_run1.json",
+      "T2-generate_run2.json"
+    ]
+  }
+}
