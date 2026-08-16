@@ -1,0 +1,29 @@
+{
+  "model": "claude-opus-5",
+  "task": "T4-debug",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mInitializing provider plugins found in the configuration...\u001b[0m\n- Finding hashicorp/aws versions matching \"~> 5.0\"...\n- Installing hashicorp/aws v5.100.0...\n- Installed hashicorp/aws v5.100.0 (signed by HashiCorp)\n\n\n\nTerraform has created a lock file \u001b[1m.terraform.lock.hcl\u001b[0m to record the provider\nselections it made above. Include this file in your version control repository\nso that Terraform can guarantee to make the same selections by default when\nyou run \"terraform init\" in the fut\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1652,
+    "output": 16384
+  },
+  "content": ""
+}
