@@ -230,13 +230,14 @@ class AnthropicAdapter(ModelAdapter):
 class OpenAICompatAdapter(ModelAdapter):
     """OpenAI-compatible adapter (works with vLLM, LM Studio, any compatible server)."""
 
-    def __init__(self, model: str, base_url: str, api_key: str = "«redacted:sk-…»"):
+    def __init__(self, model: str, base_url: str, api_key: str = "«redacted:sk-…»", reasoning_effort: str | None = None):
         self.model = model
         self.base_url = base_url.rstrip("/")
         # Strip /v1 suffix if present to avoid double /v1 paths
         if self.base_url.endswith("/v1"):
             self.base_url = self.base_url[:-3]
         self.api_key = api_key
+        self.reasoning_effort = reasoning_effort
         self._url = f"{self.base_url}/v1/chat/completions"
 
     @property
@@ -259,7 +260,10 @@ class OpenAICompatAdapter(ModelAdapter):
             payload["max_tokens"] = 8192
         # kimi-k3 and qwen reasoning models do not accept temperature; use reasoning_effort instead
         if "kimi" in self.model.lower() or "qwen" in self.model.lower():
-            payload["reasoning_effort"] = "max"
+            if self.reasoning_effort is not None:
+                payload["reasoning_effort"] = self.reasoning_effort
+            else:
+                payload["reasoning_effort"] = "max"
             timeout = 600
         else:
             payload["temperature"] = 0
@@ -404,6 +408,8 @@ def main() -> None:
     parser.add_argument("--e2e", action="store_true", help="Include e2e validation tier")
     parser.add_argument("--condition", default="warm", choices=["warm", "cold"])
     parser.add_argument("--api-key", default=None, help="API key (defaults to env ANTHROPIC_API_KEY)")
+    parser.add_argument("--reasoning-effort", default=None,
+                        help="Reasoning effort for reasoning models (e.g. none, low, high, max)")
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -420,7 +426,8 @@ def main() -> None:
     if args.model_provider == "anthropic":
         adapter: ModelAdapter = AnthropicAdapter(args.model, api_key)
     else:
-        adapter = OpenAICompatAdapter(args.model, base_url or "http://localhost:8000", api_key)
+        adapter = OpenAICompatAdapter(args.model, base_url or "http://localhost:8000", api_key,
+                                      reasoning_effort=args.reasoning_effort)
 
     # Discover tasks
     all_results: list[dict[str, Any]] = []
