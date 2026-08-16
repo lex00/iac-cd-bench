@@ -1,0 +1,37 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-807npg9d/generated_0.ts(5,65): error TS1109: Expression expected.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 622,
+    "output": 918
+  },
+  "content": "I'll analyze this Pulumi preview JSON for the three specified security issues. Let me examine each concern systematically.\n\n## Security Review Findings\n\n### \ud83d\udd34 Critical: Secret in Plaintext Outputs\n\n**Issue:** Database connection string exposed in plaintext in the `diff` and `outputs` sections.\n\n**Evidence from preview:**\n```json\n\"outputs\": {\n  \"dbConnectionString\": \"postgres://admin:SuperSecret123!@prod-db.xyz.us-east-1.rds.amazonaws.com:5432/appdb\"\n}\n```\n\n**Risk:** \n- Credentials visible in CI/CD logs, state files, and version control\n- Violates spec requirement: *\"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"*\n\n**Required Fix:**\n```typescript\n// \u274c Current (inferred from preview)\nexport const dbConnectionString = pulumi.interpolate`postgres://...`;\n\n// \u2705 Correct\nconst dbSecret = new aws.secretsmanager.Secret(\"db-secret\", {...});\nexport const dbConnectionString = pulumi.secret(dbSecret.arn); // Mark as secret\n// Or use Pulumi ConfigSecret as specified in the scenario\n```\n\n---\n\n### \ud83d\udd34 Critical: Replacement of Stateful Resource\n\n**Issue:** RDS instance marked for **replacement** (`\"action\": \"replace\"`) rather than update.\n\n**Evidence from preview:**\n```json\n{\n  \"action\": \"replace\",\n  \"type\": \"aws:rds/instance:Instance\",\n  \"name\": \"prod-db\",\n  \"diff\": {\n    \"instanceClass\": \"db.t3.medium\",  // Changed from db.t3.micro?\n    \"multiAz\": true\n  }\n}\n```\n\n**Risk:**\n- **Data loss:** Replacement destroys the existing database and creates a new one\n- **Downtime:** Production outage during migration\n- **State drift:** Connection strings, endpoints, and ARNs change\n\n**Required Fix:**\n```typescript\nconst db = new aws.rds.Instance(\"prod-db\", {\n  // ... other config\n  instanceClass: \"db.t3.medium\",\n  multiAz: true,\n  // Prevent replacement on minor changes\n  applyImmediately: false, // Wait for maintenance window\n  deletionProtection: true, // Required by spec\n  // Use pulumi up --target for controlled updates\n});\n```\n\n**Operational Fix:** If replacement is truly needed, use `pulumi up --target` with manual snapshot/restore procedures, or use `pulumi state rename` if logical name changed.\n\n---\n\n### \ud83d\udfe1 High: Missing Protect Flag\n\n**Issue:** No `protect: true` on stateful resources (RDS, S3 bucket).\n\n**Evidence from preview:**\n```json\n{\n  \"type\": \"aws:rds/instance:Instance\",\n  \"name\": \"prod-db\",\n  \"protect\": false  // or missing entirely\n}\n```\n\n**Risk:**\n- Accidental `pulumi destroy` deletes production database\n- No safeguard against automation errors\n- Violates spec: *\"RDS: deletion protection on\"*\n\n**Required Fix:**\n```typescript\nconst db = new aws.rds.Instance(\"prod-db\", {\n  // ... config\n}, { \n  protect: true  // Pulumi-level protection\n});\n\nconst bucket = new aws.s3.Bucket(\"app-assets\", {\n  // ... config\n}, { \n  protect: true \n});\n```\n\n**Note:** This complements (doesn't replace) AWS-level `deletionProtection: true` on RDS.\n\n---\n\n## Summary Checklist\n\n| Issue | Severity | Status | Remediation |\n|-------|----------|--------|-------------|\n| Secret in plaintext | \ud83d\udd34 Critical | Found | Use `pulumi.secret()` or ConfigSecret |\n| Stateful replacement | \ud83d\udd34 Critical | Found | Review diff; use `applyImmediately: false` |\n| Missing protect flag | \ud83d\udfe1 High | Found | Add `protect: true` to RDS/S3 |\n\n## Recommended Actions\n\n1. **Immediately:** Rotate the exposed database credentials (`SuperSecret123!` is compromised)\n2. **Before merge:** Add `protect: true` to all stateful resources\n3. **Before apply:** Verify RDS replacement is intentional; if not, use `pulumi up --target` with `--diff` to isolate changes\n4. **Process:** Enable Pulumi's `--suppress-outputs` in CI to prevent secret leakage in logs\n\nWould you like me to provide the corrected TypeScript resource definitions for the prod stack?",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-807npg9d/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-807npg9d/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-807npg9d/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-807npg9d/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-807npg9d/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-807npg9d/generated_2.ts"
+  ]
+}

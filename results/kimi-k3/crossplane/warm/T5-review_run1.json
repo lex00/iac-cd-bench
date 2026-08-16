@@ -1,0 +1,29 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 616,
+    "output": 864
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Critical Issues\n\n### \ud83d\udd34 P0 \u2014 Bucket Versioning Dropped\n\n**Violates Acceptance Criterion #1: \"Bucket: versioning enabled\"**\n\nThis is a hard spec violation. The canonical scenario explicitly requires versioning on both dev and prod buckets. Dropping it means:\n\n- No protection against accidental overwrites/deletes of application assets\n- Prod's cross-region replication to us-west-2 likely **depends on versioning** \u2014 S3 replication requires versioning enabled on both source and destination buckets. Removing versioning silently breaks replication.\n\n```yaml\n# What's likely in the diff \u2014 versioning block removed:\n# BEFORE\nversioningConfiguration:\n  status: Enabled\n\n# AFTER \u2014 gone entirely\n```\n\n**Recommendation:** Restore `versioningConfiguration.status: Enabled` unconditionally in the composition. If the motivation was cost, address it with lifecycle rules (e.g., expire noncurrent versions after N days) rather than removing versioning entirely.\n\n---\n\n### \ud83d\udfe1 P1 \u2014 `deletionPolicy: Delete` Added Provider-Wide\n\nThis is a **policy-level footgun**, not a spec violation per se, but it interacts dangerously with the environment isolation criterion (#7) and the RDS deletion protection criterion (#2).\n\n**The problem:** Setting `deletionPolicy: Delete` at the provider level means every managed resource inherits it unless explicitly overridden. For stateless dev resources this is fine. For prod, this means:\n\n- Deleting a Crossplane managed resource (or its claim) **immediately destroys the real cloud resource**\n- RDS instance: spec requires deletion protection ON. If the composition sets `deletionProtection: true` on the RDS instance, you get a conflict \u2014 Crossplane issues a delete, AWS refuses, the managed resource enters a stuck/error state. If the composition *doesn't* set deletion protection (relying on `deletionPolicy: Orphan` as the guard), then `Delete` removes that safety net entirely.\n- S3 bucket: deleting the managed resource deletes the bucket and all versioned objects (if versioning were still enabled).\n\n**Recommendation:** Use `deletionPolicy` per-resource in the composition, not provider-wide:\n\n```yaml\n# In the composition, per resource:\n- name: rds-instance\n  base:\n    spec:\n      deletionPolicy: Orphan  # or Delete only for dev via patch\n      forProvider:\n        deletionProtection: true\n        # ...\n\n- name: app-bucket\n  base:\n    spec:\n      deletionPolicy: Orphan  # prod\n      # patches can override to Delete for dev\n```\n\nIf you must set a provider-wide default, use `Orphan` and opt **into** `Delete` for dev resources explicitly. The blast radius of an accidental `kubectl delete` on a prod claim should be \"Crossplane stops managing it,\" not \"the database is gone.\"\n\n---\n\n## Secondary Observations\n\n### Composition Parameter Drift Risk\n\nIf versioning was previously a hardcoded field in the composition and is now being removed (rather than parameterized), it suggests the composition may be drifting from the canonical spec. Check whether:\n\n- Versioning should be a **composition parameter** (always `Enabled` per spec, but the pattern matters for other fields)\n- The diff accidentally removed it while refactoring for environment-specific patching\n\n### Interaction Between the Two Changes\n\nThese two changes compound: `deletionPolicy: Delete` + no versioning = **unrecoverable data loss path**. Previously, even if a bucket was deleted, versioned objects in a replicated bucket (prod) provided a recovery path. Now:\n\n1. Claim deleted \u2192 bucket deleted (due to `Delete` policy)\n2. No versioning \u2192 no object history\n3. No replication (broken by missing versioning) \u2192 no cross-region copy\n\n---\n\n## Summary Verdict\n\n| Change | Verdict | Action |\n|---|---|---|\n| `deletionPolicy: Delete` provider-wide | **Reject as-is** | Scope to dev resources only; default to `Orphan` for prod |\n| Bucket versioning dropped | **Reject** | Restore; required by spec and by S3 replication dependency |\n\nBoth changes need to be reworked before this diff is mergeable."
+}

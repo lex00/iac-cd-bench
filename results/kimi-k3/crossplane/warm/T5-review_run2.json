@@ -1,0 +1,29 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 616,
+    "output": 629
+  },
+  "content": "Here is the review of the Crossplane composition diff against the canonical scenario specification.\n\n### Critical Findings\n\n#### 1. `deletionPolicy: Delete` (Provider-wide)\n**Risk:** High \u2013 Data Loss / Environment Instability  \n**Spec Violation:** Implicit violation of production data safety expectations (Acceptance Criteria #2 implies persistence protection via \"deletion protection on\" for RDS; extending this to S3 and other managed resources is standard practice for stateful infrastructure).\n\n**Analysis:**  \nSetting `deletionPolicy: Delete` at the `ProviderConfig` level forces the Crossplane AWS provider to issue a hard delete to the AWS API when a Managed Resource (MR) is removed from the cluster. This bypasses the default `Orphan` behavior that preserves cloud resources.\n\n*   **Prod Impact:** If the Production `Composition` or `Claim` is accidentally deleted (e.g., `kubectl delete -f prod-claim.yaml`, namespace deletion, or GitOps sync wave error), the S3 bucket (with versioned assets) and RDS instance will be **permanently destroyed**. This violates the spirit of environment isolation and data durability required for production workloads.\n*   **Dev Impact:** While aggressive deletion is sometimes acceptable in ephemeral dev environments, applying this provider-wide removes the ability to selectively protect critical dev data (e.g., shared test datasets).\n\n**Recommendation:**  \n*   **Revert to `Orphan` (default)** for the Prod `ProviderConfig` (or omit the field entirely).\n*   If `Delete` is required for Dev cost optimization, scope it **only** to the Dev `ProviderConfig` and ensure the Dev `Composition` explicitly selects that config. Never apply `Delete` provider-wide in a multi-environment setup.\n\n#### 2. Bucket Versioning Dropped\n**Risk:** High \u2013 Non-compliance  \n**Spec Violation:** Acceptance Criteria #1 \u2013 *\"Bucket: versioning enabled\"*\n\n**Analysis:**  \nThe canonical specification explicitly requires versioning for both Dev and Prod S3 buckets. Removing `versioning: true` (or the `VersioningConfiguration` block) from the `Composition` (or the `Bucket` MR) renders the infrastructure non-compliant.\n\n*   **Consequence:** Objects overwritten or deleted in the bucket cannot be recovered. This breaks disaster recovery requirements and the specified topology.\n\n**Recommendation:**  \nRestore the `VersioningConfiguration` stanza in the S3 `Bucket` resource within the `Composition`. Ensure it is set to `Enabled` for both Dev and Prod parameter sets.\n\n---\n\n### Summary of Required Changes\n\n| Change | Action | Rationale |\n| :--- | :--- | :--- |\n| **`deletionPolicy: Delete`** | **Revert to `Orphan`** (or remove) | Prevents accidental data loss in Prod; aligns with stateful resource best practices. |\n| **Bucket Versioning** | **Restore `Enabled`** | Mandatory requirement per Acceptance Criteria #1. |\n\n**Verdict:** **Request Changes**. The current diff introduces significant data loss risk and violates explicit compliance requirements."
+}

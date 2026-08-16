@@ -1,0 +1,39 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] python3: exit=1\nF401 [*] `pulumi` imported but unused\n --> generated_0.py:1:8\n  |\n1 | import pulumi\n  |        ^^^^^^\n2 | import pulumi_aws as aws\n  |\nhelp: Remove unused import: `pulumi`\n  |\n  - import pulumi\n1 | import pulumi_aws as aws\n  |\n\nF821 Undefined name `kms_key`\n  --> generated_0.py:10:16\n   |\n 8 |     multi_az=True,                        # \u2190 mutable (with downtime)\n 9 |     storage_encrypted=True,               # \u2190 IMMUTABLE \u2192 forces REPLACE\n10 |     kms_key_id=kms_key.arn,               # \u2190 IMMUTA"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 642,
+    "output": 1212
+  },
+  "content": "# Pulumi Preview Behavior Analysis\n\n## 1. Which Property Triggered the Replace?\n\nIn Pulumi, a **replace** on an RDS instance is triggered when an **immutable property** changes. For `aws.rds.Instance`, the properties that force replacement include:\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\ndb = aws.rds.Instance(\"app-db\",\n    engine=\"postgres\",\n    engine_version=\"15.4\",\n    instance_class=\"db.t3.medium\",       # \u2190 mutable (in-place update)\n    multi_az=True,                        # \u2190 mutable (with downtime)\n    storage_encrypted=True,               # \u2190 IMMUTABLE \u2192 forces REPLACE\n    kms_key_id=kms_key.arn,               # \u2190 IMMUTABLE \u2192 forces REPLACE\n    identifier=\"app-db-prod\",             # \u2190 IMMUTABLE \u2192 forces REPLACE\n    db_name=\"appdb\",                      # \u2190 IMMUTABLE \u2192 forces REPLACE\n    username=\"dbadmin\",                   # \u2190 IMMUTABLE \u2192 forces REPLACE\n    # ... other config\n)\n```\n\n**The most likely trigger in the dev\u2192prod transition is `storage_encrypted=True`** (or changing `kms_key_id`). Encryption can only be enabled at creation time on RDS. If the dev instance was created without encryption and the prod config adds it, Pulumi preview shows:\n\n```\n  ~ aws:rds/instance:Instance: (replace)\n      [id=db-abc123]\n      [urn=urn:pulumi:prod::myproject::aws:rds/instance:Instance::app-db]\n    ~ storageEncrypted: false => true\n```\n\nOther common replace triggers:\n- `identifier` \u2014 the physical RDS instance name\n- `db_name` \u2014 the initial database name\n- `username` \u2014 the master username\n- `engine` \u2014 changing database engine type\n\nThe preview output marks the triggering property with `~` and the resource with `(replace)`:\n\n```\nResources:\n    ~ 1 to replace\n    3 unchanged\n```\n\n---\n\n## 2. What Does `pulumi up --target` Skip?\n\n```bash\npulumi up --target urn:pulumi:prod::myproject::aws:rds/instance:Instance::app-db\n```\n\n`--target` **limits the operation to only the specified resource(s)**. It **skips**:\n\n| Skipped | Explanation |\n|---|---|\n| **All other resources** | Any resource not listed as a target is excluded from the update |\n| **Dependent resources** | Unless `--target-dependents` is also passed, resources that depend on the target are NOT updated |\n| **Stack outputs** | Outputs derived from non-targeted resources may show stale values |\n| **Implicit dependency updates** | If the DB replace would normally cascade to dependent resources (e.g., a Kubernetes Secret holding the connection string), those are skipped |\n\n```bash\n# To also update resources that depend on the DB:\npulumi up \\\n  --target urn:pulumi:prod::myproject::aws:rds/instance:Instance::app-db \\\n  --target-dependents\n```\n\n**Key behavior**: `--target` does NOT skip the dependency *analysis* \u2014 Pulumi still builds the full dependency graph. It only skips the *execution* of changes to non-targeted resources. The state file is updated only for targeted resources.\n\n---\n\n## 3. How Does Pulumi Handle Secrets in Outputs?\n\n### Configuration Secrets (Input Side)\n\n```python\n# pulumi config set db:password --secret \"s3cr3t\"\nconfig = pulumi.Config(\"db\")\ndb_password = config.require_secret(\"password\")\n# Type: Output[str] \u2014 wrapped as a secret\n```\n\nIn `Pulumi.prod.yaml`:\n```yaml\nconfig:\n  db:password:\n    secure: AAABAJ...<encrypted-with-stack-passphrase-or-KMS>...\n```\n\nThe value is **encrypted in the config file** using the stack's secrets provider (passphrase, AWS KMS, Azure Key Vault, etc.).\n\n### Output Propagation\n\n```python\n# Any Output that touches a secret becomes secret automatically\nconnection_string = pulumi.Output.all(\n    db.endpoint, db_password\n).apply(lambda args: f\"postgresql://dbadmin:{args[1]}@{args[0]}/appdb\")\n# connection_string is Output[str] AND marked as secret\n```\n\nPulumi tracks **secret-ness through the dataflow graph**:\n\n```\ndb_password (secret) \u2500\u2500\u2192 connection_string (secret) \u2500\u2500\u2192 k8s Secret data (secret)\n```\n\n### Display Behavior\n\n| Context | Secret Output Behavior |\n|---|---|\n| `pulumi preview` / `pulumi up` CLI | Shows `[secret]` instead of the value |\n| `pulumi stack output` | Shows `[secret]` unless `--show-secrets` flag is used |\n| State file | Stored encrypted with the stack's secrets provider |\n| `pulumi stack export` | Secrets are encrypted in the exported JSON |\n\n```bash\n$ pulumi stack output dbConnectionString\n[secret]\n\n$ pulumi stack output dbConnectionString --show-secrets\npostgresql://dbadmin:s3cr3t@db.xyz.rds.amazonaws.com:5432/appdb\n```\n\n### Explicit Secret Marking\n\n```python\n# Mark any output as secret explicitly\npulumi.export(\"dbConnectionString\", pulumi.Output.secret(connection_string))\n\n# Or unsecret (use with caution)\nplaintext = pulumi.Output.unsecret(connection_string)\n```\n\n### Summary\n\n| Aspect | Behavior |\n|---|---|\n| **Config secrets** | Encrypted in `Pulumi.<stack>.yaml` via stack secrets provider |\n| **Output secrets** | Propagated automatically through `Output.apply()` / `Output.all()` |\n| **CLI display** | Masked as `[secret]` by default |\n| **State file** | Encrypted at rest; never stored in plaintext |\n| **Stack export** | Remains encrypted in exported state JSON |",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/generated_2.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wsn2br5a/generated_3.py"
+  ]
+}
