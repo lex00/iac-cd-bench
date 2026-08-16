@@ -174,9 +174,10 @@ class ModelAdapter:
 class AnthropicAdapter(ModelAdapter):
     """Anthropic API adapter via httpx."""
 
-    def __init__(self, model: str, api_key: str):
+    def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None):
         self.model = model
         self.api_key = api_key
+        self.reasoning_effort = reasoning_effort
         self._url = "https://api.anthropic.com/v1/messages"
 
     @property
@@ -194,10 +195,36 @@ class AnthropicAdapter(ModelAdapter):
                     "text": f"File: {f.name}\n{f.read_text()}",
                 })
 
-        messages: list[dict[str, Any]] = [{"role": "user", "content": [
-            {"type": "text", "text": prompt},
-            *extra_content,
-        ]}]
+        messages: list[dict[str, Any]] = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                *extra_content,
+            ],
+        }]
+
+        payload: dict[str, Any] = {
+            "model": self.model,
+            "max_tokens": 16384,
+            "messages": messages,
+        }
+
+        # Opus 5.x uses adaptive thinking with output_config.effort
+        if self.model.startswith("claude-opus-5"):
+            if self.reasoning_effort and self.reasoning_effort != "none":
+                payload["thinking"] = {"type": "adaptive"}
+                payload["output_config"] = {"effort": self.reasoning_effort}
+                timeout = 600
+            else:
+                timeout = 120
+        # Older models with extended thinking (opus 4.x, sonnet 4.x)
+        elif self.reasoning_effort and self.reasoning_effort != "none" and (
+            "opus-4" in self.model or "sonnet-4" in self.model
+        ):
+            payload["thinking"] = {"type": "enabled", "budget_tokens": 10240}
+            timeout = 600
+        else:
+            timeout = 120
 
         resp = httpx.post(
             self._url,
@@ -206,12 +233,8 @@ class AnthropicAdapter(ModelAdapter):
                 "anthropic-version": "2023-06-01",
                 "content-type": "application/json",
             },
-            json={
-                "model": self.model,
-                "max_tokens": 8192,
-                "messages": messages,
-            },
-            timeout=120,
+            json=payload,
+            timeout=timeout,
         )
         if not resp.is_success:
             log.error("Anthropic API error %s: %s", resp.status_code, resp.text[:1000])
@@ -424,7 +447,8 @@ def main() -> None:
     api_key = args.api_key or os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY") or "sk-placeholder"
 
     if args.model_provider == "anthropic":
-        adapter: ModelAdapter = AnthropicAdapter(args.model, api_key)
+        adapter: ModelAdapter = AnthropicAdapter(args.model, api_key,
+                                                 reasoning_effort=args.reasoning_effort)
     else:
         adapter = OpenAICompatAdapter(args.model, base_url or "http://localhost:8000", api_key,
                                       reasoning_effort=args.reasoning_effort)
