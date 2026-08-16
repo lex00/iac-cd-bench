@@ -6,24 +6,9 @@
   "condition": "warm",
   "stages": {
     "lint": {
-      "passed": true,
-      "logs": "[ruff check] python3: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
-    },
-    "static": {
-      "passed": true,
-      "logs": "NOT FOUND: pulumi"
-    },
-    "semantic": {
-      "passed": true,
-      "logs": "no semantic tests",
-      "passed_count": 0,
-      "total_count": 0,
-      "safety_pass": true
+      "passed": false,
+      "logs": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
     }
   },
-  "tokens": {
-    "input": 657,
-    "output": 2828
-  },
-  "content": "\n\nI\u2019m ready to review. Please paste the **Pulumi preview JSON** (output of `pulumi preview --json` or `pulumi preview --show-reads --json`). \n\nIn the meantime, here\u2019s the exact review framework I will apply once you provide it, mapped to your canonical scenario and acceptance criteria:\n\n---\n### \ud83d\udd0d How I\u2019ll Analyze Your Preview JSON\n\n#### 1. \ud83d\udea8 Secrets in Plaintext Outputs\n**JSON Indicators:**\n- `resourceChanges[].outputs` or top-level `outputs` containing actual credential strings (e.g., `postgres://user:password@...`)\n- Missing `secure: true` or `encrypted: true` markers on secret exports\n- `new.inputs` or `diff` exposing DB connection strings, ACM secrets, or IAM credentials\n\n**Acceptance Criteria Check:** \n- `Secret` must be encrypted at rest via Pulumi `ConfigSecret` or `pulumi.export(..., secret=True)`. Any plaintext representation in the preview JSON violates this.\n\n#### 2. \ud83d\udd04 Replacement of Stateful Resources\n**JSON Indicators:**\n- `resourceChanges[].replace: true` or `operation: \"replace\"`\n- `urn` changes for: `aws:rds/instance:Instance`, `aws:s3/bucket:Bucket`, `aws:eks/cluster:Cluster`, `aws:eks/nodeGroup:NodeGroup`\n- `changes` showing immutable property updates (e.g., `engineVersion`, `allocatedStorage`, `versioning`, `kmsKeyId`, `clusterVersion`)\n\n**Acceptance Criteria Check:**\n- RDS, S3, and EKS replacements risk data loss or downtime. I\u2019ll flag if changes trigger replacements and verify if `deletionProtection`/`backupRetentionPeriod` are preserved in the `new` spec.\n\n#### 3. \ud83d\udee1\ufe0f Missing `protect` Flag\n**JSON Indicators:**\n- `resourceChanges[].protect: false` or absent on stateful/critical resources\n- Commonly missing on: RDS instances, S3 buckets (data stores), EKS clusters, IAM roles/policies used by workloads\n\n**Acceptance Criteria Check:**\n- Pulumi `protect: True` prevents accidental state deletion. I\u2019ll verify it\u2019s explicitly set on all stateful resources (RDS, S3, EKS) and note if it\u2019s only applied to prod but not dev (or vice versa).\n\n---\n### \ud83d\udccb Acceptance Criteria Cross-Reference\n| Criteria | JSON Validation Point |\n|----------|----------------------|\n| **Bucket** | `versioning`, `serverSideEncryption`, `publicAccessBlock` in `new.inputs`/`diff` |\n| **RDS** | `deletionProtection: true`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false`, `multiAz` (prod) |\n| **Secret** | No plaintext values; `secure: true` on exports/config |\n| **IAM** | No `Action: \"*\"` or `Resource: \"*\"` in policy documents; OIDC trust in `assumeRolePolicy` (prod) |\n| **Cluster** | `instanceTypes`, `desiredCapacity`/`minSize`/`maxSize` match dev/prod specs |\n| **HTTPS** | `listener.443`, `certificateArn`, no forced 80\u2192443 redirect rules |\n| **Env Isolation** | Separate `stack`/`project` URNs; no cross-stack resource mutations |\n\n---\n### \ud83d\udce4 What I\u2019ll Return Upon Receiving Your JSON\n```markdown\n## Pulumi Preview Security Review\n\n### \ud83d\udd34 Critical Findings\n- [Secret/Replacement/Protect issues with exact URN, line reference, and remediation]\n\n### \ud83d\udfe1 Warnings / Config Drift\n- [Stateful resource changes, missing protect, public access flags, etc.]\n\n### \u2705 Pass\n- [Criteria met with evidence from JSON]\n\n### \ud83d\udee0\ufe0f Recommended Pulumi Code Fixes\n- [Exact Python snippet to apply `secret=True`, `replace=False`, or `protect=True`]\n```\n\n**Please paste the JSON output.** I\u2019ll run the analysis immediately and return findings mapped to your stack spec. If you prefer, I can also provide a quick `jq`/Python parser to auto-flag these three checks before you paste it."
+  "error": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
 }

@@ -7,8 +7,8 @@
   "stages": {
     "lint": {
       "passed": false,
-      "logs": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
+      "logs": "[Errno 60] Operation timed out"
     }
   },
-  "error": "Server error '503 Service Unavailable' for url 'https://vllm.biggs.dog/v1/chat/completions'\nFor more information check: https://developer.mozilla.org/en-US/docs/Web/HTTP/Status/503"
+  "error": "[Errno 60] Operation timed out"
 }
