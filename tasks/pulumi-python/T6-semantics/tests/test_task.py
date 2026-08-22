@@ -16,8 +16,13 @@ def _load_answers() -> dict:
             continue
     out = ws / "model_output.md"
     if out.exists():
-        blocks = re.findall(r"```json\s*\n(.*?)```", out.read_text(), re.DOTALL)
-        for raw in reversed(blocks):
+        text = out.read_text()
+        # Accept any fence info string (```json, ```answers.json, bare ```, etc.)
+        blocks = re.findall(r"```([\w.-]*)[ \t]*\n(.*?)```", text, re.DOTALL)
+        for _info, raw in reversed(blocks):
+            raw = raw.strip()
+            if not raw.startswith("{"):
+                continue
             try:
                 return json.loads(raw)
             except Exception:

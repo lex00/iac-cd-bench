@@ -25,7 +25,8 @@ LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
         ("terraform", ["validate"], "validate"),
     ],
     "pulumi-python": [
-        ("python3", ["-m", "ruff", "check", "--select", "E,F", "."], "ruff check"),
+        (str(Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"),
+         ["-m", "ruff", "check", "--select", "E,F", "."], "ruff check"),
     ],
     "pulumi-typescript": [
         ("tsc", ["--noEmit", "--skipLibCheck"], "tsc check"),
