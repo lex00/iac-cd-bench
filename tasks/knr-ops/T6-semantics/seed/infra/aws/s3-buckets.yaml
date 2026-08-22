@@ -1,0 +1,28 @@
+apiVersion: s3.services.k8s.aws/v1alpha1
+kind: Bucket
+metadata:
+  name: app-artifacts
+  namespace: default
+spec:
+  name: knr-app-artifacts-prod
+  versioning:
+    status: Enabled
+  publicAccessBlock:
+    blockPublicACLs: true
+    blockPublicPolicy: true
+    ignorePublicACLs: true
+    restrictPublicBuckets: true
+  encryption:
+    rules:
+      - applyServerSideEncryptionByDefault:
+          sseAlgorithm: AES256
+---
+apiVersion: s3.services.k8s.aws/v1alpha1
+kind: Bucket
+metadata:
+  name: app-logs
+  namespace: default
+spec:
+  name: knr-app-logs-prod
+  versioning:
+    status: Suspended

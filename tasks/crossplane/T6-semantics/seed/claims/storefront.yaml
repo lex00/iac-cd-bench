@@ -1,0 +1,14 @@
+apiVersion: platform.example.org/v1alpha1
+kind: WebService
+metadata:
+  name: storefront
+  namespace: team-a
+spec:
+  parameters:
+    bucketName: storefront-artifacts-prod
+    region: eu-north-1
+  compositionUpdatePolicy: Manual
+  compositionRef:
+    name: webservice-aws
+  writeConnectionSecretToRef:
+    name: storefront-conn

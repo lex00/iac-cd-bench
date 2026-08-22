@@ -1,0 +1,35 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: CompositeResourceDefinition
+metadata:
+  name: xwebservices.platform.example.org
+spec:
+  group: platform.example.org
+  names:
+    kind: XWebService
+    plural: xwebservices
+  claimNames:
+    kind: WebService
+    plural: webservices
+  connectionSecretKeys:
+    - bucketName
+    - roleArn
+  versions:
+    - name: v1alpha1
+      served: true
+      referenceable: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              properties:
+                parameters:
+                  type: object
+                  properties:
+                    bucketName:
+                      type: string
+                    region:
+                      type: string
+                  required:
+                    - region

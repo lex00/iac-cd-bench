@@ -1,0 +1,22 @@
+apiVersion: rds.services.k8s.aws/v1alpha1
+kind: DBInstance
+metadata:
+  name: app-db
+  namespace: default
+  annotations:
+    services.k8s.aws/deletion-policy: retain
+spec:
+  dbInstanceIdentifier: app-db-prod
+  dbInstanceClass: db.t3.micro
+  engine: postgres
+  engineVersion: "15.4"
+  allocatedStorage: 20
+  storageType: gp3
+  masterUsername: appadmin
+  masterUserPassword:
+    namespace: default
+    name: app-db-secret
+    key: password
+  multiAZ: false
+  publiclyAccessible: false
+  storageEncrypted: true

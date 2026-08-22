@@ -1,0 +1,4 @@
+config:
+  knr-app-ts:env: prod
+  knr-app-ts:apiToken:
+    secure: AAABAJ3+examplecipheronlyusedbypulumi+w==

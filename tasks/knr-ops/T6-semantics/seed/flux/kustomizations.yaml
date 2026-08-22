@@ -1,0 +1,66 @@
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-controllers
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./infra/controllers
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  wait: true
+  timeout: 5m
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: infra-aws
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./infra/aws
+  prune: true
+  dependsOn:
+    - name: infra-controllers
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+  healthChecks:
+    - apiVersion: s3.services.k8s.aws/v1alpha1
+      kind: Bucket
+      name: app-artifacts
+      namespace: default
+  timeout: 10m
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-dev
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./overlays/dev
+  prune: true
+  dependsOn:
+    - name: infra-aws
+  sourceRef:
+    kind: GitRepository
+    name: flux-system
+---
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: apps-prod
+  namespace: flux-system
+spec:
+  interval: 5m
+  path: ./overlays/prod
+  prune: false
+  suspend: true
+  dependsOn:
+    - name: apps-dev
+  sourceRef:
+    kind: GitRepository
+    name: flux-system

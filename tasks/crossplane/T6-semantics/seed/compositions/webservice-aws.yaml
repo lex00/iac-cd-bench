@@ -1,0 +1,54 @@
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: webservice-aws
+spec:
+  compositeTypeRef:
+    apiVersion: platform.example.org/v1alpha1
+    kind: XWebService
+  writeConnectionSecretsToNamespace: crossplane-system
+  resources:
+    - name: artifact-bucket
+      base:
+        apiVersion: s3.aws.upbound.io/v1beta1
+        kind: Bucket
+        spec:
+          deletionPolicy: Orphan
+          forProvider:
+            region: eu-north-1
+            forceDestroy: false
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.bucketName
+          toFieldPath: metadata.annotations[crossplane.io/external-name]
+        - type: FromCompositeFieldPath
+          fromFieldPath: spec.parameters.region
+          toFieldPath: spec.forProvider.region
+        - type: ToCompositeFieldPath
+          fromFieldPath: metadata.annotations[crossplane.io/external-name]
+          toFieldPath: status.bucketName
+    - name: app-role
+      base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: Role
+        spec:
+          deletionPolicy: Delete
+          forProvider:
+            assumeRolePolicy: |
+              {"Version": "2012-10-17", "Statement": []}
+      connectionDetails:
+        - name: roleArn
+          type: FromFieldPath
+          fromFieldPath: status.atProvider.arn
+    - name: role-attachment
+      base:
+        apiVersion: iam.aws.upbound.io/v1beta1
+        kind: RolePolicyAttachment
+        spec:
+          deletionPolicy: Delete
+          forProvider:
+            policyArn: arn:aws:iam::aws:policy/AmazonS3ReadOnlyAccess
+      patches:
+        - type: FromCompositeFieldPath
+          fromFieldPath: status.roleName
+          toFieldPath: spec.forProvider.role

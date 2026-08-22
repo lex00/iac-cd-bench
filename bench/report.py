@@ -15,13 +15,14 @@ ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
 
 STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
-ARCHETYPES = ["comprehend", "generate", "modify", "debug", "review"]
+ARCHETYPES = ["comprehend", "generate", "modify", "debug", "review", "semantics"]
 ARCHETYPE_LABELS = {
     "comprehend": "Comprehend",
     "generate": "Generate",
     "modify": "Modify",
     "debug": "Debug",
     "review": "Review",
+    "semantics": "Semantics",
 }
 
 

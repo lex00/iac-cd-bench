@@ -18,7 +18,7 @@ Every task lives in `tasks/<stack>/<task-id>/` with this contract:
 
 ```yaml
 stack: knr-ops|crossplane|terraform|pulumi-python|pulumi-typescript
-archetype: comprehend|generate|modify|debug|review
+archetype: comprehend|generate|modify|debug|review|semantics
 id: "T1-comprehend"
 title: "Predict delivery behavior from repo slice"
 
@@ -36,6 +36,8 @@ stages:
   semantic:
     enabled: true
     assertion_count: 5  # expected assertions in test_task.py
+    pass_threshold: 0.6 # optional: fraction of assertions that must pass;
+                        # omit = all must pass (pytest exit 0)
   e2e:
     enabled: false    # default false; requires --e2e flag
 
@@ -56,3 +58,14 @@ rubric:
   - criterion: "Flags destructive changes (recreate/delete)"
     weight: 3
 ```
+
+## Semantics tasks (T6)
+
+`T6-semantics` tasks probe runtime-behavior understanding of each stack: the
+model reads real config from `seed/` and predicts what the toolchain actually
+does (replace vs in-place, prune vs orphan, secret masking, ordering,
+lifecycle guards). Answers are a structured `answers.json` fenced block graded
+question-by-question in `tests/test_task.py` (each question = one pytest
+assertion, `pass_threshold` grants partial credit). Lint/static are disabled —
+the JSON answer sheet is not IaC code; the semantic stage carries the whole
+signal and runs with cwd set to the model's workspace.

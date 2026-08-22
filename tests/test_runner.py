@@ -30,15 +30,38 @@ def test_runner_executes():
 
 
 def test_task_dirs_exist():
-    """All 25 task directories exist."""
+    """All 30 task directories exist."""
     stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
-    task_names = ["T1-comprehend", "T2-generate", "T3-modify", "T4-debug", "T5-review"]
+    task_names = ["T1-comprehend", "T2-generate", "T3-modify", "T4-debug", "T5-review", "T6-semantics"]
     for stack in stacks:
         for task in task_names:
             task_dir = TASKS_DIR / stack / task
             assert task_dir.exists(), f"Task dir missing: {task_dir}"
             assert (task_dir / "prompt.md").exists(), f"Prompt missing: {task_dir}"
             assert (task_dir / "spec.yaml").exists(), f"Spec missing: {task_dir}"
+
+
+def test_semantics_tasks_have_graders():
+    """T6-semantics tasks ship a seed, golden key, and 7-question grader."""
+    stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
+    for stack in stacks:
+        t6 = TASKS_DIR / stack / "T6-semantics"
+        assert (t6 / "seed").is_dir(), f"seed/ missing: {t6}"
+        assert (t6 / "golden" / "answer_key.md").exists(), f"golden answer key missing: {t6}"
+        test_file = t6 / "tests" / "test_task.py"
+        assert test_file.exists(), f"grader missing: {t6}"
+        source = test_file.read_text()
+        graders = [l for l in source.splitlines() if l.startswith("def test_q")]
+        assert len(graders) == 7, f"{stack} T6 grader should have 7 question tests, has {len(graders)}"
+
+
+def test_semantics_golden_answers_pass_graders():
+    """Every T6 golden answer key passes its own grader (and empty fails)."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "tools" / "validate_t6.py")],
+        capture_output=True, text=True, cwd=str(ROOT), timeout=300,
+    )
+    assert result.returncode == 0, f"T6 self-validation failed:\n{result.stdout[-2000:]}"
 
 
 def test_golden_implementations_exist():

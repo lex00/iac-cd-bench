@@ -270,7 +270,20 @@ class OpenAICompatAdapter(ModelAdapter):
     def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
         import httpx
 
-        messages: list[dict[str, str]] = [{"role": "user", "content": prompt}]
+        # Append workspace files to the prompt (parity with AnthropicAdapter,
+        # which sends them as extra content blocks).
+        file_sections: list[str] = []
+        for f in files:
+            if f.is_file() and f.stat().st_size < 50000:
+                try:
+                    file_sections.append(f"File: {f.name}\n{f.read_text()}")
+                except (UnicodeDecodeError, OSError):
+                    continue
+        full_prompt = prompt
+        if file_sections:
+            full_prompt = prompt + "\n\n### Workspace files\n\n" + "\n\n".join(file_sections)
+
+        messages: list[dict[str, str]] = [{"role": "user", "content": full_prompt}]
 
         payload = {
             "model": self.model,
@@ -399,8 +412,8 @@ def run_task(
             # Stage 2: static
             result["stages"]["static"] = static.run_static(workspace, stack)
 
-            # Stage 3: semantic
-            result["stages"]["semantic"] = semantic.run_semantic(task_dir)
+            # Stage 3: semantic (runs in the model's workspace)
+            result["stages"]["semantic"] = semantic.run_semantic(task_dir, workspace)
 
             # Stage 4: e2e (gated)
             if run_e2e:

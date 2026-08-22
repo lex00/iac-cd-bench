@@ -1,0 +1,5 @@
+config:
+  knr-app:env: prod
+  knr-app:replicas: 4
+  knr-app:dbPassword:
+    secure: AAABAJ3+examplecipheronlyusedbypulumi+w==
