@@ -306,6 +306,15 @@ class OpenAICompatAdapter(ModelAdapter):
             if self.reasoning_effort and self.reasoning_effort != "none":
                 payload["reasoning_effort"] = self.reasoning_effort
             timeout = 300
+        elif "glm" in self.model.lower():
+            # GLM reasoning burns the whole budget on long IaC outputs;
+            # disable thinking unless explicitly requested
+            payload["temperature"] = 0
+            if self.reasoning_effort and self.reasoning_effort != "none":
+                payload["max_tokens"] = 32768  # room for thinking + answer
+            else:
+                payload["thinking"] = {"type": "disabled"}
+            timeout = 600
         else:
             payload["temperature"] = 0
             timeout = 120
