@@ -1,0 +1,30 @@
+{
+  "model": "claude-opus-5",
+  "task": "T6-semantics",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mInitializing provider plugins found in the configuration...\u001b[0m\n- Finding hashicorp/aws versions matching \"~> 5.0\"...\n- Installing hashicorp/aws v5.100.0...\n- Installed hashicorp/aws v5.100.0 (signed by HashiCorp)\n\n\n\nTerraform has created a lock file \u001b[1m.terraform.lock.hcl\u001b[0m to record the provider\nselections it made above. Include this file in your version control repository\nso that Terraform can guarantee to make the same selections by default when\nyou run \"terraform init\" in the fut\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q1_prevent_destroy_errors PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q2_count_shrink_destroys_highest_index PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q3_count_to_foreach_recreates PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q4_ignore_changes_suppresses_config_drift PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q5_ignore_changes_suppresses_remote_drift PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q7_destroy_blocked_by_prevent_destroy PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2603,
+    "output": 1346
+  },
+  "content": "```json\n{\n  \"q1\": \"error\",\n  \"q2\": [\"aws_subnet.private[2]\"],\n  \"q3\": \"destroy-and-recreate-all\",\n  \"q4\": \"no-change\",\n  \"q5\": \"no-change\",\n  \"q6\": \"update-in-place\",\n  \"q7\": {\"completes\": false, \"blocking_resource\": \"aws_s3_bucket.artifacts\"}\n}\n```\n\n**Reasoning (brief):**\n\n- **Q1:** `bucket` is a ForceNew attribute, so renaming to `knr-artifacts-staging` requires replacement \u2014 but `prevent_destroy = true` turns that into a hard plan-time error (`Instance cannot be destroyed`). No apply happens.\n- **Q2:** `count` indices are positional; shrinking 3 \u2192 2 drops the highest index only, `aws_subnet.private[2]`.\n- **Q3:** `private[0..2]` and `private[\"a\"|\"b\"|\"c\"]` are distinct addresses. Terraform sees the indexed instances as orphaned \u2192 destroys all three and creates three new ones (and it will emit a \"you must use `terraform state mv`/`moved`\" style note, but the plan itself is destroy+create).\n- **Q4:** `ignore_changes = [engine_version]` makes the config edit a no-op; plan reports no changes for that attribute.\n- **Q5:** Refresh writes `16.x` into state, and `ignore_changes` prevents Terraform from proposing a revert to `15.4` \u2014 no change.\n- **Q6:** `instance_class` is not ForceNew in the AWS provider; it's an in-place `ModifyDBInstance` (with a reboot/maintenance-window effect outside Terraform's diff).\n- **Q7:** `terraform destroy` fails at plan time on `aws_s3_bucket.artifacts` due to `prevent_destroy`; nothing is destroyed until that lifecycle block is removed."
+}
