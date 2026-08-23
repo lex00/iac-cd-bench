@@ -14,10 +14,11 @@
       "logs": "terraform validate: exit=1"
     },
     "semantic": {
-      "passed": false,
-      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
-      "passed_count": 0,
-      "total_count": 0,
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 3 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_no_circular_dependency PASSED [ 33%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_deletion_protection_in_prod PASSED [ 66%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_for_each_or_count_consistent PASSED [100%]\n\n============================== 3 passed in 0.01s ===============================\n",
+      "passed_count": 3,
+      "total_count": 3,
+      "pass_threshold": null,
       "safety_pass": true
     }
   },
@@ -40,5 +41,6 @@
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mnan6651/generated_10.tf",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mnan6651/generated_11.tf",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mnan6651/generated_0.txt"
-  ]
+  ],
+  "regraded_semantic": true
 }

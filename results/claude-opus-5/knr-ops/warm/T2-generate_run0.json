@@ -15,9 +15,10 @@
     },
     "semantic": {
       "passed": false,
-      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
-      "passed_count": 0,
-      "total_count": 0,
+      "logs": "oundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'flux/kustomizations.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'flux/kustomizations.yaml'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_manifest_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_encryption\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_public_access_blocked\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_flux_kustomization_added\n========================= 5 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 6,
+      "pass_threshold": null,
       "safety_pass": true
     }
   },
@@ -35,5 +36,6 @@
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_wt2x245/overlays/dev/logs/bucket-patch.yaml",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_wt2x245/overlays/dev/logs/role-patch.yaml",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_wt2x245/overlays/prod/logs/kustomization.yaml"
-  ]
+  ],
+  "regraded_semantic": true
 }

@@ -15,9 +15,10 @@
     },
     "semantic": {
       "passed": false,
-      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "logs": "hrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:18: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('prod.tfvars').exists\n     +      where PosixPath('prod.tfvars') = Path('prod.tfvars')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:22: AssertionError: assert False\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infrastructure.tf'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:26: FileNotFoundError: [Errno 2] No such file or directory: 'infrastructure.tf'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'prod.tfvars'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:32: FileNotFoundError: [Errno 2] No such file or directory: 'prod.tfvars'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_main_tf_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_infrastructure_tf_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_variables_tf_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_dev_tfvars_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_prod_tfvars_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_s3_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_rds_deletion_protection\n============================== 7 failed in 0.01s ===============================\n",
       "passed_count": 0,
-      "total_count": 0,
+      "total_count": 7,
+      "pass_threshold": null,
       "safety_pass": true
     }
   },
@@ -25,5 +26,6 @@
     "input": 1101,
     "output": 16384
   },
-  "content": ""
+  "content": "",
+  "regraded_semantic": true
 }

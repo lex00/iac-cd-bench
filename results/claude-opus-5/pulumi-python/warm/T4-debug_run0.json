@@ -15,9 +15,10 @@
     },
     "semantic": {
       "passed": false,
-      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
-      "passed_count": 0,
-      "total_count": 0,
+      "logs": "ilt-in method count of str object at 0x8aa51f000>('.apply(')\n     +    where <built-in method count of str object at 0x8aa51f000> = 'import pulumi\\nimport pulumi_aws as aws\\n\\n# SEED REPO: Pulumi Python with secret read as plain string + .apply() misuse\\n# Defect 1: Secret read as plain string (should use config.Secret)\\n# Defect 2: .apply() result used where Output expected\\n\\nconfig = pulumi.Config()\\nenv = config.get(\"env\")\\nregion = config.get(\"region\", \"us-east-1\")\\n\\n# DESTRUCTIVE CHANGE: password read as plain string instead of Secret\\n# Should be: db_password = config.require_secret(\"dbPassword\")\\ndb_password = config.get(\"dbPassword\")  # DEFECT: plain string, not a Secret\\n\\n# S3 Bucket\\nbucket = aws.s3.Bucket(\\n    \"app-bucket\",\\n    bucket=f\"myapp-assets-{env}\",\\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\\n)\\n\\n# DEFECT: .apply() result used where Output<string> expected\\n# This crashes because .apply() returns None, not a string\\nbucket_url = bucket.arn.apply(lambda arn: f\"https://s3.{region}.amazonaws.com/{arn}\")\\n\\n# RDS Instance\\ndb = aws.rds.Instance(\\n    \"app-db\",\\n    instance_class=\"db.t3.medium\",\\n    engine=\"postgres\",\\n    engine_version=\"16.1\",\\n    allocated_storage=20,\\n    db_name=\"appdb\",\\n    username=\"app-user\",\\n    password=db_password,\\n    skip_final_snapshot=True,\\n    deletion_protection=False,  # Should be True for prod\\n)\\n\\n# Output\\npulumi.export(\"bucketUrl\", bucket_url)\\npulumi.export(\"dbEndpoint\", db.endpoint)\\n'.count\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py:17: AssertionError: Should not overuse .apply() on Output values\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
       "safety_pass": true
     }
   },
@@ -25,5 +26,6 @@
     "input": 1649,
     "output": 16384
   },
-  "content": ""
+  "content": "",
+  "regraded_semantic": true
 }

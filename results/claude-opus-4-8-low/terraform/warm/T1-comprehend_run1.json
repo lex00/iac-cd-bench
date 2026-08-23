@@ -1,0 +1,34 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1517,
+    "output": 1541
+  },
+  "content": "# Predicting Terraform Plan Behavior\n\n## 1. What does the next plan show when a variable flips?\n\nWhen a variable value changes (e.g., flipping `instance_class` from `db.t3.micro` to `db.t3.medium`), the next `terraform plan` compares:\n\n- **Configuration** (new variable value = desired state)\n- **State** (old value = current deployed state)\n\nThe plan output will show:\n\n```\n~ resource \"aws_db_instance\" \"postgres\" {\n    ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n    # (other attributes unchanged)\n}\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\n- `~` = in-place update (attribute can be modified without recreation)\n- `#` comments explain *why* the change is needed\n- If the attribute is immutable, you'll see `-/+` (**replace** = destroy + create)\n\n**Environment isolation matters here:** flipping a variable in `prod.tfvars` should only affect prod's state/workspace, never dev (Acceptance Criteria #7).\n\n---\n\n## 2. What happens if the state file is deleted?\n\nIf `.tfstate` is deleted (and no remote backend/versioning exists):\n\n- **Terraform loses all tracking** of resource IDs and attributes.\n- The next `terraform plan` treats the configuration as **entirely new** \u2014 it shows `+` (create) for *every* resource, because state (current world) is now empty.\n\n```\nPlan: N to add, 0 to change, 0 to destroy.\n```\n\n- **Danger:** Applying this would attempt to **create duplicate resources**, and can fail on unique names (S3 buckets, IAM users, RDS identifiers) or, worse, orphan the real infrastructure.\n- **Recovery:** Use `terraform import` to re-adopt each existing resource into a fresh state, or restore from a versioned remote backend (S3 + DynamoDB lock is the idiomatic fix \u2014 this is why remote state matters).\n\n**Lesson:** State is the source of truth for *what exists*. Losing it does **not** delete cloud resources, but it breaks Terraform's ability to reconcile them.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\n`instance_class` on `aws_db_instance` is a **mutable, in-place attribute**:\n\n- Terraform issues a `ModifyDBInstance` API call \u2014 **no destroy/recreate**.\n- Shown as `~` in the plan, not `-/+`.\n- AWS applies it either immediately or during the next maintenance window depending on `apply_immediately`.\n- A brief failover/reboot may occur (minimized on **multi-AZ**, which prod uses).\n\n**Contrast \u2014 what *would* force replacement (`-/+`):** changing `engine`, `identifier`, or setting `storage_encrypted` on an existing unencrypted instance. Those show `# forces replacement`, and with `deletion_protection = true` (Acceptance Criteria #2), the destroy step would **fail** until protection is removed \u2014 a deliberate safety guard.\n\n---\n\n## 4. What is the difference between state and configuration?\n\n| Aspect | Configuration (`.tf`) | State (`.tfstate`) |\n|---|---|---|\n| Represents | **Desired** state (what you want) | **Current** deployed state (what exists) |\n| Format | HCL, human-authored, in Git | JSON, machine-managed, **never** in Git (may hold secrets) |\n| Source | Written by engineers | Generated/updated by Terraform |\n| Role | Inputs + resource declarations | Maps config \u2192 real resource IDs/attributes |\n\n**The plan is the diff between the two:**\n\n```\nplan = configuration (desired) \u2212 state (current)\n```\n\n- If config = state \u2192 `No changes`.\n- If config \u2260 state \u2192 Terraform generates create/update/destroy actions to converge state toward configuration.\n- **Drift** occurs when the real world diverges from state (changed outside Terraform); `terraform plan` / `terraform refresh` detects it.\n\n---\n\n### Summary\n- **Variable flip** \u2192 `plan` shows a `~` update (or `-/+` replace if immutable), scoped to that env's workspace.\n- **State deletion** \u2192 Terraform \"forgets\" everything; plans to recreate all resources \u2192 risk of duplicates; recover via remote backend or `import`.\n- **RDS class change** \u2192 in-place `ModifyDBInstance` (`~`), no recreation; multi-AZ minimizes downtime.\n- **State vs config** \u2192 config = desired (Git), state = current (backend); plan is their difference.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-vkv1qzq1/prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-vkv1qzq1/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-vkv1qzq1/generated_1.txt"
+  ]
+}

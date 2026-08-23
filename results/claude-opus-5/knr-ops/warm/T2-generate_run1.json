@@ -15,9 +15,10 @@
     },
     "semantic": {
       "passed": false,
-      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
-      "passed_count": 0,
-      "total_count": 0,
+      "logs": "omization_added PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: logs bucket manifest should exist\n    assert False\n     +  where False = exists()\n     +    where exists = PosixPath('infra/s3/logs-bucket.yaml').exists\n/Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py:7: AssertionError: logs bucket manifest should exist\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_manifest_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_encryption\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_public_access_blocked\n========================= 4 failed, 2 passed in 0.01s ==========================\n",
+      "passed_count": 2,
+      "total_count": 6,
+      "pass_threshold": null,
       "safety_pass": true
     }
   },
@@ -34,5 +35,6 @@
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-h7xn9i85/infra/iam/logs/serviceaccount.yaml",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-h7xn9i85/infra/iam/logs/kustomization.yaml",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-h7xn9i85/kustomization.yaml"
-  ]
+  ],
+  "regraded_semantic": true
 }

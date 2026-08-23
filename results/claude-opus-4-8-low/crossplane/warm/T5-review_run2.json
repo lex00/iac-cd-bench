@@ -1,0 +1,32 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1049,
+    "output": 1214
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Verdict: \u274c Request changes \u2014 two acceptance-criteria violations\n\n---\n\n## 1. `deletionPolicy: Delete` added provider-wide \u2014 \ud83d\udd34 Blocking\n\n```yaml\n# provider-wide default\ndeletionPolicy: Delete\n```\n\n**Problem:** This applies `Delete` to *every* managed resource composed under this provider, including **RDS** and **S3**. That directly breaks the spec's data-durability guarantees.\n\n- **AC #2 (RDS):** deletion protection must be on. A `deletionPolicy: Delete` means deleting the claim/composite (or a reconciliation quirk) **destroys the RDS instance and its data**. Even with `deletionProtection=true` at the AWS level, this is a foot-gun \u2014 and on prod it's unacceptable.\n- **AC #1 (Bucket):** application-asset buckets should not be silently deleted along with the composite.\n\n**Why \"provider-wide\" is the real issue:** blast radius. `deletionPolicy` should be set **per managed resource**, not as a blanket default. Stateless things (ALB, IAM, cluster node config) tolerating `Delete` is fine; **stateful resources (RDS, S3) must be `Orphan`**, especially in prod.\n\n**Required change:**\n```yaml\n# RDS + S3 resources\ndeletionPolicy: Orphan     # prod: mandatory\n```\nAt minimum, differentiate by environment via composition parameters:\n- `prod`: `Orphan` for RDS/S3 (non-negotiable)\n- `dev`: `Delete` acceptable for cost hygiene, but scope it to the resources, not the whole provider.\n\n---\n\n## 2. Bucket versioning dropped \u2014 \ud83d\udd34 Blocking\n\n**Problem:** Directly violates **AC #1** \u2014 bucket versioning must be **enabled** in both dev and prod.\n\nAdditional downstream impact:\n- **Prod cross-region replication requires versioning** on both source and destination buckets. Dropping versioning silently breaks the prod replication requirement from the spine.\n\n**Required change:** restore the versioning configuration on the `Bucket`/`BucketVersioning` managed resource:\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketVersioning\nspec:\n  forProvider:\n    versioningConfiguration:\n      - status: Enabled\n```\n\n---\n\n## Combined risk callout\n\nThese two changes together are especially dangerous: **versioning off + deletionPolicy Delete** on the bucket means an accidental delete is **unrecoverable** \u2014 no object versions, no orphaned bucket. This is the worst-case data-loss combination.\n\n---\n\n## Requested actions\n\n| # | Change | Fix | Env |\n|---|--------|-----|-----|\n| 1 | `deletionPolicy: Delete` provider-wide | Scope per-resource; `Orphan` for RDS + S3 | prod mandatory |\n| 2 | Versioning dropped | Re-enable `status: Enabled` | dev + prod |\n\n## Questions for the author\n1. What motivated the provider-wide `Delete`? If it's dev teardown cost, handle it in the dev composition/parameter path only.\n2. Was versioning removal intentional or a rebase/merge artifact? If intentional, note it breaks prod replication.\n\nHappy to approve once RDS/S3 are `Orphan` (prod) and versioning is restored.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-p9hkm2qq/generated_0.yaml"
+  ]
+}

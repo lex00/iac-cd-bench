@@ -1,0 +1,29 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 1022
+  },
+  "content": "I'm ready to review the Pulumi preview JSON \u2014 but it wasn't included in your message. Could you paste the actual `pulumi preview --json` output (or attach it)?\n\nOnce you do, here's exactly what I'll check against your three focus areas plus the acceptance criteria:\n\n## What I'll look for\n\n### 1. Secrets in plaintext outputs\n- `outputs` or `stackExports` containing DB connection strings, passwords, or IAM access keys as plain values (not wrapped as `{\"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", ...}` secret sigil objects)\n- `steps[].newState.outputs` with sensitive `inputs` echoed back unmasked\n- IAM user `secret` / `secretAccessKey` appearing in plaintext\n- RDS `password` field shown as literal rather than `[secret]`\n\n### 2. Replacement of stateful resources\n- Any `step.op` of `\"replace\"`, `\"create-replacement\"`, or `\"delete-replaced\"` on:\n  - `aws:rds/instance:Instance` (data loss risk)\n  - `aws:s3/bucket:Bucket` (asset loss)\n  - EKS node groups / cluster (disruption)\n- The `replaceReasons` / `detailedDiff` fields showing a `replace`-triggering property change (e.g., RDS `identifier`, `engineVersion` downgrade, bucket `name`, subnet changes)\n\n### 3. Missing protect flag\n- Stateful resources (`Instance`, `Bucket`, EKS cluster) where `newState.protect` is `false` or absent\n- Especially critical for **prod** stack\n\n## Cross-check against acceptance criteria\n| Check | JSON field to inspect |\n|---|---|\n| Bucket versioning + encryption + no public access | `versioning.enabled`, `serverSideEncryptionConfiguration`, `blockPublicAcls/ignorePublicAcls` etc. |\n| RDS deletion protection, backup \u22657d, not public | `deletionProtection`, `backupRetentionPeriod`, `publiclyAccessible` |\n| IAM least privilege | policy `Action`/`Resource` wildcards (`\"*\"`) especially prod |\n| Cluster sizing | node group `instanceTypes`, `scalingConfig.desiredSize` vs dev(2\u00d7t3.medium)/prod(4\u00d7t3.large) |\n| HTTPS 443 + cert | listener `port: 443`, `certificateArn` |\n| Env isolation | correct `stack`/URN prefix; prod change not touching dev URNs |\n\n**Please paste the JSON and tell me which stack (`dev` or `prod`) it represents**, and I'll produce a findings report with severity ratings and exact remediation snippets."
+}

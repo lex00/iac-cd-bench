@@ -1,0 +1,32 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\u001b[0mTerraform encountered problems during initialisation, including problems\n\u001b[31m\u2502\u001b[0m \u001b[0mwith the configuration, described below.\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mThe Terraform configuration must be valid before initialization so that\n\u001b[31m\u2502\u001b[0m \u001b[0mTerraform can determine which modules and providers need to be installed.\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mUnsupported operator\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on generated_0.tf line 1:\n\u001b[31m\u2502\u001b[0m \u001b[0m   1: \u001b[4m~\u001b[0m resource \"aws_db_instance\" \"main\" {\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mBitwise operators are not supported. Did you mean boolean NOT (\"!\")?\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mArgument or block definition required\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on generated_0.tf line 1:\n\u001b[31m"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1517,
+    "output": 1332
+  },
+  "content": "# Predicting Terraform Plan Behavior\n\n## 1. What does the next plan show when a variable flips?\n\nWhen a variable changes (e.g., `db_instance_class` from `db.t3.micro` to `db.t3.medium`), the next `terraform plan` compares the **new configuration** against the **existing state**:\n\n- Terraform detects the drift between desired (config) and current (state)\n- The plan shows a `~` (update in place) or `-/+` (replace) marker depending on whether the attribute is mutable\n- Each change includes a `#` comment explaining *why* (e.g., `# forces replacement`)\n\n```hcl\n~ resource \"aws_db_instance\" \"main\" {\n    ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n    # (in-place update, no replacement needed)\n}\n```\n\nPlan summary would read: `Plan: 0 to add, 1 to change, 0 to destroy.`\n\n---\n\n## 2. What happens if the state file is deleted?\n\nTerraform **loses all knowledge of existing infrastructure**:\n\n- Terraform no longer knows the resources exist (state = current deployed reality it tracks)\n- The next `plan` shows **everything as `+` (create)** \u2014 it wants to build the entire stack from scratch\n- The real cloud resources still exist, causing **duplicate resource conflicts** on `apply` (e.g., \"bucket already exists\", \"RDS identifier in use\")\n\n**Recovery:**\n- Restore from remote backend versioning (S3 + DynamoDB lock \u2014 the recommended setup)\n- Or re-adopt resources one-by-one with `terraform import`\n\n> This is why the spec uses a **remote backend**, not local state. Never store `.tfstate` in Git.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\n`db_instance_class` is a **mutable, in-place attribute** for RDS:\n\n- Terraform issues a `ModifyDBInstance` API call \u2014 **no destroy/recreate**\n- Shown as `~ instance_class` (update), **not** `-/+` (replace)\n- AWS applies it during the maintenance window unless `apply_immediately = true` (which triggers a reboot/failover)\n- For **Multi-AZ (prod)**, the change applies to the standby first, then fails over \u2014 minimizing downtime\n- **Contrast:** changing `engine`, `identifier`, or `storage_encrypted` *does* force replacement (`-/+`), which is destructive\n\n\u26a0\ufe0f With `deletion_protection = true` (required by acceptance criteria #2), any *replacement* would fail until protection is removed \u2014 a safety feature, not a bug.\n\n---\n\n## 4. Difference between State and Configuration\n\n| Aspect | Configuration (`.tf`) | State (`.tfstate`) |\n|---|---|---|\n| **Represents** | Desired state (what you want) | Current state (what Terraform believes is deployed) |\n| **Format** | HCL, human-authored | JSON, machine-managed |\n| **Source of truth for** | Intent | Resource IDs, computed attributes, metadata |\n| **Version control** | Committed to Git | **Never** in Git \u2014 remote backend |\n| **Contains secrets** | No (use `-var-file`/SOPS) | Yes \u2014 may contain sensitive values in plaintext |\n\n**Plan = Configuration \u2212 State**\n\nThe plan is the *diff* Terraform computes:\n1. Reads desired state from `.tf` + variables\n2. Refreshes/reads current state from `.tfstate`\n3. Reconciles against real cloud (refresh)\n4. Emits `+`/`~`/`-`/`replace` actions to close the gap\n\n---\n\n### Environment isolation note (per spec)\nBecause dev and prod use separate `*-dev.tfvars`/`*-prod.tfvars` (or workspaces) with **independent state files**, flipping a prod variable only affects prod's state \u2014 satisfying acceptance criterion #7 (*changing prod does not modify dev state*).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-2p1kixfa/generated_0.tf"
+  ]
+}

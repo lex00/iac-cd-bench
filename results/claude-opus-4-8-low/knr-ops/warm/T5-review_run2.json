@@ -1,0 +1,29 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 1371
+  },
+  "content": "# Security Review: PR Diff\n\n## Summary\n\nThis PR contains **two critical security violations** that must block merge, plus a warning-level issue. Below is my severity-ranked assessment.\n\n---\n\n## \ud83d\udd34 CRITICAL \u2014 Must fix before merge\n\n### 1. S3 bucket policy grants public read access\n**Violates Acceptance Criteria #1: \"no public access\"**\n\nA bucket policy allowing public reads (e.g., `Principal: \"*\"` with `s3:GetObject`) exposes all application assets to the internet. Even if the assets seem non-sensitive, this:\n- Enables data exfiltration and enumeration\n- Can incur cost/bandwidth abuse\n- Frequently leaks pre-signed content, backups, or user uploads placed there later\n\n**Required change:**\n- Remove the public statement entirely.\n- Enforce access via IAM roles / CloudFront OAC (Origin Access Control).\n- Enable the S3 **Block Public Access** settings at bucket + account level as a backstop, so a future public policy is rejected regardless.\n\n### 2. Plaintext DB password in deployment env vars\n**Violates Acceptance Criteria #3: \"Secret never stored in plaintext in Git\"**\n\nA password committed as a plaintext `env` value in the deployment manifest is exposed to:\n- Anyone with repo read access\n- Git history forever (rotation required even after removal)\n- Cluster users who can `kubectl describe pod`\n\n**Required change:**\n- Remove the plaintext value; **rotate the credential immediately** (assume it is compromised once committed).\n- Use the stack-native mechanism: **SOPS-encrypted Secret** for knr-ops, referenced via `envFrom`/`secretKeyRef`.\n- Verify `.sops.yaml` rules cover the path so it can't be committed unencrypted again.\n\n---\n\n## \ud83d\udfe1 WARNING \u2014 Should fix before merge\n\n### 3. Missing resource limits/requests on containers\nNot in the strict acceptance criteria, but a real reliability/security concern:\n- No limits \u2192 a compromised or buggy container can exhaust node CPU/memory (noisy-neighbor / DoS).\n- No requests \u2192 poor scheduling and QoS class `BestEffort` (first to be OOM-killed).\n\n**Required change:**\n- Add `resources.requests` and `resources.limits` (CPU + memory) to all containers.\n- Consider enforcing via a `LimitRange` or admission policy (Kyverno/Gatekeeper) so future manifests can't omit them.\n\n---\n\n## \ud83d\udfe2 INFO \u2014 No action needed\n\n### 4. RDS instance class change\nThe instance class change is a sizing decision, not a security issue. **No concern**, provided it's applied to the correct environment overlay.\n\n> \u26a0\ufe0f One thing to verify: confirm the RDS change is scoped to the intended overlay (`overlays/dev` vs `overlays/prod`) and does **not** modify the other environment's state \u2014 per Acceptance Criteria #7 (environment isolation). This is a review check, not a defect in what's shown.\n\n---\n\n## Merge Verdict\n\n| Issue | Severity | Blocks merge? |\n|---|---|---|\n| S3 public read policy | Critical | \u2705 Yes |\n| Plaintext DB password | Critical | \u2705 Yes |\n| Missing resource limits | Warning | Recommended |\n| RDS instance class | Info | No |\n\n**Recommendation: REQUEST CHANGES.** Do not merge until both critical issues are resolved and the exposed credential is rotated.\n\n---\n\n### Additional hardening checks worth confirming (not visible in diff)\nSince this PR touches these resources, quickly verify the surrounding config still meets spec:\n- Bucket: **versioning + encryption** still enabled.\n- RDS: **deletion protection on**, **backup retention \u2265 7 days**, **not publicly accessible**.\n- IAM: no wildcard actions granting access to the now-modified bucket.\n\nI flagged these as verification items rather than findings because the diff preview doesn't show them changing \u2014 but they're cheap to confirm while the reviewer is in this area."
+}

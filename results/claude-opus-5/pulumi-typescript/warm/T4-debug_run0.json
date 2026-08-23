@@ -15,9 +15,10 @@
     },
     "semantic": {
       "passed": false,
-      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
-      "passed_count": 0,
-      "total_count": 0,
+      "logs": "rinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index FAILED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: Should not mix async functions with pulumi.output() wrapping\n    assert ('async function' not in 'import * as....endpoint;\\n'\n      \n      'async function' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n        // Defect 1: async function used without .apply() \u2014 crashes at preview time...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show or 'pulumi.output' not in 'import * as....endpoint;\\n'\n      \n      'pulumi.output' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n      ?                                                           +++++++++++++...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show)\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py:9: AssertionError: Should not mix async functions with pulumi.output() wrapping\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
       "safety_pass": true
     }
   },
@@ -35,5 +36,6 @@
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/network.ts",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/generated_2.ts",
     "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/generated_3.ts"
-  ]
+  ],
+  "regraded_semantic": true
 }

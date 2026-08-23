@@ -1,0 +1,35 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `config`\n --> generated_1.py:1:15\n  |\n1 | db_password = config.get(\"dbPassword\")   # plaintext str (or None)\n  |               ^^^^^^\n\nF821 Undefined name `config`\n --> generated_2.py:1:15\n  |\n1 | db_password = config.require_secret(\"dbPassword\")\n  |               ^^^^^^\n\nFound 2 errors.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1649,
+    "output": 1934
+  },
+  "content": "Here's the corrected `__main__.py` with both defects fixed, plus the related acceptance-criteria issues:\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.get(\"env\") or \"dev\"\nregion = config.get(\"region\", \"us-east-1\")\nis_prod = env == \"prod\"\n\n# FIX 1: read the DB password as a *secret*, not a plain string.\n# require_secret returns an Output[str] that Pulumi tracks as secret\n# (encrypted at rest in state and never printed in plaintext).\ndb_password = config.require_secret(\"dbPassword\")\n\n# S3 Bucket (versioning + encryption + no public access)\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\n    server_side_encryption_configuration=aws.s3.BucketServerSideEncryptionConfigurationArgs(\n        rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n            apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                sse_algorithm=\"AES256\",\n            ),\n        ),\n    ),\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\n)\n\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-pab\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# FIX 2: The lambda must *return* the formatted string, and the whole\n# expression stays an Output[str]. Assigning to a variable and passing it\n# to pulumi.export is correct because .apply() yields an Output, NOT a\n# plain value (which is why the old code \"used where Output expected\"\n# failed when the lambda returned None / a non-string).\nbucket_url = bucket.arn.apply(\n    lambda arn: f\"https://s3.{region}.amazonaws.com/{arn}\"\n)\n\n# RDS Instance\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.medium\" if is_prod else \"db.t3.micro\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app-user\",\n    password=db_password,          # Output[str] (secret) \u2014 flows through correctly\n    multi_az=is_prod,\n    storage_encrypted=is_prod,\n    publicly_accessible=False,\n    backup_retention_period=7,\n    deletion_protection=is_prod,   # protected in prod\n    skip_final_snapshot=not is_prod,\n)\n\n# Outputs \u2014 bucket_url is an Output[str], db.endpoint is an Output[str].\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n```\n\n## What was wrong and why the fix works\n\n**Defect 1 \u2014 secret read as plain string**\n```python\ndb_password = config.get(\"dbPassword\")   # plaintext str (or None)\n```\n`config.get()` returns a raw `str`, so the value is treated as non-secret \u2014 it can leak into logs/state in plaintext, and if the config key is stored via `pulumi config set --secret`, `get()` won\u2019t decrypt it correctly in tracking. The fix:\n```python\ndb_password = config.require_secret(\"dbPassword\")\n```\nThis returns an `Output[str]` flagged as secret. Set it with:\n```bash\npulumi config set --secret dbPassword '<connection-string>'\n```\nIt stays encrypted at rest in `Pulumi.<stack>.yaml` (Acceptance Criteria #3).\n\n**Defect 2 \u2014 `.apply()` result misuse**\nThe crash \"`.apply()` result used where Output expected\" happens when the callback doesn\u2019t return a value (returns `None`) or when code treats the `.apply()` result as a plain `str`. `Output.apply()` **always** returns an `Output[T]`, so:\n- the lambda must **return** the string, and\n- you must keep passing the `Output` (e.g. to `pulumi.export`) rather than trying to `str()`/concatenate it eagerly.\n\nThe corrected lambda returns the f-string, and `bucket_url` remains an `Output[str]` consumed by `pulumi.export`.\n\n**Bonus fixes for the spec:** encryption + public-access block on the bucket (#1), and env-driven `deletion_protection`, `backup_retention_period >= 7`, `publicly_accessible=False`, and prod sizing/multi-AZ/encryption on RDS (#2), driven by the `env` stack config for environment isolation (#7).\n\nEnvironment separation stays idiomatic via `Pulumi.dev.yaml` / `Pulumi.prod.yaml` each setting `env`, `region`, and the secret `dbPassword`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-f3cpdj3n/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-f3cpdj3n/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-f3cpdj3n/generated_2.py"
+  ]
+}

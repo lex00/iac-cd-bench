@@ -1,0 +1,29 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2243,
+    "output": 1571
+  },
+  "content": "# PR #42 Delivery Analysis\n\n## 1. What reconciles, and in what order?\n\nFlux reconciliation follows the `GitRepository` \u2192 `Kustomization` chain, ordered by `dependsOn`:\n\n```\nGitRepository (fetches new commit)\n   \u2193\ninfra-* Kustomizations (ACK resources)  \u2190 RDS change + new S3 bucket\n   \u2193\napp / overlay Kustomizations             \u2190 prod replica patch\n```\n\nTypical order for this PR:\n1. **Flux detects the new commit** on its poll interval (or via webhook).\n2. **Infra kustomizations reconcile first** (because app `dependsOn` infra):\n   - New **S3 `Bucket` CR** is applied \u2192 ACK provisions the bucket.\n   - Modified **RDS `Instance` CR** is applied \u2192 ACK reconciles the field change.\n3. **App/overlay kustomizations reconcile** \u2192 the **prod** overlay applies `replicas: 4` to the deployment.\n\nNote: within a single Kustomization, all objects are `kubectl apply`'d together \u2014 ordering *between* Kustomizations comes from `dependsOn`, not within.\n\n## 2. Does the RDS instance get recreated?\n\n**No \u2014 it's an in-place modify, not a replace.**\n\n- Flux only re-applies the changed `Instance` CR field (`instanceClass: db.t3.medium`).\n- ACK's RDS controller translates this to an `ModifyDBInstance` API call, which AWS handles as a **scaling operation** (brief reboot/failover on multi-AZ), not a destroy/recreate.\n- `instanceClass` is a mutable property. RDS recreation only happens for immutable fields (e.g., changing the DB engine family, `dbInstanceIdentifier`, or storage encryption toggle).\n- With `deletionProtection: true` (required by acceptance criteria), destructive replacement would be blocked anyway.\n\n## 3. What happens if the S3 bucket manifest is deleted from Git?\n\nDepends on Flux **pruning**:\n\n- If the Kustomization has `prune: true` (idiomatic default in knr-ops), Flux removes the `Bucket` CR from the cluster \u2192 **ACK then deletes the actual S3 bucket**.\n- \u26a0\ufe0f This is dangerous: a stateful resource gets deleted by a Git removal. Mitigations:\n  - `deletionPolicy: Orphan` / `retain` annotation on the ACK resource keeps the AWS bucket even if the CR is deleted.\n  - S3 bucket must be empty for ACK to delete it (or deletion fails and gets stuck).\n- If `prune: false`, the CR is orphaned in the cluster and the bucket persists \u2014 but now drifts from Git.\n\n## 4. How does Flux handle the prod-only replica change?\n\nThrough **kustomize overlay isolation**:\n\n- The `replicas: 4` patch lives only in `overlays/prod/kustomization.yaml`.\n- Flux runs **separate Kustomization objects** for dev and prod, each pointing at its own overlay path.\n- `kustomize build overlays/prod` renders `replicas: 4`; `kustomize build overlays/dev` is untouched.\n- Result: **only the prod deployment reconciles**; dev keeps its own replica count. This satisfies acceptance criterion #7 (environment isolation).\n\n## 5. Role of `dependsOn`\n\n`dependsOn` between Flux Kustomizations enforces **ordering and gating**:\n\n- The **app Kustomization `dependsOn` the infra Kustomization**, so the app doesn't reconcile until infra (S3, RDS, IAM) is `Ready`.\n- Flux checks the health/readiness of the dependency before proceeding (especially with `healthChecks` / `wait: true`).\n- For this PR it ensures the new bucket and RDS change settle before the app (which consumes the DB secret / bucket) rolls to 4 replicas.\n- Without `dependsOn`, Flux reconciles Kustomizations concurrently, risking the app starting before its backing infra exists.\n\n---\n\n**Quick summary table**\n\n| Question | Answer |\n|---|---|\n| Order | Git \u2192 infra (S3 + RDS) \u2192 app/prod overlay, via `dependsOn` |\n| RDS recreated? | No \u2014 in-place `ModifyDBInstance` (mutable field) |\n| S3 deleted from Git | Pruned \u2192 bucket deleted, unless `Orphan`/`prune:false` |\n| Prod replica change | Only prod Kustomization reconciles; dev untouched |\n| `dependsOn` | Gates app on infra readiness; enforces ordering |"
+}

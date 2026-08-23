@@ -1,0 +1,29 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1620,
+    "output": 1517
+  },
+  "content": "# Trace: Composition Reconciliation on `storageGB` 20 \u2192 50\n\n## 1. Path through XRD \u2192 Composition \u2192 Managed Resources\n\n```\nUser edits Claim (kubectl apply / GitOps merge)\n   spec.parameters.storageGB: 20 \u2192 50\n        \u2502\n        \u25bc\nClaim (namespaced) \u2014 e.g. AppInfraClaim\n        \u2502  Crossplane propagates spec to the bound XR\n        \u25bc\nComposite Resource (XR, cluster-scoped)\n   spec.parameters.storageGB: 50\n        \u2502  reconciler re-runs the Composition (or function pipeline)\n        \u25bc\nComposition / function-patch-and-transform\n   patch: spec.parameters.storageGB \u2500\u2500\u25ba RDSInstance.spec.forProvider.allocatedStorage\n        \u2502\n        \u25bc\nManaged Resource: RDSInstance\n   spec.forProvider.allocatedStorage: 20 \u2192 50   (desired state updated)\n        \u2502\n        \u25bc\nProvider (provider-aws) diffs desired vs observed \u2192 calls ModifyDBInstance\n```\n\nOnly fields **wired by a patch** change. `storageGB` maps to the RDS `allocatedStorage`; nothing patches the bucket, so the bucket MR's desired state is unchanged.\n\n## 2. RDS: in-place or recreated?\n\n**Updated in-place.** `allocatedStorage` is a mutable RDS attribute. The provider issues a `ModifyDBInstance` API call \u2014 no destroy/create. The external resource keeps its identifier; only storage grows (AWS allows increase, not decrease, and enforces a cooldown window between modifications).\n\nThe MR is **never deleted** here because Crossplane doesn't do replacement for mutable fields. (Replacement would only occur for **immutable** fields, and even then Crossplane doesn't auto-recreate \u2014 the provider reports an update error/conflict; you'd have to delete the MR yourself. This is a key difference vs Terraform's `-/+` replace.)\n\n## 3. What happens to the S3 bucket?\n\n**Nothing.** No patch connects `storageGB` to the bucket MR, so its desired spec is identical across reconciles. The bucket MR reconciler still runs (continuous reconciliation) but observes no drift \u2192 no-op. Bucket, versioning, and encryption sub-resources are untouched.\n\n## 4. Role of `ReadinessChecks`\n\n`ReadinessChecks` determine when a **managed resource is considered Ready**, which propagates up to the XR/Claim `Ready` condition.\n\n- During the resize, the RDS MR's `status.atProvider.dbInstanceStatus` transitions `available \u2192 modifying \u2192 available`.\n- A readiness check (e.g. `MatchString` on status `available`, or default `NonEmpty` on a connection field) will flip the MR's `Ready` condition to `False` while modifying, then back to `True`.\n- This gates the aggregated Claim readiness \u2014 consumers (and GitOps health checks) see the Claim as not-Ready until the resize completes.\n- They do **not** trigger the update; they only report health/completion.\n\n## 5. The reconciliation loop\n\n- Crossplane runs **continuous, level-based reconciliation** (like a K8s controller / Flux), not plan-and-apply.\n- Each MR has its own controller in the provider watching for spec changes + periodically re-syncing (poll interval, default ~1m) to correct drift.\n- On the storage change, the loop is: **observe** external state \u2192 **diff** against desired spec \u2192 **update** (ModifyDBInstance) \u2192 **write status** back to MR \u2192 aggregate up to XR \u2192 Claim.\n- It's **idempotent**: re-running when observed == desired is a no-op. If someone changes storage in the AWS console, Crossplane reverts it on the next sync (self-healing) \u2014 unlike Terraform which only detects drift on the next `plan`.\n- Failures don't halt permanently: the item is requeued with backoff, and conditions (`Synced`, `Ready`) surface the error on the Claim.\n\n**Summary:** `storageGB 20\u219250` flows Claim \u2192 XR \u2192 Composition patch \u2192 RDS MR `allocatedStorage`, causing an **in-place ModifyDBInstance**; the S3 bucket is untouched; ReadinessChecks mark the Claim not-Ready during the modification and Ready again once RDS returns to `available`; all driven by Crossplane's continuous, self-healing reconcile loop."
+}

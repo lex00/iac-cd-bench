@@ -1,0 +1,33 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `host`\n --> generated_0.py:6:30\n  |\n4 | db_password = config.require_secret(\"dbPassword\")  # encrypted\n5 |\n6 | conn_str = pulumi.Output.all(host, db_password).apply(\n  |                              ^^^^\n7 |     lambda args: f\"postgresql://admin:{args[1]}@{args[0]}:5432/app\"\n8 | )  # stays secret because it derives from a secret\n  |\n\nFound 1 error.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1676,
+    "output": 1225
+  },
+  "content": "# Pulumi Preview Behavior: DB Replace\n\n## 1. Which property triggered the replace?\n\nFor an RDS instance in this scenario, a **replace** is triggered by a change to an **immutable property**. The preview output marks these explicitly:\n\n```\n    ~ aws:rds/instance:Instance: (replace)\n        [id=dev-postgres]\n      ~ engineVersion: \"14.7\" => \"15.3\"   # example\n```\n\nLook for the property annotated with a **`(replaces)`** marker or listed under **\"replace\" reasons**. Common replace-triggering RDS properties:\n\n- **`name` / identifier** (renaming the DB)\n- **`engine`** (e.g., postgres \u2192 mysql)\n- **`storageEncrypted`** (toggling encryption \u2014 requires new instance)\n- **`kmsKeyId`** (changing encryption key)\n- **`availabilityZone`** (for single-AZ placement)\n- **`dbSubnetGroupName`** in some cases\n\nIn this spec, moving dev \u2192 prod-style config (**enabling `storageEncrypted`** or changing the identifier) is the classic replace trigger. The `[diff: ~property]` line plus `=> This resource will be replaced` in the preview tells you exactly which one.\n\n> Note: Pulumi shows this *before* applying. To see the reason clearly, run `pulumi preview --diff`.\n\n## 2. What does `pulumi up --target` skip?\n\n`pulumi up --target <urn>` performs a **targeted update**:\n\n- **Only the specified resource(s)** (and, by default, resources they strictly depend on) are updated.\n- It **skips all other resources** in the stack \u2014 they are left untouched even if they have pending diffs.\n- With `--target-dependents`, it also includes downstream resources; without it, dependents are skipped.\n- It does **not** delete resources not in the target set (no \"orphan\" cleanup).\n\n\u26a0\ufe0f Caveat: targeted updates can leave your stack in a partially-converged state \u2014 outputs and dependent resources may be stale. Pulumi warns that `--target` is meant for surgical fixes, not routine deploys.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **Encrypted at rest**: Values from `config.require_secret()` (or `pulumi.Output.secret(...)`) are tracked as **secret Outputs**. They are encrypted in the stack's state file using the stack's encryption provider (Pulumi Service, KMS, passphrase, etc.).\n- **Taint propagation**: Secretness is **contagious** \u2014 any Output derived via `.apply()` from a secret remains a secret. So a DB connection string built from a secret password stays encrypted.\n- **In outputs (`pulumi.export`)**: Exported secret values are stored **encrypted** in state and displayed as `[secret]` in CLI output.\n- **Reading back**: Use `pulumi stack output --show-secrets` to reveal them (requires decryption access).\n\nIdiomatic pattern for this scenario:\n\n```python\nimport pulumi\n\nconfig = pulumi.Config()\ndb_password = config.require_secret(\"dbPassword\")  # encrypted\n\nconn_str = pulumi.Output.all(host, db_password).apply(\n    lambda args: f\"postgresql://admin:{args[1]}@{args[0]}:5432/app\"\n)  # stays secret because it derives from a secret\n\npulumi.export(\"dbConnectionString\", conn_str)  # stored encrypted, shown as [secret]\n```\n\nThis satisfies acceptance criterion #3 (secret never in plaintext in Git \u2014 it lives encrypted in `Pulumi.<stack>.yaml` and in state).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-isl8ywpy/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-isl8ywpy/generated_0.py"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hh_iryz5/generated_0.ts(1,16): error TS2304: Cannot find name 'config'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hh_iryz5/generated_0.ts(3,31): error TS2304: Cannot find name 'pulumi'.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1091,
+    "output": 1786
+  },
+  "content": "# Pulumi Preview: Replace on RDS Instance\n\n## 1. Which property triggered the replace?\n\nIn Pulumi, `pulumi preview` marks the reason for a replacement with a `[diff: ...]` annotation and often a `replace` indicator plus the specific property. For the RDS PostgreSQL instance in this scenario, common **replacement-forcing** properties are:\n\n| Property | Why it forces replace |\n|---|---|\n| `engine` / `engineVersion` (major) | Major version change can force replace |\n| `name` (dbName) | The DB identifier is immutable |\n| `availabilityZone` | Placement is fixed at create |\n| `storageEncrypted` / `kmsKeyId` | Encryption can't be toggled in-place |\n| `dbSubnetGroupName` | Subnet group changes recreate the instance |\n\nReading the preview output tells you exactly which one:\n\n```text\n    ~ aws:rds:Instance  app-db  replace\n      ~ storageEncrypted: false => true\n      ...\n    ++aws:rds:Instance  app-db  create replacement [diff: ~storageEncrypted]\n    +-aws:rds:Instance  app-db  replace         [diff: ~storageEncrypted]\n```\n\nThe property listed in `[diff: ~<prop>]` on the `replace`/`create replacement` line is the trigger. In this spec, moving dev \u2192 prod (**enabling `storageEncrypted`**) is the classic culprit, since encryption cannot be enabled in place \u2014 it forces a new instance.\n\n> **Tip:** run `pulumi preview --diff` to see the full property-level diff and confirm which field carries the replace semantics (Pulumi derives this from the provider's `replaceOnChanges` / `forceNew` schema).\n\n---\n\n## 2. What does `pulumi up --target` skip?\n\n`pulumi up --target <urn>` restricts the update to **only** the targeted resource(s):\n\n- **Skips** all other resources in the stack \u2014 they are **not** updated, replaced, or refreshed, even if they have pending diffs.\n- Only the resource(s) matching the `--target` URN(s) are acted upon.\n- **Dependencies:** by default, Pulumi will still need dependencies to exist. Use `--target-dependents` to also include resources that depend on the target. Without it, dependents are **not** updated.\n- It does **not** delete resources removed from the program (that's normal deletion, gated separately).\n- It's an **inexact/partial** operation \u2014 Pulumi warns that the resulting state may not match the program, since untargeted diffs are deferred.\n\n```bash\npulumi up --target 'urn:pulumi:prod::app::aws:rds/instance:Instance::app-db' \\\n          --target-dependents\n```\n\nEverything not named (bucket, EKS cluster, IAM, CloudFront) is left untouched this run.\n\n---\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi treats secrets as **tracked, encrypted values** end-to-end:\n\n1. **Marking:** A value becomes secret via `config.requireSecret(...)`, `pulumi.secret(...)`, or `--secret` on config set. The DB connection string here is a `ConfigSecret`.\n\n2. **Encryption at rest:**\n   - In **stack config** (`Pulumi.prod.yaml`), secret config values are stored encrypted (ciphertext), never plaintext:\n     ```yaml\n     config:\n       app:dbConnectionString:\n         secure: AAABANx... (ciphertext)\n     ```\n   - In **state** (checkpoint file), any output marked secret is stored encrypted using the stack's encryption provider (Pulumi Service default key, or a self-managed KMS/passphrase).\n\n3. **Propagation (taint tracking):** Secretness is **contagious**. If a secret `Output<T>` is used to compute another output (e.g., `apply`, string interpolation), the derived output is **also** marked secret automatically. This prevents accidental leakage through transformations.\n\n4. **Display:** In `pulumi preview`/`up` output and `pulumi stack output`, secret values are rendered as `[secret]`. To reveal:\n   ```bash\n   pulumi stack output dbConnectionString --show-secrets\n   ```\n\n5. **Encryption provider:** Set via `pulumi stack init --secrets-provider=...` (e.g., `awskms://<key>`, `passphrase`), satisfying the \"encrypted at rest, never plaintext in Git\" acceptance criterion.\n\n```typescript\nconst dbConn = config.requireSecret(\"dbConnectionString\");\n// Any output derived from dbConn stays secret:\nexport const connectionInfo = pulumi.interpolate`postgres://${dbConn}`; // marked [secret]\n```\n\n---\n\n### Summary\n\n1. The property flagged in the preview's `[diff: ~<prop>]` on the replace line \u2014 in this scenario most likely **`storageEncrypted`** (or another `forceNew` field like `engineVersion`/subnet group).\n2. `--target` acts **only** on the named URN(s), skipping all other resources (add `--target-dependents` to include downstream resources).\n3. Secrets are **encrypted at rest** in both config and state, **auto-propagate** to derived outputs, and are **masked as `[secret]`** unless `--show-secrets` is passed.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hh_iryz5/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hh_iryz5/generated_0.ts"
+  ]
+}

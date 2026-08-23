@@ -1,0 +1,37 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `cluster`\n  --> generated_0.py:14:13\n   |\n12 | node_group = eks.ManagedNodeGroup(\n13 |     f\"app-ng-{env}\",\n14 |     cluster=cluster,                       # existing cluster\n   |             ^^^^^^^\n15 |     node_group_name=f\"app-ng-{env}\",\n16 |     instance_types=[config.require(\"instanceType\")],  # DO NOT change casually\n   |\n\nF821 Undefined name `node_group`\n --> generated_1.py:2:12\n  |\n1 | # Managed node groups expose the ASG via the resources output.\n2 | asg_name = node"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1043,
+    "output": 2286
+  },
+  "content": "# Adding Auto-Scaling Without Resource Replacement (Pulumi Python)\n\nThe golden rule: **attach a *new* scaling policy resource to the existing ASG \u2014 never mutate immutable properties of the cluster/node group itself.** Replacement happens when you change properties that AWS can't update in place (e.g., node group `instance_types`, `subnet_ids`, launch template on some paths).\n\n## 1. Locate the ASG created by the managed node group\n\nEKS managed node groups own their ASG. You don't create the ASG yourself \u2014 you reference it, then attach policies.\n\n```python\nimport pulumi\nimport pulumi_aws as aws\nimport pulumi_eks as eks\n\nconfig = pulumi.Config()\nenv = pulumi.get_stack()          # \"dev\" or \"prod\"\nmin_size = config.require_int(\"nodeMin\")\nmax_size = config.require_int(\"nodeMax\")\ndesired  = config.require_int(\"nodeDesired\")\n\n# --- EXISTING resource (unchanged) ---\nnode_group = eks.ManagedNodeGroup(\n    f\"app-ng-{env}\",\n    cluster=cluster,                       # existing cluster\n    node_group_name=f\"app-ng-{env}\",\n    instance_types=[config.require(\"instanceType\")],  # DO NOT change casually\n    scaling_config=aws.eks.NodeGroupScalingConfigArgs(\n        min_size=min_size,\n        max_size=max_size,\n        desired_size=desired,\n    ),\n    opts=pulumi.ResourceOptions(\n        # The autoscaler will drift desired_size at runtime.\n        # Ignoring it prevents Pulumi from fighting the scaler AND\n        # prevents spurious diffs that could cascade into replacement.\n        ignore_changes=[\"scaling_config.desired_size\"],\n    ),\n)\n```\n\n## 2. Discover the underlying ASG name\n\n```python\n# Managed node groups expose the ASG via the resources output.\nasg_name = node_group.resources.apply(\n    lambda res: res[0][\"autoscaling_groups\"][0][\"name\"]\n)\n```\n\n## 3. Attach the auto-scaling policy (the actual new resource)\n\nA **target-tracking policy is additive** \u2014 it creates a new `aws.autoscaling.Policy` bound to the existing ASG. No existing resource is replaced.\n\n```python\ncpu_scaling = aws.autoscaling.Policy(\n    f\"app-ng-cpu-target-{env}\",\n    autoscaling_group_name=asg_name,\n    policy_type=\"TargetTrackingScaling\",\n    target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n        predefined_metric_specification=(\n            aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n                predefined_metric_type=\"ASGAverageCPUUtilization\",\n            )\n        ),\n        target_value=60.0 if env == \"prod\" else 75.0,\n    ),\n    opts=pulumi.ResourceOptions(parent=node_group),\n)\n```\n\n## 4. Verify BEFORE applying\n\n```bash\npulumi stack select dev\npulumi preview --diff\n```\n\nConfirm the plan shows only:\n\n```\n+ create   aws:autoscaling/policy:Policy   app-ng-cpu-target-dev\n```\n\nand **no** `+-replace` / `-delete-replaced` on the cluster, node group, RDS, bucket, or IAM.\n\nIf you *do* see a replace on the node group, stop \u2014 something upstream changed an immutable field. Common culprits and fixes:\n\n| Symptom (replace triggered) | Cause | Fix |\n|---|---|---|\n| Node group replace | `instance_types` / `subnet_ids` edited | Revert; those are immutable |\n| Node group replace | launch template / AMI change | Use `ignore_changes` or accept intentionally |\n| Policy shows replace | `policy_type` changed | Keep `TargetTrackingScaling` stable |\n\n## 5. Environment isolation\n\nEach env gets its own stack config, so `prod` autoscaling never touches `dev` state:\n\n`dev.yaml`\n```yaml\nconfig:\n  proj:nodeMin: \"2\"\n  proj:nodeDesired: \"2\"\n  proj:nodeMax: \"5\"\n  proj:instanceType: \"t3.medium\"\n```\n\n`prod.yaml`\n```yaml\nconfig:\n  proj:nodeMin: \"4\"\n  proj:nodeDesired: \"4\"\n  proj:nodeMax: \"10\"\n  proj:instanceType: \"t3.large\"\n```\n\nApply independently:\n```bash\npulumi up -s dev      # prod state untouched\npulumi up -s prod\n```\n\n## Why this satisfies \"no replacement\"\n\n1. **Additive resource** \u2014 `aws.autoscaling.Policy` is brand new; adding a resource never replaces peers.\n2. **No immutable field changes** \u2014 the node group/cluster args stay byte-for-byte identical.\n3. **`ignore_changes` on `desired_size`** \u2014 prevents the autoscaler's runtime drift from producing diffs Pulumi would try to \"correct\" (which is a frequent source of unexpected churn).\n4. **`parent=node_group`** \u2014 clean logical grouping; deletion of the node group cascades the policy, but the policy alone can be added/removed freely.\n5. **Preview gate** \u2014 `pulumi preview --diff` is the enforcement step; treat any `replace` as a hard stop.\n\n**One caveat:** if the EKS managed node group is *also* driven by the Kubernetes Cluster Autoscaler or Karpenter, ASG target-tracking policies can conflict. Pick one scaling authority. For managed node groups, the idiomatic pattern is usually Cluster Autoscaler managing `desired_size` (hence `ignore_changes`), with ASG policies used only where you deliberately want ASG-native metric scaling.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-i21q25aq/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-i21q25aq/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-i21q25aq/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-i21q25aq/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-i21q25aq/generated_2.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-i21q25aq/generated_0.txt"
+  ]
+}

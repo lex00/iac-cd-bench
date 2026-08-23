@@ -15,9 +15,10 @@
     },
     "semantic": {
       "passed": false,
-      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "logs": "   where PosixPath('components/bucket.py') = Path('components/bucket.py')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:14: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('components/rds.py').exists\n     +      where PosixPath('components/rds.py') = Path('components/rds.py')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:18: AssertionError: assert False\nE   FileNotFoundError: [Errno 2] No such file or directory: 'components/bucket.py'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:22: FileNotFoundError: [Errno 2] No such file or directory: 'components/bucket.py'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'components/rds.py'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:28: FileNotFoundError: [Errno 2] No such file or directory: 'components/rds.py'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_main_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_components_dir\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_bucket_component\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_rds_component\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_rds_deletion_protection\n============================== 6 failed in 0.01s ===============================\n",
       "passed_count": 0,
-      "total_count": 0,
+      "total_count": 6,
+      "pass_threshold": null,
       "safety_pass": true
     }
   },
@@ -25,5 +26,6 @@
     "input": 1103,
     "output": 16384
   },
-  "content": ""
+  "content": "",
+  "regraded_semantic": true
 }

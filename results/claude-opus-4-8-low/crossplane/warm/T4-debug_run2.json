@@ -1,0 +1,33 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "e.io/xrd: xawswebservices.app.example.com\\nspec:\\n  group: app.example.com\\n  mode: Pipeline\\n  resources:\\n    - name: rds-instance\\n      base:\\n        apiVersion: database.aws.upbound.io/v1beta1\\n        kind: Instance\\n        spec:\\n          forProvider:\\n            region: us-east-1\\n            engine: postgres\\n            engineVersion: \"16.1\"\\n            allocatedStorage: 20\\n            # Acceptance criteria for RDS\\n            backupRetentionPeriod: 7\\n            publiclyAccessible: false\\n            storageEncrypted: true\\n          providerConfigRef:\\n            name: default\\n      patches:\\n        # FIX Defect 1: read the actual XRD field (spec.instanceClass),\\n        # map it directly to forProvider.instanceClass (no format transform \u2014\\n        # instanceClass already holds the full class, e.g. \"db.t3.medium\").\\n        - fromFieldPath: spec.instanceClass\\n          toFieldPath: spec.forProvider.instanceClass\\n        # Wire deletion protection from the XRD as well\\n        - fromFieldPath: spec.deletionProtection\\n          toFieldPath: spec.forProvider.deletionProtection\\n      # FIX Defect 2: explicit readiness check so the Composition can\\n      # reach Ready once the underlying RDS Instance is Ready.\\n      readinessChecks:\\n        - type: MatchCondition\\n          matchCondition:\\n            type: Ready\\n            status: \"True\"\\n'))\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:15: AssertionError: Composition should have ReadinessChecks defined\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks\n============================== 2 failed in 0.01s ===============================\n",
+      "passed_count": 0,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1854,
+    "output": 1720
+  },
+  "content": "Here are the fixes.\n\n## Root cause\n\n1. **Defect 1** \u2014 the patch reads `spec.parameters.storageClass`, which doesn't exist in the XRD. The XRD defines `spec.instanceClass` (a full class value like `db.t3.medium`). The patch must read `spec.instanceClass` and map it directly to `spec.forProvider.instanceClass`. The `db.t3.%s` format transform is also wrong because `instanceClass` already contains the full class string, so it must be removed.\n2. **Defect 2** \u2014 `readiness: {}` gives no criteria, so Crossplane can't determine when the managed resource is ready. It needs an explicit `readinessChecks` entry that watches the RDS `Ready` condition.\n\n## Fixed `composition.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n            # Acceptance criteria for RDS\n            backupRetentionPeriod: 7\n            publiclyAccessible: false\n            storageEncrypted: true\n          providerConfigRef:\n            name: default\n      patches:\n        # FIX Defect 1: read the actual XRD field (spec.instanceClass),\n        # map it directly to forProvider.instanceClass (no format transform \u2014\n        # instanceClass already holds the full class, e.g. \"db.t3.medium\").\n        - fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n        # Wire deletion protection from the XRD as well\n        - fromFieldPath: spec.deletionProtection\n          toFieldPath: spec.forProvider.deletionProtection\n      # FIX Defect 2: explicit readiness check so the Composition can\n      # reach Ready once the underlying RDS Instance is Ready.\n      readinessChecks:\n        - type: MatchCondition\n          matchCondition:\n            type: Ready\n            status: \"True\"\n```\n\n## Notes\n\n- `fromFieldPath: spec.instanceClass` now matches the XRD schema (`spec.properties.instanceClass`), so the patch resolves and no longer errors on a missing field.\n- Removing the `db.t3.%s` transform prevents double-prefixing (it would have produced `db.t3.db.t3.medium`).\n- `readinessChecks` with `MatchCondition` on `Ready=True` is the current field name (Crossplane `v1`); the composed resource propagates its `Ready` status up to the XR, so the Composition/claim can now become Ready.\n- I added `backupRetentionPeriod: 7`, `publiclyAccessible: false`, `storageEncrypted: true`, and a `deletionProtection` patch to satisfy the RDS acceptance criteria while fixing the readiness path.\n\nIf your provider version uses the older readiness shape, the equivalent is:\n\n```yaml\n      readinessChecks:\n        - type: NonEmpty\n          fieldPath: status.atProvider.id\n```\n\nbut `MatchCondition` on `Ready` is preferred since it tracks true availability rather than just resource creation.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-3u6vx3op/composition.yaml"
+  ]
+}

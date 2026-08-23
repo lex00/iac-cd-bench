@@ -1,0 +1,35 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9u42vi5_/generated_0.ts(1,18): error TS2304: Cannot find name 'config'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9u42vi5_/generated_1.ts(1,20): error TS2304: Cannot find name 'pulumi'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9u42vi5_/generated_1.ts(2,9): error TS2304: Cannot find name 'db'.\n../../../."
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1091,
+    "output": 1582
+  },
+  "content": "# Pulumi Preview: Replace on RDS DB\n\n## 1. Which property triggered the replace?\n\nPulumi's preview output marks the specific property with a **`(requires replacement)`** annotation and shows the resource with a `+-` (replace) symbol. Common replacement-triggering properties on `aws.rds.Instance`:\n\n| Property | Why it forces replacement |\n|---|---|\n| `engine` | Can't change engine in place |\n| `engineVersion` | Major version bumps often replace (minor usually updates) |\n| `dbName` / `name` | Renaming the database |\n| `availabilityZone` | Moving AZ (though `multiAz` toggle is usually an update) |\n| `storageEncrypted` | Enabling encryption on an existing unencrypted instance |\n| `kmsKeyId` | Changing the KMS key |\n| `identifier` | Renaming the instance |\n| `snapshotIdentifier` | Changing restore source |\n\nIn this scenario the most likely culprit for a **dev\u2192prod-style** diff is **`storageEncrypted`** (dev is unencrypted, prod is encrypted) or **`identifier`**. Read the preview diff \u2014 the property flagged `(requires replacement)` is the answer, e.g.:\n\n```\n    ~ storageEncrypted: false => true  (requires replacement)\n```\n\n**How to inspect:**\n```bash\npulumi preview --diff       # shows old => new + replacement markers\npulumi preview --json       # detailedDiff with \"replace\" reasons per property\n```\n\n---\n\n## 2. What does `pulumi up --target` skip?\n\n`--target <urn>` restricts the operation to **only the specified resource(s)**. Pulumi **skips updating every other resource** in the stack \u2014 it does not diff or mutate untargeted resources.\n\nKey behaviors:\n- Only the targeted URN(s) (and, with `--target-dependents`, their downstream dependents) are acted on.\n- **Without** `--target-dependents`, dependent resources are **not** updated even if the target changes their inputs.\n- Untargeted resources keep their existing state unchanged.\n- Pulumi will **warn/error** if a targeted resource depends on an untargeted resource that would need to be created first (missing dependency), unless that dependency already exists in state.\n- It does **not** run a full-stack diff \u2014 non-targeted drift is ignored for this run.\n\n```bash\npulumi up --target 'urn:...:aws:rds/instance:Instance::db'\npulumi up --target 'urn:...::db' --target-dependents\n```\n\nUse it as a surgical tool (e.g., to force-replace just the DB), not as a general workflow \u2014 it can leave the stack in a partially-reconciled state.\n\n---\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi tracks secretness **through the dataflow** and encrypts secret values both in state and (optionally) in config.\n\n**Config side (input):**\n```bash\npulumi config set --secret dbPassword 'S3cr3t!'\n```\nStored in `Pulumi.<stack>.yaml` encrypted, e.g.:\n```yaml\nconfig:\n  project:dbPassword:\n    secure: AAABANk...   # ciphertext, never plaintext\n```\nEncryption via the stack's secrets provider (default: Pulumi service; or `awskms://`, `passphrase`, `gcpkms://`, etc.).\n\n**In code:**\n```ts\nconst password = config.requireSecret(\"dbPassword\");\n```\n`requireSecret` returns an `Output<string>` marked secret.\n\n**Propagation:**\n- Any `Output` **derived from** a secret input stays secret (secretness is transitive through `.apply()` / `pulumi.all`).\n- Mark manually with `pulumi.secret(value)`.\n- A connection string built from a secret password is automatically secret.\n\n**Outputs / state:**\n- Secret stack outputs are **encrypted at rest** in state and shown as `[secret]` in `pulumi up`/`stack output`.\n- Reveal explicitly:\n  ```bash\n  pulumi stack output connString --show-secrets\n  ```\n- The entire state file encrypts secret values; they are never written in plaintext.\n\n**Scenario tie-in (DB connection string secret):**\n```ts\nconst connString = pulumi\n  .all([db.address, db.port, password])\n  .apply(([host, port, pw]) => `postgres://app:${pw}@${host}:${port}/app`)\n  // secret because pw is secret\n  ;\nexport const databaseUrl = connString;   // stored encrypted, shown as [secret]\n```\nThis satisfies acceptance criterion #3 \u2014 the secret is never in plaintext in Git and is encrypted at rest via Pulumi's native secrets provider.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9u42vi5_/Pulumi.<stack>.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9u42vi5_/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9u42vi5_/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9u42vi5_/generated_1.ts"
+  ]
+}
