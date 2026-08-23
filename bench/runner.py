@@ -256,15 +256,17 @@ class OpenAICompatAdapter(ModelAdapter):
     def __init__(self, model: str, base_url: str, api_key: str = "«redacted:sk-…»", reasoning_effort: str | None = None):
         self.model = model
         self.base_url = base_url.rstrip("/")
-        # Strip /v1 or /v4 suffix if present to avoid double version paths
-        # (/v1 for OpenAI-compatible, /v4 for Zhipu/GLM-style endpoints)
-        for suffix in ("/v1", "/v4"):
+        # Preserve the version segment (/v1 OpenAI-style, /v4 Zhipu/GLM-style);
+        # default to /v1 when the base URL carries none.
+        self._version = "/v1"
+        for suffix in ("/v1", "/v2", "/v3", "/v4"):
             if self.base_url.endswith(suffix):
+                self._version = suffix
                 self.base_url = self.base_url[: -len(suffix)]
                 break
         self.api_key = api_key
         self.reasoning_effort = reasoning_effort
-        self._url = f"{self.base_url}/v1/chat/completions"
+        self._url = f"{self.base_url}{self._version}/chat/completions"
 
     @property
     def name(self) -> str:
