@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 392
+  },
+  "content": "1. **Property that triggered the replace**\n   In Pulumi preview, a DB resource shows **replace** when a changed input is marked **ForceNew** by the provider.  \n   In this scenario, the usual trigger is a property like **`instanceClass`** / **`instanceType`** if that specific provider version models it as replacement, but for RDS the most common replacement-causing fields are things like:\n   - `dbSubnetGroupName`\n   - `name` / identifier-related fields\n   - engine family changes\n   - storage encryption toggles in some cases\n\n   So the precise answer is:\n\n   **The property marked in the preview diff with `replace` is the one that triggered replacement.**  \n   Pulumi itself is reflecting the cloud provider schema\u2019s **ForceNew** behavior.\n\n2. **What `pulumi up --target` skips**\n   `pulumi up --target <urn>` updates only:\n   - the targeted resource(s), and\n   - any dependencies required to realize that target\n\n   It **skips unrelated resources** in the stack, even if they have pending changes.\n\n   Important nuance:\n   - It does **not** perform a normal full-stack reconciliation.\n   - Resources outside the target closure are left unchanged.\n\n3. **How Pulumi handles secrets in outputs**\n   Pulumi tracks secrets as **secret-typed values** in its dataflow.\n\n   That means:\n   - secret config values (`requireSecret`, etc.) stay marked as secret\n   - if an output is derived from a secret, the resulting output is also secret\n   - previews/CLI output redact them as **`[secret]`**\n   - state stores them encrypted using the stack\u2019s configured secrets provider\n\n   So in practice:\n\n   **Secrets propagate transitively through outputs, are redacted in CLI/display, and are encrypted in state rather than shown in plaintext.**"
+}

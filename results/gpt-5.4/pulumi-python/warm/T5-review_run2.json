@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 634,
+    "output": 140
+  },
+  "content": "Please provide the Pulumi preview JSON output to review.\n\nI\u2019ll check it for:\n- secrets exposed in plaintext outputs\n- replacement of stateful resources\n- missing `protect` on critical resources\n\nIf useful, I can also tell you exactly which JSON fields to inspect, such as:\n- `steps[*].op`\n- `steps[*].newState.outputs`\n- `steps[*].oldState.outputs`\n- `steps[*].newState.protect`\n- resource types like `aws:rds/instance:Instance`, `aws:s3/bucket:Bucket`, `aws:eks/cluster:Cluster`\n\nYou can paste the JSON directly or share a redacted excerpt."
+}

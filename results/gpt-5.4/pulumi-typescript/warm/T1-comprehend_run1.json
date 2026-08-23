@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 367
+  },
+  "content": "1. **Property that triggered the replace**\n   In Pulumi preview, a resource shows **replace** when a changed property is marked **ForceNew** by the provider.  \n   For an RDS DB in this kind of scenario, the common replacement-triggering property is something like:\n\n   - `dbSubnetGroupName`\n   - `engine`\n   - `name` / identifier\n   - certain storage/encryption settings at creation time\n\n   So the direct answer is: **the property marked in the preview as requiring replacement is the one that triggered it**.  \n   In preview output, Pulumi usually annotates it with something like **\u201cforces replacement\u201d**.\n\n2. **What `pulumi up --target` skips**\n   `pulumi up --target <urn>` updates only the targeted resource(s) and their required dependencies. It **skips unrelated resources** that would otherwise be updated in the same deployment.\n\n   In practice, it skips:\n   - non-targeted resources\n   - downstream dependents unless explicitly targeted or required\n   - other pending changes elsewhere in the stack\n\n   So if you target something other than the DB, Pulumi may skip the DB replacement entirely.\n\n3. **How Pulumi handles secrets in outputs**\n   Pulumi tracks secrets as **secret-typed values**. In outputs:\n   - they are **redacted** in CLI preview/update output\n   - they are stored **encrypted in state**\n   - secret propagation is automatic: if an `Output` depends on a secret, the resulting `Output` is also secret\n\n   In TypeScript, this usually comes from:\n   - `config.requireSecret(...)`\n   - `pulumi.secret(...)`\n\n   So Pulumi prevents plaintext display in normal output and preserves secrecy through dependent values."
+}

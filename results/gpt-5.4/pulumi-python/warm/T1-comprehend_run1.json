@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 991,
+    "output": 344
+  },
+  "content": "1. **Property that triggered the replace**\n   In Pulumi preview, a DB replacement usually means a property marked **ForceNew** by the provider changed. For an RDS instance, common replace-triggering properties include things like:\n   - `identifier`\n   - `name` / initial database name\n   - `username` in some cases\n   - subnet group / certain networking fields\n   - storage encryption settings on some providers\n\n   So the answer is: **the specific property shown in the preview diff with a replace marker is what triggered replacement**. In Pulumi output this is typically annotated as a replacement-causing change.\n\n2. **What `pulumi up --target` skips**\n   `--target` tells Pulumi to act only on the specified resource(s) and the dependencies needed for them.\n   It **skips unrelated resources and their updates**.\n   \n   So if you target, say, the EKS cluster, Pulumi will not apply pending changes to the bucket, DB, IAM, etc., unless they are required dependencies of that target.\n\n3. **How Pulumi handles secrets in outputs**\n   Pulumi tracks secret values as **secret-tainted outputs**:\n   - if a value comes from `config.require_secret()`, it is encrypted in state\n   - if you export it, the stack output is marked as a **secret**\n   - CLI output redacts it instead of printing plaintext\n   - secret propagation is automatic: combining a secret with other values generally makes the result secret too\n\n   In short: **Pulumi encrypts secrets in state and redacts them in previews/outputs while preserving secret-ness through Output composition.**"
+}

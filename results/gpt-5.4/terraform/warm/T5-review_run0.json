@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 248
+  },
+  "content": "Please paste the `terraform show -json` plan output (or the relevant `resource_changes` section), and I\u2019ll review it for hidden destructive changes.\n\nWhat I\u2019ll check specifically:\n- Any `[\"delete\",\"create\"]` or replacement actions, especially on RDS\n- Security group ingress widening, especially `0.0.0.0/0`\n- Changes violating your acceptance criteria:\n  - RDS deletion protection / backups / public accessibility\n  - S3 encryption, versioning, public access\n  - IAM wildcards in prod\n  - HTTPS/cert issues\n  - Environment isolation problems\n\nQuick self-check if you want to spot them before pasting:\n- Search plan JSON for:\n  - `\"actions\":[\"delete\",\"create\"]`\n  - `\"actions\":[\"create\",\"delete\"]`\n  - `\"replace_paths\"`\n  - `\"0.0.0.0/0\"`\n  - `\"publicly_accessible\": true`\n  - `\"deletion_protection\": false`\n  - `\"backup_retention_period\": 0`\n\nIf you want, paste just:\n- the `resource_changes` array, and\n- any `output_changes` related to DB endpoint / SG IDs."
+}

@@ -35,6 +35,15 @@ def _load_answers() -> dict:
                 return json.loads(raw)
             except Exception:
                 continue
+        # Bare JSON: whole text, or the outermost {...} span (no fence at all)
+        m = re.search(r"\{.*\}", text, re.DOTALL)
+        for candidate in filter(None, (text.strip(), m.group(0) if m else "")):
+            try:
+                parsed = json.loads(candidate)
+                if isinstance(parsed, dict) and ("q1" in parsed or "q2" in parsed):
+                    return parsed
+            except Exception:
+                continue
     pytest.fail("no parseable answers.json found in workspace or model_output.md")
 
 

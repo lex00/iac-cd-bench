@@ -1,0 +1,36 @@
+{
+  "model": "gpt-5.4",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 6 resources found in 5 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 6\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 625,
+    "output": 1297
+  },
+  "content": "Use a second **ProviderConfig** and make region/provider selection a **composition parameter**, so existing claims stay unchanged and continue using the current default region.\n\n## Approach\n\nIn Crossplane, region is typically controlled by either:\n\n- `spec.forProvider.region` on managed resources, and/or\n- the AWS `ProviderConfig` a resource references\n\nTo add `us-west-2` without changing existing claims:\n\n1. **Keep the current ProviderConfig** for the existing region\n2. **Add a new ProviderConfig** for `us-west-2`\n3. **Update the Composition/XRD** to support an optional region/provider parameter\n4. **Default it to the current behavior**, so old claims still reconcile unchanged\n5. For new deployments that need west region, set the new parameter\n\n---\n\n## 1) Add a second AWS ProviderConfig\n\nExample:\n\n```yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-east-1\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds\n      key: creds\n---\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds\n      key: creds\n```\n\nIf both regions use the same AWS account, they can share credentials.\n\n---\n\n## 2) Extend the XRD schema with optional parameters\n\nAdd optional fields like:\n\n- `spec.parameters.region`\n- `spec.parameters.providerConfigName`\n\nKeep them optional so existing claims remain valid.\n\nExample XRD schema snippet:\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xapps.platform.example.org\nspec:\n  group: platform.example.org\n  names:\n    kind: XApp\n    plural: xapps\n  claimNames:\n    kind: App\n    plural: apps\n  versions:\n    - name: v1alpha1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                parameters:\n                  type: object\n                  properties:\n                    environment:\n                      type: string\n                      enum: [dev, prod]\n                    region:\n                      type: string\n                      enum: [us-east-1, us-west-2]\n                    providerConfigName:\n                      type: string\n                  required:\n                    - environment\n```\n\nNo new required fields means existing claims do not need edits.\n\n---\n\n## 3) Patch composition to choose region/provider\n\nIn your Composition, set defaults to the current region/provider, and allow override from claim parameters.\n\n### Example: patch `providerConfigRef.name`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: xapp-aws\nspec:\n  compositeTypeRef:\n    apiVersion: platform.example.org/v1alpha1\n    kind: XApp\n  resources:\n    - name: bucket\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: Bucket\n        spec:\n          providerConfigRef:\n            name: aws-us-east-1\n          forProvider:\n            region: us-east-1\n      patches:\n        - type: FromCompositeFieldPath\n          fromFieldPath: \"spec.parameters.providerConfigName\"\n          toFieldPath: \"spec.providerConfigRef.name\"\n          policy:\n            fromFieldPath: Optional\n        - type: FromCompositeFieldPath\n          fromFieldPath: \"spec.parameters.region\"\n          toFieldPath: \"spec.forProvider.region\"\n          policy:\n            fromFieldPath: Optional\n```\n\nThis preserves old behavior because the base still points at `aws-us-east-1` / `us-east-1`.\n\nApply the same patch pattern to all regional resources:\n\n- S3 bucket\n- RDS instance/subnet group/security group if regional\n- EKS cluster/node groups\n- IAM usually doesn\u2019t need region, but can still use either provider config if same account\n\n---\n\n## 4) Keep existing claims unchanged\n\nExisting claims can stay as-is:\n\n```yaml\napiVersion: platform.example.org/v1alpha1\nkind: App\nmetadata:\n  name: prod-app\nspec:\n  parameters:\n    environment: prod\n```\n\nThey will continue using the base/default region.\n\nFor a new west-region deployment:\n\n```yaml\napiVersion: platform.example.org/v1alpha1\nkind: App\nmetadata:\n  name: prod-app-west\nspec:\n  parameters:\n    environment: prod\n    region: us-west-2\n    providerConfigName: aws-us-west-2\n```\n\n---\n\n## 5) Optional: map region to provider automatically\n\nIf you don\u2019t want users to specify both `region` and `providerConfigName`, you can expose only `region` and create **separate compositions** selected by labels/composition refs, or use pipeline/functions if your setup supports mapping logic.\n\nSimplest stable option in plain Crossplane is:\n\n- expose both fields\n- default both in base\n- only set them when needed\n\nThat avoids changing existing claims.\n\n---\n\n## 6) For the canonical scenario\n\nThis fits the spec requirement:\n\n- environment separation via **provider configs + composition parameters per cluster/region**\n- no change to existing dev/prod claims\n- prod bucket replication target can use `us-west-2` via the second provider config if your composition creates replication resources conditionally for prod\n\n---\n\n## Recommended minimal change\n\nIf you want the least disruptive implementation:\n\n1. Add `ProviderConfig` named `aws-us-west-2`\n2. Add optional `spec.parameters.region`\n3. Add optional `spec.parameters.providerConfigName`\n4. Patch both into every regional managed resource\n5. Leave base defaults as current region/provider\n\nThat is the safest way to add the second region without touching existing claims.\n\nIf you want, I can also generate the exact **Composition + XRD YAML patch** for a typical Crossplane AWS setup.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-as4rxyff/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-as4rxyff/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-as4rxyff/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-as4rxyff/generated_3.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-as4rxyff/generated_4.yaml"
+  ]
+}

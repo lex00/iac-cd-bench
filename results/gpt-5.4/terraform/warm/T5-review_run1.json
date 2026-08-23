@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 480
+  },
+  "content": "Please paste the `terraform show -json <planfile>` output, or at least the relevant sections from:\n\n- `resource_changes`\n- `configuration`\n- any `output_changes` if present\n\nI\u2019ll review it specifically for:\n\n- hidden destructive changes, especially `[\"delete\",\"create\"]` / replacement actions\n- security group rule expansions like `0.0.0.0/0`\n- RDS risks against your acceptance criteria:\n  - deletion protection\n  - backup retention >= 7\n  - `publicly_accessible = false`\n- any prod least-privilege regressions in IAM\n- changes masked by many `no-op` entries\n\nIf you want, use this quick filter first to extract only risky changes from the plan JSON:\n\n```bash\njq '\n.resource_changes[]\n| select(\n    (.change.actions | index(\"delete\")) or\n    (.change.actions | index(\"create\")) or\n    (.change.actions | index(\"update\"))\n  )\n| {\n    address,\n    actions: .change.actions,\n    before: .change.before,\n    after: .change.after,\n    after_unknown: .change.after_unknown\n  }\n' tfplan.json\n```\n\nAnd for replacements only:\n\n```bash\njq '\n.resource_changes[]\n| select(.change.actions == [\"delete\",\"create\"] or .change.actions == [\"create\",\"delete\"])\n| { address, actions: .change.actions, before: .change.before, after: .change.after }\n' tfplan.json\n```\n\nAnd for broad ingress exposure:\n\n```bash\njq '\n.resource_changes[]\n| select(.type == \"aws_security_group\" or .type == \"aws_security_group_rule\")\n| select(\n    ((.change.after.ingress // []) | tostring | test(\"0.0.0.0/0\")) or\n    ((.change.after.cidr_blocks // []) | tostring | test(\"0.0.0.0/0\"))\n  )\n| { address, actions: .change.actions, after: .change.after }\n' tfplan.json\n```\n\nIf you paste the JSON, I\u2019ll produce a concise review like:\n\n- Critical\n- High\n- Medium\n- Safe/no-op\n- Recommended remediation\n\nIf you don\u2019t want to paste the whole file, send the entries for the RDS resource and the changed security group resources."
+}

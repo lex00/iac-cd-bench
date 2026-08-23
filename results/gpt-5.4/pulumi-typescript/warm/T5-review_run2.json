@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 162
+  },
+  "content": "Please provide the Pulumi preview JSON output to review.\n\nI\u2019ll check it for:\n- plaintext secrets in outputs/state\n- replacement of stateful resources like RDS/S3/EKS\n- missing `protect: true` on critical resources\n\nIf useful, I can also tell you exactly which JSON fields to inspect, such as:\n- `steps[].op`\n- `steps[].newState.outputs`\n- `steps[].newState.inputs`\n- `steps[].newState.protect`\n- resource types like:\n  - `aws:rds/instance:Instance`\n  - `aws:s3/bucket:Bucket*`\n  - `aws:eks/cluster:Cluster`\n  - `aws:eks/nodeGroup:NodeGroup`\n\nPaste the JSON and I\u2019ll review it directly."
+}

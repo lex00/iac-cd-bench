@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 352
+  },
+  "content": "1. **Property that triggered the replace**\n   In a Pulumi preview, a DB shows **replace** when a **ForceNew** property changed. For AWS RDS this is typically something like:\n   - `identifier`\n   - `name` / initial database name\n   - sometimes `username`\n   - engine-family changes or other immutable args\n\n   The exact trigger is the property marked in the preview as causing replacement, usually shown like:\n   - `~ property: \"old\" => \"new\" **[replace]**`\n   - or the resource line showing `+-` with a diff entry flagged for replacement\n\n   So the answer is: **the changed immutable RDS input property shown with `[replace]` in preview**.\n\n2. **What `pulumi up --target` skips**\n   `--target` tells Pulumi to operate only on the specified resource(s) and required dependencies.\n\n   It **skips**:\n   - unrelated resources in the stack\n   - changes to other resources that are not targeted\n   - often dependent resources unless explicitly included or required for dependency resolution\n\n   In practice: **Pulumi does not perform the full stack update; it only updates the targeted resource set and necessary dependencies**.\n\n3. **How Pulumi handles secrets in outputs**\n   Pulumi tracks secrets as **secret-tainted values**.\n\n   That means:\n   - secret outputs are **masked** in CLI output as `[secret]`\n   - they are **encrypted in state**\n   - if a secret flows into another output, that output becomes secret too\n\n   So: **Pulumi automatically propagates secrecy, redacts secrets from preview/output, and stores them encrypted in stack state**."
+}

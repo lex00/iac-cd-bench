@@ -312,24 +312,35 @@ class OpenAICompatAdapter(ModelAdapter):
 
         import time
         resp = None
+        last_exc: Exception | None = None
         for attempt in range(10):
-            resp = httpx.post(
-                self._url,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "content-type": "application/json",
-                },
-                json=payload,
-                timeout=timeout,
-            )
-            if resp.status_code == 429:
+            try:
+                resp = httpx.post(
+                    self._url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "content-type": "application/json",
+                    },
+                    json=payload,
+                    timeout=timeout,
+                )
+                last_exc = None
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                last_exc = e
+                log.warning("Transport error (%s), retrying", type(e).__name__)
+                time.sleep(min(5 * 2 ** attempt + 10, 300))
+                continue
+            # Retry rate limits, transient 5xx, and request timeouts
+            if resp.status_code == 429 or resp.status_code >= 500:
                 wait = min(5 * 2 ** attempt + 10, 300)
-                log.warning("Rate limited (%s), retrying in %ds", resp.status_code, wait)
+                log.warning("HTTP %s, retrying in %ds", resp.status_code, wait)
                 time.sleep(wait)
                 continue
             break
-        if resp is None or resp.status_code == 429:
-            raise RuntimeError("Rate limited after 10 retries")
+        if last_exc is not None:
+            raise RuntimeError(f"Transport failure after 10 retries: {last_exc}")
+        if resp is None or resp.status_code == 429 or resp.status_code >= 500:
+            raise RuntimeError(f"HTTP {resp.status_code if resp else 'none'} after 10 retries")
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
         msg = data["choices"][0]["message"]

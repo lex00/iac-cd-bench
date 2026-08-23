@@ -1,0 +1,30 @@
+{
+  "model": "gpt-5.4",
+  "task": "T6-semantics",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ox2qtyrp/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ox2qtyrp/index.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-types"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q1_output_concat_footgun PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q2_protect_blocks_destroy PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q3_delete_before_replace_order_and_risk PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q4_secret_export_masked PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q5_getnumber_default PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q6_rename_replaces_aliases_fix PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q7_arn_unknown_at_preview PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1694,
+    "output": 138
+  },
+  "content": "```answers.json\n{\n  \"q1\": {\"contains\": \"output-repr\", \"type\": \"pulumi.Output<string>\"},\n  \"q2\": {\"completes\": false, \"blocking_resource\": \"artifacts\"},\n  \"q3\": {\"order\": \"delete-then-create\", \"risk\": \"downtime or replacement failure if dependents/data still exist before new bucket is created\"},\n  \"q4\": \"masked\",\n  \"q5\": {\"value\": 30, \"error\": false},\n  \"q6\": {\"plan\": \"replace\", \"fix_option\": \"aliases\"},\n  \"q7\": \"unknown\"\n}\n```"
+}

@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 991,
+    "output": 248
+  },
+  "content": "1. **Property that triggered the DB replace**  \n   In Pulumi, an RDS instance is typically **replaced** when a provider marks a field as `ForceNew`. In this scenario, the likely trigger is a change to an immutable DB setting such as **`db_instance_class`/instance type**, identifier/name, or similar ForceNew field depending on the exact resource.  \n   If your preview explicitly shows `replace`, the decisive property is the one marked in the diff as requiring replacement.\n\n2. **What `pulumi up --target` skips**  \n   `--target` applies changes only to the specified resource(s) and the dependencies needed for them. It **skips unrelated resources and their updates** that are not targeted and not required as dependencies.\n\n3. **How Pulumi handles secrets in outputs**  \n   Pulumi tracks secrets as **secret-tainted values**:\n   - values from `config.require_secret()` are encrypted in state\n   - if a secret flows into an output/export, that output is also treated as a **secret**\n   - previews/CLI output redact secret values rather than showing plaintext\n\nSo exported secret outputs remain encrypted in state and masked in CLI/display."
+}

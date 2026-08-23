@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 836
+  },
+  "content": "Here\u2019s the review against the canonical spec.\n\n## Summary\n\n**This diff is not acceptable as-is** for the canonical scenario.\n\nTwo changes were called out:\n\n1. **`deletionPolicy: Delete` added provider-wide**\n2. **Bucket versioning dropped**\n\nBoth are risky, and **dropping bucket versioning is a direct spec violation**.\n\n---\n\n## 1) `deletionPolicy: Delete` added provider-wide\n\n### Impact\nSetting `deletionPolicy: Delete` broadly in a Crossplane composition means managed resources are deleted when the composite/claim is deleted or replaced.\n\n### Review\nThis is **not automatically wrong**, but it is **dangerous provider-wide**.\n\n#### Concerns\n- **Prod safety**: for stateful resources like **RDS** and **S3**, provider-wide `Delete` increases blast radius.\n- **Spec intent conflict**:\n  - Acceptance criteria require **RDS deletion protection on**\n  - Environment isolation implies prod changes should not accidentally destroy durable state\n- If this is applied universally, it may affect:\n  - Buckets\n  - Databases\n  - IAM resources\n  - Networking primitives\n  - Secrets or external dependencies\n\n### Recommended stance\n- **Do not apply `deletionPolicy: Delete` provider-wide** unless this is explicitly intended for ephemeral/dev-only infrastructure.\n- Prefer:\n  - **`Orphan`** for durable/stateful prod resources, especially **RDS** and possibly **S3**\n  - Environment-specific behavior via composition parameters or separate compositions\n\n### Suggested review comment\n> `deletionPolicy: Delete` applied provider-wide is too broad for this stack. It increases risk of destructive teardown for stateful resources, especially in prod. Given the spec requires deletion protection for RDS and independent env safety, this should be scoped per resource or per environment rather than made the default everywhere.\n\n---\n\n## 2) Bucket versioning dropped\n\n### Impact\nThis is a **hard failure** against the canonical spec.\n\n### Spec violation\nAcceptance Criteria #1:\n\n> **Bucket: versioning enabled**, server-side encryption (AES-256 or KMS), no public access\n\nAlso the resource matrix says:\n\n- **Dev**: versioned, encryption\n- **Prod**: versioned, encryption, cross-region replication to us-west-2\n\n### Why this matters\nRemoving versioning:\n- breaks rollback/recovery for overwritten or deleted objects\n- prevents/impairs replication patterns in prod\n- reduces data protection guarantees\n\n### Review\n**Reject this change** unless versioning is re-enabled.\n\n### Suggested review comment\n> Bucket versioning cannot be removed. The canonical spec requires versioning in both dev and prod, and prod replication expectations also depend on versioned bucket behavior. Please restore bucket versioning.\n\n---\n\n## Overall verdict\n\n### Status: **Request changes**\n\nBecause:\n- **Bucket versioning removal is a direct acceptance-criteria failure**\n- **Provider-wide `deletionPolicy: Delete` is overly broad and unsafe**, especially for persistent resources\n\n---\n\n## What would make this acceptable\n\n### Minimum required\n- Re-enable **S3 bucket versioning**\n- Confirm bucket still has:\n  - encryption enabled\n  - public access blocked\n\n### Strongly recommended\n- Replace provider-wide `deletionPolicy: Delete` with:\n  - per-resource deletion policies, or\n  - environment-specific compositions/parameters\n- Ensure **RDS deletion protection** remains enabled\n- Verify prod stateful resources are not trivially destroyed by claim deletion\n\n---\n\n## Quick pass/fail against acceptance criteria\n\n- **Bucket versioning enabled**: **Fail**\n- **Bucket encryption/no public access**: unknown from diff\n- **RDS deletion protection / backups / private**: needs verification, risk increased by broad delete policy\n- **Environment isolation**: potentially weakened if shared composition semantics changed broadly\n- Other criteria: not enough info\n\nIf you want, I can also help draft a **line-by-line PR review comment set** or a **safer Crossplane composition pattern** for env-specific deletion behavior."
+}

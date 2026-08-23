@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 200
+  },
+  "content": "Please paste the Pulumi preview JSON (`pulumi preview --json` output), and I\u2019ll review it for:\n\n- plaintext secrets in outputs/properties\n- replacement of stateful resources\n- missing `protect` on critical resources\n\nIf helpful, I can also check it against your acceptance criteria, especially:\n\n- RDS deletion protection / backup retention / public access\n- S3 encryption / versioning / public access\n- IAM wildcards in prod\n- environment isolation signals\n\nIf the JSON is large, you can paste just:\n- `steps`\n- `diagnostics`\n- `summary`\n- any resource entries for `aws:rds/*`, `aws:s3/*`, `aws:iam/*`, `aws:eks/*`, `kubernetes:*`\n- stack outputs\n\nOnce you send it, I\u2019ll return a concise security review with:\n1. findings\n2. severity\n3. exact JSON evidence\n4. recommended fix in Pulumi TypeScript."
+}
