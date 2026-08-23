@@ -209,8 +209,9 @@ class AnthropicAdapter(ModelAdapter):
             "messages": messages,
         }
 
-        # Opus 5.x uses adaptive thinking with output_config.effort
-        if self.model.startswith("claude-opus-5"):
+        # Opus 5.x and Opus 4.8 use adaptive thinking with output_config.effort
+        # (4.8 rejects legacy budget_tokens with a 400 pointing at adaptive)
+        if self.model.startswith("claude-opus-5") or self.model == "claude-opus-4-8":
             if self.reasoning_effort and self.reasoning_effort != "none":
                 payload["thinking"] = {"type": "adaptive"}
                 payload["output_config"] = {"effort": self.reasoning_effort}
