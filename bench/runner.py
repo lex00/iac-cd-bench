@@ -226,16 +226,38 @@ class AnthropicAdapter(ModelAdapter):
         else:
             timeout = 120
 
-        resp = httpx.post(
-            self._url,
-            headers={
-                "x-api-key": self.api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json=payload,
-            timeout=timeout,
-        )
+        import time
+        resp = None
+        last_exc: Exception | None = None
+        for attempt in range(10):
+            try:
+                resp = httpx.post(
+                    self._url,
+                    headers={
+                        "x-api-key": self.api_key,
+                        "anthropic-version": "2023-06-01",
+                        "content-type": "application/json",
+                    },
+                    json=payload,
+                    timeout=timeout,
+                )
+                last_exc = None
+            except (httpx.TimeoutException, httpx.TransportError) as e:
+                last_exc = e
+                log.warning("Anthropic transport error (%s), retrying", type(e).__name__)
+                time.sleep(min(5 * 2 ** attempt + 10, 300))
+                continue
+            # Retry rate limits, overload, and transient 5xx
+            if resp.status_code in (429, 529) or resp.status_code >= 500:
+                wait = min(5 * 2 ** attempt + 10, 300)
+                log.warning("Anthropic HTTP %s, retrying in %ds", resp.status_code, wait)
+                time.sleep(wait)
+                continue
+            break
+        if last_exc is not None:
+            raise RuntimeError(f"Transport failure after 10 retries: {last_exc}")
+        if resp is None or resp.status_code in (429, 529) or resp.status_code >= 500:
+            raise RuntimeError(f"HTTP {resp.status_code if resp else 'none'} after 10 retries")
         if not resp.is_success:
             log.error("Anthropic API error %s: %s", resp.status_code, resp.text[:1000])
         resp.raise_for_status()
