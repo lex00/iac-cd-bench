@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 523
+  },
+  "content": "# PR Security Review \u2014 knr-ops PR\n\n## Issues Found\n\n### \ud83d\udd34 Critical\n\n**1. S3 bucket policy grants public read access**\n- Violates acceptance criterion: \"no public access\"\n- Exposes application assets bucket to the internet; if any sensitive objects exist (logs, uploads, backups), they leak\n- **Fix:** Remove the `Action: s3:GetObject, Principal: *` statement. Also add a Public Access Block (`BlockPublicAcls`, `BlockPublicPolicy`, `IgnorePublicAcls`, `RestrictPublicBuckets` all `true`) as a guardrail. If assets must be public, serve via CloudFront with an Origin Access Identity and bucket policy restricted to the OAI.\n\n**2. Plaintext password in deployment env vars**\n- Violates \"Secret: never stored in plaintext in Git\"\n- Credential is committed permanently in Git history \u2014 rotation alone won't fix it once merged\n- **Fix:** Remove the env var; use SOPS-encrypted secret per the knr-ops stack convention (e.g., `Secret` encrypted with SOPS in the overlay, referenced via `secretKeyRef`). Rotate the credential before merge if it was ever pushed to a shared branch.\n\n### \ud83d\udfe1 Warning\n\n**3. Missing resource limits on containers**\n- Noisy-neighbor / resource-exhaustion risk on shared nodes; prod runs 4\u00d7 t3.large \u2014 a runaway container can starve workloads\n- Also typically fails admission policies (e.g., Kyverno/OPA `LimitRange`/validating webhook in Flux-managed clusters)\n- **Fix:** Add `resources.requests` and `resources.limits` (CPU/memory) to the container spec; consider a `LimitRange` in the namespace.\n\n### \u26aa Info\n\n**4. RDS instance class change (no issue)** \u2014 expected per-overlay sizing; verify it targets the correct overlay (dev vs prod) so environment isolation isn't broken. Confirm `publicly_accessible = false` and `deletion_protection` remain set.\n\n## Verdict\n\n**Block merge.** Items 1 and 2 are hard blockers. Required changes before merge:\n1. Remove public bucket policy + add Public Access Block (or CloudFront OAI pattern)\n2. Replace plaintext secret with SOPS-encrypted Secret and rotate the credential\n3. Add resource requests/limits to all containers\n\nSince the plaintext password is already in the diff, ensure the branch is squashed/rebased and never merged to main in any form."
+}

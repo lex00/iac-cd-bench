@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 762
+  },
+  "content": "# Terraform Plan Behavior \u2014 Predicted Answers\n\n## 1. What does the next plan show when a variable flips?\n\nTerraform computes the diff between **desired state (config + tfvars)** and **recorded state (tfstate)**. Example: flipping `db_instance_class` from `db.t3.micro` (dev) to `db.t3.medium`:\n\n```\n~ module.rds.aws_db_instance.this\n    instance_class: \"db.t3.micro\" -> \"db.t3.medium\"\n    ~ (other attrs provider recalculates, e.g. apply time)\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\n- Only resources whose variable-driven attributes changed appear in the plan.\n- If the flipped variable feeds workspace-scoped tfvars, only that workspace's resources are affected \u2014 dev and prod stay isolated.\n- `~` = in-place update; `-/+` or `replace` = destroy/recreate (e.g., changing `identifier`, `engine`, or forcing a new S3 bucket name).\n\n## 2. What happens if the state file is deleted?\n\n- Terraform loses all knowledge of existing resources; the next plan shows **everything as `+` (create)** \u2014 it cannot \"see\" real infrastructure.\n- Actual cloud resources are **orphaned, not deleted** \u2014 you get duplicates on apply.\n- Recovery options:\n  - `terraform import` each resource back into fresh state, or\n  - restore state from remote backend (S3 + DynamoDB locking) / backups \u2014 which is exactly why remote state with versioning is the acceptance-criteria-compliant setup.\n- Deleting state also destroys workspace separation and secrets-derived outputs (DB endpoints etc.).\n\n## 3. How does Terraform handle the RDS instance class change?\n\n- `instance_class` is an **updatable attribute** \u2192 plan shows `~ update in-place`.\n- AWS performs a **modify-db-instance**: \n  - If `apply_immediately = true`, modification happens at once; otherwise deferred to the next maintenance window.\n  - Dev (single AZ): brief downtime / failover during the change.\n  - Prod (multi-AZ): AWS applies the change on the standby first, then failovers \u2014 minimal downtime.\n- Storage, `multi_az`, `deletion_protection`, backup retention (\u22657 days) are preserved since they're not being changed.\n- If the change also altered a **force-new** attribute (e.g., `identifier`), it would show `# Forces replacement` \u2192 destroy + create, and with `deletion_protection = true` the destroy would be **blocked** \u2014 an important prod safeguard.\n\n## 4. State vs. Configuration\n\n| | Configuration (.tf) | State (.tfstate) |\n|---|---|---|\n| Nature | Declarative **desired** state | JSON record of **actual** deployed resources |\n| Authored by | You (HCL) | Terraform (written on every apply) |\n| Contains | Resources, variables, modules | Real resource IDs, attributes, provider metadata |\n| Key role | \"What I want\" | \"What exists\" \u2014 enables diffing, binding to real cloud IDs |\n| Secrets | Passed via `-var-file`/SOPS (never plaintext in Git) | May contain sensitive values \u2192 keep remote backend locked/encrypted |\n\n**Plan = config \u2212 state** (plus refresh of real cloud values). The RDS example ties it together: the config says `db.t3.medium`, state says `db.t3.micro`, plan reconciles the difference \u2014 and if state is gone, there's nothing to diff against, so Terraform proposes creating everything anew.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-h0s_kq7f/generated_0.txt"
+  ]
+}

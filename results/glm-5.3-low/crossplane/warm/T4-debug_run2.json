@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "     region: us-east-1\\n            engine: postgres\\n            engineVersion: \"16.1\"\\n            allocatedStorage: 20\\n          providerConfigRef:\\n            name: default\\n      patches:\\n        # FIXED: correct field path matching XRD schema\\n        - fromFieldPath: spec.parameters.instanceClass\\n          toFieldPath: spec.forProvider.instanceClass\\n      # FIXED: readiness now follows the managed resource\\'s status\\n      readiness:\\n        type: MatchString\\n        fieldPath: status.atProvider.instanceState\\n        matchString: available\\n' or 'checkType' in 'apiVersion: apiextensions.crossplane.io/v1\\nkind: Composition\\nmetadata:\\n  name: aws-web-service\\n  labels:\\n    crossplane.io/xrd: xawswebservices.app.example.com\\nspec:\\n  group: app.example.com\\n  mode: Pipeline\\n  resources:\\n    - name: rds-instance\\n      base:\\n        apiVersion: database.aws.upbound.io/v1beta1\\n        kind: Instance\\n        spec:\\n          forProvider:\\n            region: us-east-1\\n            engine: postgres\\n            engineVersion: \"16.1\"\\n            allocatedStorage: 20\\n          providerConfigRef:\\n            name: default\\n      patches:\\n        # FIXED: correct field path matching XRD schema\\n        - fromFieldPath: spec.parameters.instanceClass\\n          toFieldPath: spec.forProvider.instanceClass\\n      # FIXED: readiness now follows the managed resource\\'s status\\n      readiness:\\n        type: MatchString\\n        fieldPath: status.atProvider.instanceState\\n        matchString: available\\n'))\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:15: AssertionError: Composition should have ReadinessChecks defined\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1122,
+    "output": 552
+  },
+  "content": "## Fix\n\nTwo changes to `composition.yaml`:\n\n1. **Wrong `fromFieldPath`** \u2014 the XRD schema exposes `spec.parameters.instanceClass` (there is no `storageClass` field), so the patch never applied and `instanceClass` stayed empty, blocking the RDS instance from becoming ready.\n2. **Missing readiness** \u2014 the composition needs explicit readiness policy so the composite becomes Ready once the instance is available.\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n          providerConfigRef:\n            name: default\n      patches:\n        # FIXED: correct field path matching XRD schema\n        - fromFieldPath: spec.parameters.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n      # FIXED: readiness now follows the managed resource's status\n      readiness:\n        type: MatchString\n        fieldPath: status.atProvider.instanceState\n        matchString: available\n```\n\nNote: with `instanceClass` now passed through directly (already `db.t3.micro`/`db.t3.medium` per the XRD default), the `Format` transform that prefixed `db.t3.` is no longer needed \u2014 the transform was formatting the raw value, and the old path never matched anything anyway.\n\n## Verify\n\n```bash\n# Check patch applies and instance gets a class\nkubectl get instance.database.aws.upbound.io -o jsonpath='{.items[0].spec.forProvider.instanceClass}'\n\n# Watch composite readiness\nkubectl get awswebservice.app.example.com -w\n# STATUS should go from Creating/False \u2192 True once instanceState=available\n```\n\nIf the instance had already been created with a missing class, delete the XR (or the instance) so it's recreated with the corrected patch:\n\n```bash\nkubectl delete awswebservice <name> -n <ns>\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-7czz30tp/composition.yaml"
+  ]
+}

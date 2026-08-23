@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 989,
+    "output": 629
+  },
+  "content": "## 1. Which property triggered the replace?\n\nA `replace` (delete + recreate) on the RDS instance means a **force-new property** changed. Given the spec's dev/prod sizing, the usual culprits are:\n\n- **`instanceClass`** (e.g., `db.t3.micro` \u2192 `db.t3.medium`) \u2014 force-new\n- **`engine`** / **`engineVersion`** (major version bump) \u2014 force-new\n- **`storageType`** change \u2014 force-new\n- **`allocatedStorage` decrease** (increase is in-place) \u2014 force-new\n- **`identifier`** rename \u2014 effectively a new resource\n- Applying `ReplaceOnChange` protections: flipping `deletionProtection`/`multiAz` alone is in-place, not a replace\n\nIn this scenario, moving from dev to prod config (or a stack config typo like `db_instance_class`) changes `instanceClass`, which Pulumi flags:\n\n```\n~ db: aws:rds:Instance \u2192 replacement [diff: instanceClass]\n```\n\nThe `[diff: ...]` line names the exact property.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target` applies changes **only to explicitly named URNs** and skips everything else:\n\n- All other resources with pending diffs are **not created, updated, or replaced**\n- **Dependent resources are not updated** (unless `--target-dependents` is passed)\n- **Outputs/stack exports affected by skipped resources are not refreshed**\n- \u26a0\ufe0f Crucially for the DB replace: targeting *only* the RDS instance will replace it even if resources that depend on it (e.g., the secret referencing the connection string) are skipped \u2014 this can leave state inconsistent, so `--target-dependents` or full `up` is usually safer for replaces.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- Declared via `config.require_secret(\"db_password\")` (never `require()` / `get()`), which returns an `Output` marked as a **secret**.\n- Propagation: secrets flow through `.apply()` and output combinations \u2014 the \"secret-ness\" is **contagious** across Output operations, so derived values (e.g., a connection string built from the password) are also treated as secrets.\n- In state: stored **encrypted** using the stack's passphrase or KMS key (`pulumi config set --secret` likewise).\n- In preview/CLI output: displayed as `[secret]`.\n- In stack exports: `pulumi.export(\"conn\", conn_string)` where the value is a secret Output shows as `[secret]` in `pulumi stack output`; the plaintext is retrievable only via `pulumi stack output --show-secrets` (requires decryption rights).\n- Note: a secret passed into a resource property still shows in `[diff: ...]` as `+ db_password: [secret]`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-sen9tl5l/generated_0.txt"
+  ]
+}

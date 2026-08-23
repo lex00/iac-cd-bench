@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 540
+  },
+  "content": "# Security Review: knr-ops PR\n\n## Issues Identified (ranked by severity)\n\n### \ud83d\udd34 Critical \u2014 Block merge\n\n**1. S3 bucket policy grants public read access**\n- Violates acceptance criterion #1: \"no public access\"\n- Exposes application assets (and potentially anything else in the bucket) to the internet; risk of data leak if private objects are added later\n- **Fix:** Remove the `s3:GetObject` wildcard Principal (`\"Principal\": \"*\"`). Also add `aws:s3:PublicAccessBlock` (all four settings true) via kustomize overlay so the policy can't regress.\n\n**2. Plaintext DB password in deployment env vars**\n- Violates criterion #3: secrets must never be in plaintext in Git\n- Credential leaks via Git history forever, even after removal; Flux reconciles it into cluster state accessible to anyone with `get secret`/`describe pod`\n- **Fix:** Move to SOPS-encrypted Secret (stack-native per spec: `sops` + Flux/Kustomize `ksops` or SOPS-encrypted Secret in the overlay). Reference via `secretKeyRef` or workload identity, and rotate the exposed credential immediately.\n\n### \ud83d\udfe1 Warning \u2014 Should fix before merge\n\n**3. Missing resource limits on containers**\n- Noisy-neighbor / resource-exhaustion DoS on shared nodes; no `limit` means no CPU/mem guardrails, and prod cluster nodes can be starved\n- **Fix:** Add `resources.requests` and `resources.limits` in `base/` (or per-overlay sizing), plus a `LimitRange`/`ResourceQuota` per namespace.\n\n**4. (Check) IAM trust policy** \u2014 diff summary doesn't show IAM changes, but if the new bucket policy was paired with wildcard IAM actions, reject per criterion #4. Verify no `\"Action\": \"s3:*\"` on prod.\n\n### \ud83d\udd35 Info \u2014 Nice to have\n\n**5. RDS instance class change** \u2014 no security issue per preview; just confirm deletion protection + `publicly_accessible = false` + backup retention \u2265 7 days still hold (criterion #2), especially if the class change recreates the instance.\n\n## Merge verdict\n\n**Do not merge.** Both critical issues must be resolved:\n1. Remove public-read bucket policy + enforce PublicAccessBlock\n2. Migrate password to SOPS-encrypted Secret and rotate the leaked value\n3. Add resource requests/limits (warning, but cheap to include)\n\nRe-run review after fixes; confirm dev overlay unaffected (criterion #7)."
+}

@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 748
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Summary\n\nTwo changes: (1) `deletionPolicy: Delete` applied provider-wide, and (2) S3 bucket versioning dropped from the composition. **Both changes introduce risk; the versioning drop violates acceptance criteria #1 and should block the merge.**\n\n---\n\n## \ud83d\udd34 Blocker: Bucket versioning dropped\n\n**Acceptance criteria violation (AC #1):** the spec explicitly requires \"versioning enabled\" for the application assets bucket in *both* environments. This isn't an environment-specific tuning \u2014 it's a baseline safety control.\n\nDropping versioning:\n- Removes protection against accidental deletes/overwrites of assets\n- If applied to *existing* buckets in Crossplane, disabling versioning on a previously versioned bucket does not remove old versions, but new writes become non-versioned \u2014 silent regression\n- Likely conflicts with the cross-region replication requirement in **prod**: S3 CRR *requires* versioning enabled on both source and destination buckets. The composition will either fail to reconcile or produce a partially-configured prod bucket.\n\n**Action:** Restore versioning. If this was accidental (e.g., a bad base patch merge), revert the hunk. If intentional, get explicit sign-off on a spec change \u2014 don't let it ride in with the `deletionPolicy` change.\n\n---\n\n## \ud83d\udfe0 High risk: `deletionPolicy: Delete` provider-wide\n\nThis is a blast-radius expansion. Verify intent carefully:\n\n1. **Composition + claim layering:** `deletionPolicy` on the composed resource in the composition overrides the managed resource default (`Delete` vs `Orphan`). Setting it provider-wide means *every* leaf resource \u2014 RDS instances, EKS clusters, buckets, IAM roles \u2014 is destroyed when the claim is deleted.\n2. **Prod RDS:** the spec requires deletion protection *on* the RDS instance (AC #2), which mitigates this \u2014 confirm `deletionProtection` is actually set in the composition for prod. Crossplane will still attempt deletion and the MR will hang in a `Terminating` state rather than destroy data, but dev (where protection may be relaxed) is fully exposed.\n3. **Accidental claim deletion** = full environment teardown. This is the most common Crossplane footgun. `Orphan` on prod (or at minimum on RDS/buckets) is the safer default; `Delete` on dev is defensible for cost hygiene.\n4. **`deletionPolicy: Delete` on ProviderConfig-adjacent resources** (if included) can cascade into credential/controller churn \u2014 check exactly which resources the patch touches.\n\n**Recommendation:** Make this environment-scoped via composition patches (e.g., dev \u2192 `Delete`, prod \u2192 `Orphan`), or at minimum exclude RDS and S3 from the blanket patch.\n\n---\n\n## \ud83d\udfe1 Minor observations\n\n- **Two unrelated changes in one diff** (deletion policy + versioning). Split them; they have different risk profiles and review needs.\n- If versioning was dropped from *both* dev and prod compositions, note that even dev requires versioning per spec \u2014 there's no \"cheap dev\" carve-out here.\n- Check whether the claim `spec` exposes a versioning parameter; if it was removed from the claim schema, downstream consumers may break even after restoring the composition field.\n\n---\n\n## Verdict\n\n**Request changes.** Versioning must be restored (AC #1, and prod CRR will break). `deletionPolicy: Delete` needs environment scoping or explicit justification, with confirmation that RDS deletion protection remains set on prod."
+}

@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "ilt-in method count of str object at 0xa853fc000>('.apply(')\n     +    where <built-in method count of str object at 0xa853fc000> = 'import pulumi\\nimport pulumi_aws as aws\\n\\n# SEED REPO: Pulumi Python with secret read as plain string + .apply() misuse\\n# Defect 1: Secret read as plain string (should use config.Secret)\\n# Defect 2: .apply() result used where Output expected\\n\\nconfig = pulumi.Config()\\nenv = config.get(\"env\")\\nregion = config.get(\"region\", \"us-east-1\")\\n\\n# DESTRUCTIVE CHANGE: password read as plain string instead of Secret\\n# Should be: db_password = config.require_secret(\"dbPassword\")\\ndb_password = config.get(\"dbPassword\")  # DEFECT: plain string, not a Secret\\n\\n# S3 Bucket\\nbucket = aws.s3.Bucket(\\n    \"app-bucket\",\\n    bucket=f\"myapp-assets-{env}\",\\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\\n)\\n\\n# DEFECT: .apply() result used where Output<string> expected\\n# This crashes because .apply() returns None, not a string\\nbucket_url = bucket.arn.apply(lambda arn: f\"https://s3.{region}.amazonaws.com/{arn}\")\\n\\n# RDS Instance\\ndb = aws.rds.Instance(\\n    \"app-db\",\\n    instance_class=\"db.t3.medium\",\\n    engine=\"postgres\",\\n    engine_version=\"16.1\",\\n    allocated_storage=20,\\n    db_name=\"appdb\",\\n    username=\"app-user\",\\n    password=db_password,\\n    skip_final_snapshot=True,\\n    deletion_protection=False,  # Should be True for prod\\n)\\n\\n# Output\\npulumi.export(\"bucketUrl\", bucket_url)\\npulumi.export(\"dbEndpoint\", db.endpoint)\\n'.count\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py:17: AssertionError: Should not overuse .apply() on Output values\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output\n========================= 1 failed, 1 passed in 0.00s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1006,
+    "output": 756
+  },
+  "content": "# Fixed Stack\n\nTwo defects addressed: secret read as plaintext, and the `.apply()` misuse (note: `.apply()` returning `None` happens when the lambda returns nothing \u2014 the real bug pattern here is mixing plain strings with Outputs). Also fixed the prod-safety issues flagged by acceptance criteria.\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.require(\"env\")\nregion = config.get(\"region\", \"us-east-1\")\n\n# FIX 1: Secret read via require_secret -> returns Output[str], encrypted in state\ndb_password = config.require_secret(\"dbPassword\")\n\nis_prod = env == \"prod\"\n\n# S3 Bucket\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(\n        enabled=aws.s3.BucketVersioningV2ConfigurationStatus.ENABLED,\n    ),\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\n)\n\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-pab\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# FIX 2: correct apply usage \u2014 apply on the Output itself, lambda returns a value\nbucket_url = pulumi.Output.concat(\n    \"https://s3.\", region, \".amazonaws.com/\", bucket.arn\n)\n\n# RDS Instance\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.medium\" if is_prod else \"db.t3.micro\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app-user\",\n    password=db_password,  # Output[str] accepted here directly \u2014 no .apply() needed\n    skip_final_snapshot=False,\n    deletion_protection=is_prod,\n    backup_retention_period=7,\n    publicly_accessible=False,\n    multi_az=is_prod,\n    storage_encrypted=True,\n)\n\n# Outputs (bucket_url is Output[str]; exporting directly is correct)\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n```\n\n## What changed and why\n\n**Defect 1 \u2014 secret as plain string:** `config.get(\"dbPassword\")` reads the value as an unencrypted plain string and stores it in plaintext in the Pulumi state file. `config.require_secret(\"dbPassword\")` returns an `Output[str]` and marks the value as a secret \u2014 encrypted at rest in state and masked in CLI output. `require` also fails fast if unset.\n\n**Defect 2 \u2014 `.apply()` misuse:** The lambda `lambda arn: f\"...{arn}\"` was effectively producing a `None`/invalid result context, and the result was then used where a stable `Output<string>` was expected. Fixed by using `pulumi.Output.concat(...)`, which is the idiomatic way to join Outputs and plain strings. Where an `apply` is genuinely needed, the lambda must return a value (e.g., `bucket.arn.apply(lambda arn: f\"https://...{arn}\")` is valid only if the return is captured into the Output).\n\n**Bonus (acceptance criteria):** added public access block, deletion protection/backup retention \u22657 days on prod, encryption, multi-AZ for prod, and disabled `skip_final_snapshot`. Ensure `dbPassword` is set with `pulumi config set --secret dbPassword` in `dev.yaml`/`prod.yaml`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-tt7n4e3t/generated_0.py"
+  ]
+}

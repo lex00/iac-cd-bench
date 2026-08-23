@@ -1,0 +1,34 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `node_group`\n  --> autoscaling.py:11:28\n   |\n 9 | policy = aws.autoscaling.Policy(\n10 |     \"app-node-group-cpu-target-tracking\",\n11 |     autoscaling_group_name=node_group.resources[0].autoscaling_groups[0],\n   |                            ^^^^^^^^^^\n12 |     policy_type=\"TargetTrackingScaling\",\n13 |     target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n   |\n\nF821 Undefined name `cluster`\n  --> infra.py:9:18\n   |\n 7 | node_group = aws.eks.N"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 628,
+    "output": 840
+  },
+  "content": "## Adding an Auto-Scaling Policy Without Replacement\n\nThe key rule: **adding new resources never triggers replacement**; replacement only happens if you change a `ReplaceOnChanges` input on an *existing* resource. So we add a `TargetTrackingScaling` policy that attaches to the existing ASG (or EKS node group) by reference \u2014 zero changes to existing resources.\n\n### Existing stack (unchanged) \u2014 `infra.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\n\n# Existing node group (do NOT touch its inputs)\nnode_group = aws.eks.NodeGroup(\n    \"app-node-group\",\n    cluster_name=cluster.name,\n    scaling_config=aws.eks.NodeGroupScalingConfigArgs(\n        desired_size=config.get_int(\"node_desired_size\") or 2,\n        min_size=config.get_int(\"node_min_size\") or 2,\n        max_size=config.get_int(\"node_max_size\") or 4,\n    ),\n    instance_types=[config.get(\"node_instance_type\") or \"t3.medium\"],\n)\n```\n\n### New file \u2014 `autoscaling.py` (the addition)\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\n\n# Attach a target-tracking policy to the EXISTING auto scaling group.\n# This is a new, separate resource \u2014 the ASG itself is untouched,\n# so nothing is replaced.\npolicy = aws.autoscaling.Policy(\n    \"app-node-group-cpu-target-tracking\",\n    autoscaling_group_name=node_group.resources[0].autoscaling_groups[0],\n    policy_type=\"TargetTrackingScaling\",\n    target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n        predefined_metric_specification=aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n            predefined_metric_type=\"ASGAverageCPUUtilization\",\n        ),\n        target_value=60.0,\n        scale_in_cooldown=300,\n        scale_out_cooldown=60,\n    ),\n)\n\npulumi.export(\"scaling_policy_arn\", policy.arn)\n```\n\nIf you only have the ASG name (e.g., attaching to an ALB-backed launch-configuration ASG), look it up with `aws.autoscaling.get_group(name=\"...\")` \u2014 a data read, still no replacement.\n\n### Why this is safe\n\n1. **New resource** \u2014 `aws.autoscaling.Policy` is an independent resource attached by `autoscaling_group_name`. Pulumi does a `create`, not an update/replace on the node group.\n2. **No existing inputs changed** \u2014 instance types, node counts, cluster config are untouched. (Changing `instance_types` or cluster name *would* force node group replacement.)\n3. **Target tracking vs. simple scaling** \u2014 target tracking is AWS-managed, so no CloudWatch alarms needed; if you want step scaling, add `aws.cloudwatch.MetricAlarm` + `Policy(policy_type=\"StepScaling\")` \u2014 still additive only.\n\n### Optional: also expose per-env sizing via stack configs\n\n`Pulumi.dev.yaml` / `Pulumi.prod.yaml`:\n\n```yaml\nnode_min_size: \"2\"\nnode_max_size: \"4\"   # dev\n# prod: min 4, max 8\nscaling_target_cpu: \"60\"\n```\n\n\u26a0\ufe0f If you change `min/max_size`, use `pulumi up` and confirm the diff shows **`~updated in-place`** on the node group \u2014 scaling config is updatable, not replace-triggering. Only decline if you ever see `+replaced`.\n\n### Pre-flight check\n\n```bash\npulumi preview --diff\n```\n\nExpected output: one `+create` (the policy), zero `~update` or `-replace` entries on existing resources.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-d06hv1qd/infra.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-d06hv1qd/autoscaling.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-d06hv1qd/Pulumi.dev.yaml"
+  ]
+}

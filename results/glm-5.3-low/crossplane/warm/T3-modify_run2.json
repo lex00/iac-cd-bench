@@ -1,0 +1,35 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 8 resources found in 4 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 8\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 627,
+    "output": 1079
+  },
+  "content": "# Adding us-west-2 to Crossplane via Provider Config\n\nCrossplane supports multiple provider configs per provider. We add a second `ProviderConfig` (and its provider install/deployment) for us-west-2, then reference it from the prod S3 bucket's replication config \u2014 **no existing claims change**.\n\n## 1. Second provider install (separate deployment per region)\n\n```yaml\n# crossplane/providers/provider-aws-usw2.yaml\napiVersion: pkg.crossplane.io/v1\nkind: Provider\nmetadata:\n  name: provider-aws-us-west-2\nspec:\n  package: xpkg.upbound.io/upbound/provider-aws-s3:v1.2.1\n  controllerConfigRef:\n    name: provider-aws-usw2-config\n---\napiVersion: pkg.crossplane.io/v1alpha1\nkind: ControllerConfig\nmetadata:\n  name: provider-aws-usw2-config\nspec:\n  podAnnotations:\n   .region: us-west-2\n```\n\n## 2. Second ProviderConfig\n\n```yaml\n# crossplane/configs/provider-config-usw2.yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds            # same secret works; region is per-config\n      key: creds\n  region: us-west-2\n```\n\nExisting resources keep `providerConfigRef.name: default` \u2014 untouched.\n\n## 3. Prod composition patch: replication destination bucket\n\n```yaml\n# crossplane/compositions/replica-bucket-patch.yaml\n# In the prod composition (or prod composition patch), add a replica bucket\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: app-assets-replica-usw2\nspec:\n  providerConfigRef:\n    name: aws-us-west-2          # <-- routes to us-west-2\n  forProvider:\n    region: us-west-2\n---\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: s3-replication-role\nspec:\n  providerConfigRef:\n    name: default\n  forProvider:\n    assumeRolePolicy: |\n      {\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\n       \"Principal\":{\"Service\":\"s3.amazonaws.com\"},\n       \"Action\":\"sts:AssumeRole\"}]}\n---\napiVersion: iam.aws.upbound.io/v1beta1\nkind: RolePolicy\nmetadata:\n  name: s3-replication-policy\nspec:\n  providerConfigRef:\n    name: default\n  forProvider:\n    roleRef: s3-replication-role\n    policy: |\n      {\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\n        \"s3:GetReplicationConfiguration\",\"s3:ListBucket\",\n        \"s3:GetObjectVersionForReplication\",\"s3:GetObjectVersionAcl\",\n        \"s3:GetObjectVersionTagging\",\"s3:ReplicateObject\",\n        \"s3:ReplicateDelete\",\"s3:ReplicateTags\"],\n       \"Resource\":\"*\"}]}\n```\n\n## 4. Attach replication rule to prod primary bucket\n\n```yaml\n# Patch to prod bucket resource in the composition:\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketVersioning\nmetadata:\n  name: app-assets-prod\nspec:\n  providerConfigRef:\n    name: default\n  forProvider:\n    bucketRef:\n      name: app-assets-prod\n    versioningConfiguration:\n      status: Enabled\n---\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketReplicationConfiguration\nmetadata:\n  name: app-assets-prod-repl\nspec:\n  providerConfigRef:\n    name: default\n  forProvider:\n    bucketRef:\n      name: app-assets-prod\n    region: us-east-1           # primary region\n    roleRef: s3-replication-role\n    rule:\n      - destination:\n          - bucketRef:\n              name: app-assets-replica-usw2\n            storageClass: STANDARD\n        status: Enabled\n        filter: {}              # whole bucket\n```\n\n## Verification\n\n```bash\nkubectl get providerconfig aws-us-west-2 -o yaml\nkubectl get providerrevision -l pkg.crossplane.io/provider=provider-aws-us-west-2\n# Confirm dev untouched:\nkubectl get bucket -o custom-columns=NAME:.metadata.name,PROVIDER:.spec.providerConfigRef.name\n# Expect: only prod + replica reference aws-us-west-2\n```\n\n**Key points:** claims and XRDs are untouched \u2014 region selection is a provider-config-level concern; environment isolation holds because dev resources still bind to `default`. The replication IAM policy `*` on Resource is scoped to replication actions only (acceptable; prod app roles remain least-privilege).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-f_7iiyfv/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-f_7iiyfv/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-f_7iiyfv/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-f_7iiyfv/generated_3.yaml"
+  ]
+}

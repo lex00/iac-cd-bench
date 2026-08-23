@@ -1,0 +1,37 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `config`\n --> generated_0.py:3:15\n  |\n1 | import pulumi\n2 |\n3 | db_password = config.get_secret(\"db:password\")          # from Pulumi.<stack>.yaml (encrypted)\n  |               ^^^^^^\n4 | conn_string = pulumi.Output.secret(f\"postgresql://{user}:{db_password}@{endpoint}:5432/app\")\n  |\n\nE501 Line too long (94 > 88)\n --> generated_0.py:3:89\n  |\n1 | import pulumi\n2 |\n3 | db_password = config.get_secret(\"db:password\")          # from Pulumi.<stack>.yaml (encrypted)\n  |            "
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 636,
+    "output": 933
+  },
+  "content": "# Pulumi Preview Security Review\n\n## Review Inputs\n\nWhen reviewing the `pulumi preview --json` output (or `--show-secrets` where available), look for the three flagged issue classes:\n\n---\n\n## Issue 1: Secret in plaintext outputs\n\n**Detection:**\n```\n\"outputs\": {\n  \"dbConnectionString\": \"postgresql://admin:p4ssw0rd!@prod-db....rds.amazonaws.com:5432/app\"\n}\n```\n\n**Finding:** A secret value appears as a plain string. Pulumi secrets must render as `[secret]` in preview/state. Non-secret outputs cause the value to persist in **plaintext in the state file** and appear in the Pulumi Console.\n\n**Fix:**\n```python\nimport pulumi\n\ndb_password = config.get_secret(\"db:password\")          # from Pulumi.<stack>.yaml (encrypted)\nconn_string = pulumi.Output.secret(f\"postgresql://{user}:{db_password}@{endpoint}:5432/app\")\n\npulumi.export(\"dbConnectionString\", conn_string)\n```\nKey rules:\n- Read via `config.get_secret()` / `require_secret()` \u2014 never `get()`\n- Wrap any derived secret with `Output.secret()` (composition with `Output.format`/`apply` alone does **not** protect it)\n- Rotate the exposed credential; scrub state (`pulumi state delete` + re-import, or `pulumi state encrypt` after fixing)\n\n**Severity:** High (credential exposure in state and CI logs)\n\n---\n\n## Issue 2: Replacement of stateful resource\n\n**Detection:** Preview shows `replace` (not `update`) on `aws_db_instance` / `aws_s3_bucket`:\n```\n\"step\": \"replace\",\n\"diffs\": [\"instance_class\", \"allocated_storage\", \"identifier\"]\n```\nor a `DeleteBeforeReplace` on the S3 bucket.\n\n**Impact:**\n- RDS replacement = new empty database; prod data loss unless snapshot/final_snapshot configured\n- S3 replacement = object loss if versioning isn't relied on; replication drift\n\n**Fix:**\n```python\nrds = aws.rds.Instance(\"app-db\",\n    identifier=\"app-db-prod\",          # stable \u2014 don't derive from stack name changes\n    instance_class=\"db.t3.medium\",\n    final_snapshot_identifier=\"app-db-prod-final\",\n    deletion_protection=True,          # blocks replacement deletes in prod\n    opts=pulumi.ResourceOptions(\n        replace_on_changes=[\"engine_version\"],  # explicit, narrow\n    ))\n```\n- Confirm deletion protection actually rejects the replace (it does \u2014 the destroy side of replace fails)\n- If replacement is intentional: take snapshot first, use `retain_on_delete=True` temporarily\n- Watch for accidental identifier changes from renaming the Pulumi resource name (renaming \u2192 delete+create)\n\n**Severity:** Critical in prod (data loss)\n\n---\n\n## Issue 3: Missing protect flag\n\n**Detection:** Preview includes a plain `delete` on `aws_s3_bucket`, `aws_db_instance`, or the EKS cluster, and program/state lack `protect=True`:\n```\n\"step\": \"delete\", \"urn\": \"urn:pulumi:prod::app::aws:s3/bucket:Bucket::assets\"\n```\n\n**Fix:**\n```python\nbucket = aws.s3.Bucket(\"assets\", ..., opts=pulumi.ResourceOptions(protect=True))\ndb     = aws.rds.Instance(\"app-db\", ..., opts=pulumi.ResourceOptions(protect=True))\n```\n- Apply protect to all stateful prod resources (S3, RDS, EBS, secrets, IAM roles with attached policies)\n- Protect in dev optionally; protect in prod by policy \u2014 enforce via CI rejecting previews containing deletes on protected URNs\n- To legitimately delete: temporarily `pulumi state unprotect <urn>`, not removal of the flag from code committed long-term\n\n**Severity:** Medium\u2013High (unguarded destructive change)\n\n---\n\n## Verdict against Acceptance Criteria\n\n| Criterion | Status |\n|---|---|\n| 3. Secret handling | \u274c Fail \u2014 plaintext output until Issue 1 fixed |\n| 2. RDS deletion protection | \u26a0\ufe0f Likely fail \u2014 replacement preview suggests protection absent/off |\n| Environment isolation | Check that the preview targets only the `prod` stack (`pulumi stack`) \u2014 preview itself is stack-scoped, so OK if URNs are `urn:pulumi:prod::...` only |\n\n**Blocking before apply:** all three fixes, plus rotate the leaked DB credential.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-7wz1ww6x/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-7wz1ww6x/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-7wz1ww6x/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-7wz1ww6x/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-7wz1ww6x/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-7wz1ww6x/generated_2.py"
+  ]
+}

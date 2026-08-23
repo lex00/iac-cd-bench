@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1122,
+    "output": 611
+  },
+  "content": "# Fix: Composition Never Ready\n\nTwo defects: (1) `fromFieldPath` references a non-existent field `spec.parameters.storageClass` (the XRD exposes `spec.instanceClass`), so patches are dropped and the instance class never gets set; (2) empty `readiness: {}` \u2014 in pipeline mode, upbound provider resources have no default readiness policy on the composition side, so the composite never evaluates as Ready.\n\n## composition.yaml (fixed)\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n          providerConfigRef:\n            name: default\n      patches:\n        # FIX: XRD exposes spec.instanceClass (no transform needed \u2014 full class name)\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.deletionProtection\n          toFieldPath: spec.forProvider.deletionProtection\n      readiness:\n        # FIX: explicit readiness checks \u2014 MR is Ready when these conditions match\n        policy: SuccessfulCreate\n        checks:\n          - type: MatchString\n            fieldPath: status.atProvider.instanceStatus\n            matchString: available\n```\n\n## Notes\n\n- **Defect 1**: The patch source must match the XRD schema (`spec.instanceClass`, default `db.t3.medium`). The old path patched a `Format` transform producing `db.t3.db.t3.medium` even if the field had existed \u2014 since the XRD already takes full class names, the transform is removed entirely.\n- **Defect 2**: Replaced `readiness: {}` with explicit checks. With upbound providers the MR itself typically goes Ready on `Synced=True`, but the composition-level check on `status.atProvider.instanceStatus == available` guarantees the composite only becomes Ready once RDS is actually usable, satisfying the spec's RDS acceptance criteria.\n- Also added the `deletionProtection` patch (XRD field, default `true`) to meet acceptance criterion 2.\n- No changes needed to `xrd.yaml` \u2014 the schema is correct; only the composition referenced it wrongly.\n\n**Verification:** `kubectl get composite` should transition to `READY: True`; `kubectl describe instance <name>` should show patched `instanceClass: db.t3.medium` and eventually `instanceStatus: available`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-jnw3guu9/generated_0.yaml"
+  ]
+}

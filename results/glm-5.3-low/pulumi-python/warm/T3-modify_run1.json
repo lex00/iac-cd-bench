@@ -1,0 +1,37 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF401 [*] `pulumi_aws` imported but unused\n --> generated_0.py:3:22\n  |\n1 | # scaling.py \u2014 new file, appended to existing program\n2 | import pulumi\n3 | import pulumi_aws as aws\n  |                      ^^^\n4 | import pulumi_eks as eks\n  |\nhelp: Remove unused import: `pulumi_aws`\n  |\n2 | import pulumi\n  - import pulumi_aws as aws\n3 | import pulumi_eks as eks\n  |\n\nF821 Undefined name `aws`\n --> generated_1.py:3:7\n  |\n1 | # Target-tracking policy on the managed node group's ASG.\n2 | # Managed node g"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 628,
+    "output": 939
+  },
+  "content": "# Adding Auto-Scaling Without Replacement (Pulumi, Python)\n\nThe key insight: **adding an auto-scaling policy means adding *new* resources, not modifying existing ones.** Resource replacement only occurs when you change immutable properties of an existing resource (e.g., changing an EKS cluster's subnet IDs, or a Launch Template's instance type mid-stack). A scaling policy (and a CloudWatch alarm, or ASG min/max bounds) attaches to existing resources and is in-place.\n\n## 1. Look up the existing resources (don't recreate them)\n\n```python\n# scaling.py \u2014 new file, appended to existing program\nimport pulumi\nimport pulumi_aws as aws\nimport pulumi_eks as eks\n\nconfig = pulumi.Config()\n\n# Reference the existing node group by name from stack config/state.\n# Using lookup instead of re-declaring guarantees no diff on the cluster.\nnodegroup_name = config.require(\"nodeGroupName\")  # e.g. \"prod-app-ng\"\n\ncluster = eks.Cluster.get(\"app-cluster\", config.require(\"clusterId\"))\n```\n\n## 2. Add the scaling policy (new resources \u2014 safe, additive)\n\n```python\n# Target-tracking policy on the managed node group's ASG.\n# Managed node groups scale via their AutoScalingGroup.\nasg = aws.autoscaling.Group.get(\n    \"app-nodegroup-asg\",\n    config.require(\"nodeGroupAsgName\"),\n)\n\nscaling_policy = aws.autoscaling.Policy(\n    \"app-cpu-target-tracking\",\n    autoscaling_group_name=asg.name,\n    policy_type=\"TargetTrackingScaling\",\n    target_tracking_configuration={\n        \"predefined_metric_specification\": {\n            \"predefined_metric_type\": \"ASGAverageCPUUtilization\",\n        },\n        \"target_value\": 60,\n        \"scale_in_cooldown\": 300,\n        \"scale_out_cooldown\": 60,\n    },\n    opts=pulumi.ResourceOptions(\n        # Protect existing resources from accidental deletion/replace\n        protect=True,\n    ),\n)\n```\n\n## 3. If you must raise the ASG's bounds, do it in-place\n\nMin/max size are **mutable** \u2014 updating them does *not* replace the node group:\n\n```python\n# Safe: desired/min/max are mutable properties.\n# UNSAFE example (do NOT do): changing instance_type on the launch template\n# alongside a policy change \u2014 that triggers replacement.\npulumi.export(\"scaling_policy_arn\", scaling_policy.arn)\n```\n\n(If bounds are set on the `eks.ManagedNodeGroup` resource in your program, simply edit `scaling_config` there \u2014 Pulumi will show `~ updated in-place`, not `replace`.)\n\n## 4. Env-specific sizing via stack configs\n\n`prod.yaml`:\n```yaml\nconfig:\n  app:nodeGroupName: prod-app-ng\n  app:clusterId: prod-cluster-id\n```\n\n`dev.yaml`:\n```yaml\nconfig:\n  app:nodeGroupName: dev-app-ng\n  app:clusterId: dev-cluster-id\n```\n\n## 5. Verify before applying \u2014 the critical step\n\n```bash\npulumi preview --stack prod\n```\n\nYou want to see **only** `+` (create) lines:\n\n```\n+ aws:autoscaling/policy:Policy: (create) app-cpu-target-tracking\n```\n\nIf any existing resource shows `+-` (replace), **stop** \u2014 you've accidentally changed an immutable property (common culprits: subnets, instance type, IAM role changes on the node group). Fix the diff, re-preview, then:\n\n```bash\npulumi up --stack prod\n```\n\n## Rules of thumb\n\n1. **New capability = new resource.** Policies, alarms, scheduled actions are all attachable add-ons.\n2. **Never rename** existing resources (renames look like delete+create in Pulumi unless aliased).\n3. **Immutable properties stay untouched**: subnet IDs, instance types, cluster versions, IAM trust policies on the node group role.\n4. **Mutable bounds are fine**: `min_size`, `max_size`, `desired_size` on ASG/node groups update in place.\n5. **Env isolation**: deploying this to `prod` doesn't touch `dev` \u2014 each stack has its own config and state.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a542gvrx/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a542gvrx/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a542gvrx/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a542gvrx/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a542gvrx/generated_2.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a542gvrx/generated_0.txt"
+  ]
+}

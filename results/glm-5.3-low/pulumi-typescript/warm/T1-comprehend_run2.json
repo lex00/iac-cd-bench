@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 737
+  },
+  "content": "# Pulumi Preview Behavior \u2014 Analysis\n\n## 1. Which property triggered the replace?\n\nThe DB (RDS instance) shows a **replace** because a change to a property marked **`replaceOnChanges: true`** (or one that AWS-classic treats as requiring replacement) was detected. In this scenario, likely candidates:\n\n- **`instanceClass`** (`db.t3.micro` \u2192 `db.t3.medium` for the dev\u2192prod sizing difference) \u2014 with `replaceOnChanges: [\"instanceClass\"]` if explicitly configured.\n- Other replacement-class properties natively: `engine`, `engineVersion`, `storageType`, `identifier`, or changing `multiAz` alongside `allocatedStorage`/`instanceClass` in aws-classic (instance resize is actually an in-place update in aws-classic, so an explicit `replaceOnChanges` is the common way a replace appears on size change).\n\n**How to identify it:** the preview output shows:\n\n```\n~ db: aws:rds/Instance:Instance (replace)\n    ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n```\n\nThe line(s) prefixed with `~` under `(replace)` are the triggering property(ies). Pulumi diffs the **new inputs** against **last-deployed state**, not the live cloud resource.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target` (e.g. `pulumi up --target 'urn:pulumi:prod::app::aws:rds/Instance::db'`) does an **exact-URN partial update**:\n\n- **Skipped:** every resource **not** in the target list \u2014 no diffs computed against them, no updates, no creates of *new* dependencies that aren't targeted.\n- **Critically, it also skips dependents' updates and can skip necessary replacement steps**: if the replace requires downstream resources (e.g., a secret value or K8s config referencing the new endpoint) those are *not* updated. Pulumi will warn (`warning: changes to ... will be skipped`).\n- It does **not** skip targeting side effects like deletion of the old DB during a replace (that's part of the targeted resource's own operation), but cascading updates to `dependsOn` consumers are skipped unless you also pass `--target-dependents`.\n- Alias/route changes and stack outputs are still computed, but resource operations on non-targets are not performed.\n\nUse `--target-dependents` to include resources that transitively depend on the target.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **`pulumi.secret(...)` / `Config.getSecret(...)`** wraps values in an **encrypted secret** \u2014 in state they're stored **ciphertext** (encrypted with the stack's passphrase or KMS/keys from the Pulumi Cloud backend).\n- **Preview output:** secret values are masked as `[secret]` \u2014 the actual value never appears in CLI output, logs, or the Pulumi service UI.\n- **Propagation:** secret-ness is **contagious** \u2014 any output derived from a secret (including resource outputs used as inputs to other resources) remains encrypted in state.\n- **Access:** consuming code sees plaintext only in-process (`apply`), or explicitly via `pulumi stack output --show-secrets`.\n- In this stack, the DB connection string should be `config.getSecret(\"dbPassword\")` and composed into the connection string via `pulumi.secret(...)`, satisfying acceptance criterion 3 (never plaintext in Git or state).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2rzz2dho/generated_0.txt"
+  ]
+}

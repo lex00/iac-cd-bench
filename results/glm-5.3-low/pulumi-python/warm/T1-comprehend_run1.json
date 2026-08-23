@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 989,
+    "output": 705
+  },
+  "content": "## Answers\n\n### 1. Which property triggered the replace?\n\nThe most likely trigger is a change to an RDS **force-new** property. In this scenario, comparing dev (db.t3.micro) vs prod (db.t3.medium), the culprit is:\n\n- **`instance_class`** (e.g. `db.t3.micro` \u2192 `db.t3.medium`) \u2014 classic replace trigger for `aws.rds.Instance`.\n\nOther candidates in the spec that would also force replacement:\n- `engine_version` (major version bump)\n- `storage_type` changes (magnetic \u2192 gp2/gp3 in some cases)\n- `identifier` change\n- `multi_az` is **update-in-place** (no replace) \u2014 so it's not that.\n- `allocated_storage` decreases also force replacement.\n\nNote: `deletion_protection`, `backup_retention_period`, and encryption flags are in-place updates (encryption on an unencrypted instance actually requires a replace via snapshot, but instance_class is the direct diff here).\n\nThe preview line would show:\n```\n~ rds:index:Instance: (replace)\n    ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n```\nwith `~` on the property and `+/-` on the resource, plus a warning that the old instance will be destroyed and recreated.\n\n### 2. What does `pulumi up --target` skip?\n\n`--target` runs only the explicitly listed resources (`urn:...`) **and their dependency DAG**, so it skips:\n\n- All **unrelated resources** in the program (S3 bucket, EKS cluster, IAM, CloudFront) \u2014 even if they have pending diffs.\n- **Dependents of the targeted resource that are not themselves targeted**: e.g. if a secret or output references the DB, downstream resources won't be updated unless included. (\u26a0\ufe0f this can leave state inconsistent.)\n- Importantly, `--target` **skips full-stack refresh/dependency drift detection** \u2014 it does not reconcile state for untargeted resources.\n\nPulumi prints exactly what was skipped, so you can verify nothing in dev/prod shared state was touched.\n\n### 3. How does Pulumi handle secrets in outputs?\n\n- **At creation**: `config.require_secret(\"db_password\")` returns `Output[str>` marked as secret. Values flow through `apply()` preserving the secret bit (secret propagation).\n- **In state**: encrypted with the stack's passphrase or KMS key (`pulumi config set --secret`, `secretsprovider`).\n- **In CLI/preview output**: rendered as `[secret]` \u2014 never printed, even inside `apply` callbacks' logs.\n- **In exported stack outputs** (`pulumi.export(\"conn\", conn_str)`): stored encrypted in state; `pulumi stack output` shows `[secret]` unless you run `pulumi stack output --show-secrets` (requires passphrase/KMS access).\n- **Caveat**: if you `export` a secret-derived value, anyone with stack read access and the decryption key can reveal it \u2014 so export connection strings only if the secret provider is locked down. Also avoid `Output.all(...).apply(lambda v: print(v))`-style leaks into logs \u2014 Pulumi masks these, but serializing secrets into resource *names/tags* leaks them.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ofv6exk1/generated_0.txt"
+  ]
+}
