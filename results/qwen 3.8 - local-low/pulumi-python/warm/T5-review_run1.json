@@ -1,0 +1,32 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `aws`\n --> generated_0.py:1:16\n  |\n1 | rds_instance = aws.rds.Instance(\n  |                ^^^\n2 |     \"db\",\n3 |     ...,\n  |\n\nF821 Undefined name `pulumi`\n --> generated_0.py:4:10\n  |\n2 |     \"db\",\n3 |     ...,\n4 |     opts=pulumi.ResourceOptions(protect=True),\n  |          ^^^^^^\n5 | )\n  |\n\nFound 2 errors.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 687,
+    "output": 904
+  },
+  "content": "\n\n# Pulumi Preview JSON Security Review\n\nYou've provided the canonical scenario specification and the categories of issues to check, but **no Pulumi preview JSON was included** in your request.\n\nPlease paste the `pulumi preview --show-secrets` output (or the `--json` variant) and I'll review it against the three issue categories:\n\n---\n\n## What I'll Check\n\n### 1. Secrets in Plaintext Outputs\n\n| What to look for | Example |\n|---|---|\n| `outputs` containing unencrypted values that map to secrets | `\"dbConnectionString\": \"postgresql://admin:SuperSecret123!@rds-...\"` |\n| Resource `outputs` that echo sensitive properties without `[secret]` annotation | `\"masterPassword\": \"...\"` in an `aws:rds:Instance` diff |\n| Stack config values printed in plaintext | `pulumi config get db-password` equivalent visible in preview |\n\n**Expected safe pattern:** Values should appear as `[secret]` in preview output, or the resource should use `pulumi.ConfigSecret` / `pulumi.secret()` so they are encrypted at rest.\n\n### 2. Replacement of Stateful Resource\n\n| What to look for | Why it matters |\n|---|---|\n| `~` (update) on an immutable property of RDS (e.g. `instanceClass`, `engine`, `allocatedStorage` shrink) \u2192 Pulumi marks it `replacing` | Data loss / downtime |\n| `~` on EKS `kubernetesVersion` upgrade path that triggers node group replacement | Worker node churn |\n| `~` on S3 `bucket` name change | Bucket is destroyed and recreated |\n| Any `replacing` flag on resources with `protect: true` | Would fail; without protect, silent data destruction |\n\n**Expected safe pattern:** Stateful resources (RDS, EKS nodes, S3) should show no replacement; only in-place updates or explicit `lifecycle` guards.\n\n### 3. Missing `protect` Flag\n\n| What to look for | Risk |\n|---|---|\n| RDS instance without `protect: true` | Accidental `pulumi destroy` or `pulumi up` with a breaking change deletes the database |\n| EKS cluster without `protect: true` | Same |\n| S3 bucket without `protect: true` | Bucket destruction = data loss |\n| Any resource holding data that is not trivially re-creatable | General |\n\n**Expected safe pattern:**\n```python\nrds_instance = aws.rds.Instance(\n    \"db\",\n    ...,\n    opts=pulumi.ResourceOptions(protect=True),\n)\n```\n\n---\n\n## How to Submit\n\nPaste your output in one of these forms:\n\n```bash\n# Most useful (shows secrets as [secret])\npulumi preview --stack prod --show-secrets\n\n# Full diff (for replacement detection)\npulumi preview --stack prod --diff\n\n# Machine-readable\npulumi preview --stack prod --json\n```\n\nI'll then produce a structured findings table with severity, resource name, line reference, and a suggested fix.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-70idbv2q/generated_0.py"
+  ]
+}

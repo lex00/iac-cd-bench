@@ -1,0 +1,29 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 687,
+    "output": 568
+  },
+  "content": "\n\n# Pulumi Preview Security Review\n\nI'm ready to review your Pulumi preview JSON, but **no JSON output was provided in your message**.\n\n## What I'll Check\n\nOnce you paste the `pulumi preview --show-secrets` (or `--json`) output, I'll flag issues in these categories:\n\n### 1. Secret in Plaintext Outputs\n- `ConfigSecret` values appearing as unencrypted strings in `[~]` update diffs or `[+]` create diffs\n- Sensitive fields (e.g., `masterPassword`, `dbConnectionString`) rendered without the `secrets` marker or without `pulumi config` encryption\n- Any `output` or `stack` reference that echoes a secret into the preview\n\n### 2. Replacement of Stateful Resource\n- `[-]` destroy + `[+]` create pair for `aws:rds:Instance` (or equivalent) \u2014 this means the RDS instance will be **destroyed and recreated**, causing data loss if not properly migrated\n- Look for `replace` markers or `id` changes on RDS, EKS, or S3 resources that hold state\n\n### 3. Missing `protect` Flag\n- No `\"protect\": true` (or `\"options\": {\"protect\": true}`) on:\n  - RDS instance (stateful, destructive)\n  - EKS cluster (stateful, destructive)\n  - S3 bucket (data loss if deleted)\n- Without `protect`, a `pulumi destroy` or misapplied update can silently drop these resources\n\n---\n\n## Please Provide\n\nPaste the output of:\n\n```bash\npulumi preview --show-secrets --json\n```\n\nor the raw JSON from `pulumi preview --json`. I'll produce a line-by-line security review against the acceptance criteria in your canonical spec."
+}

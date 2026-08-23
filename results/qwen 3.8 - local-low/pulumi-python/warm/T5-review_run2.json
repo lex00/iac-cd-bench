@@ -1,0 +1,36 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 687,
+    "output": 1146
+  },
+  "content": "\n\n# Pulumi Preview JSON Security Review\n\n**\u26a0\ufe0f No Pulumi preview JSON was provided for review.**\n\nPlease paste the output of `pulumi preview --stack <stack> --json` (or `pulumi preview --diff`) and I'll analyze it against the three security criteria.\n\n---\n\n## What I'll be looking for\n\nOnce you provide the JSON, here's my review checklist mapped to the canonical scenario:\n\n### 1. Secret in Plaintext Outputs\n\n| What to check | Why it matters |\n|---|---|\n| `outputs` section containing DB connection strings, passwords, or tokens | Violates acceptance criterion #3 |\n| `urn` fields referencing `pulumi:config:Secret` values appearing in `outputs` | `ConfigSecret` values leak if not masked |\n| `diff` showing a `Secret` resource with unmasked data in `old`/`new` | State file exposure |\n\n**Expected pattern in canonical scenario:**\n```json\n{\n  \"outputs\": {\n    \"dbConnectionString\": \"[secret]\"\n  }\n}\n```\nA value like `postgresql://admin:SuperSecret123!@db.example.com:5432/app` here is a **critical finding**.\n\n---\n\n### 2. Replacement of Stateful Resource\n\n| What to check | Why it matters |\n|---|---|\n| RDS instance showing `\"replace\": true` or `\"/replace\"` in diff | Destructive: data loss on `pulumi up` |\n| S3 bucket with `forceDestroy` or replacement due to ACL/region change | Asset loss |\n| Any stateful resource (RDS, EBS, EFS) with replacement diff | Data loss |\n\n**Expected pattern (SAFE):**\n```json\n{\n  \"urn\": \"urn:pulumi:prod::my-stack::aws:rds:Instance::db\",\n  \"diff\": {\n    \"changed\": [\"allocatedStorage\"],\n    \"replace\": false\n  }\n}\n```\n\n**DANGEROUS pattern:**\n```json\n{\n  \"urn\": \"urn:pulumi:prod::my-stack::aws:rds:Instance::db\",\n  \"diff\": {\n    \"changed\": [\"multiAz\"],\n    \"replace\": true,\n    \"replaceReason\": \"Changing property 'multiAz' requires replacement\"\n  }\n}\n```\nThis is a **critical finding** \u2014 flipping `multiAz` on a running RDS will destroy and recreate the database.\n\n---\n\n### 3. Missing Protect Flag\n\n| What to check | Why it matters |\n|---|---|\n| RDS instance without `\"protect\": true` | Accidental `pulumi destroy` wipes the database |\n| S3 bucket without `\"protect\": true` | Accidental destroy loses assets |\n| EKS cluster without `\"protect\": true` | Accidental destroy takes down production |\n\n**Expected pattern (SAFE):**\n```json\n{\n  \"urn\": \"urn:pulumi:prod::my-stack::aws:rds:Instance::db\",\n  \"protect\": true\n}\n```\n\n**MISSING pattern (finding):**\n```json\n{\n  \"urn\": \"urn:pulumi:prod::my-stack::aws:rds:Instance::db\",\n  \"protect\": false\n}\n```\n**Prod** stateful resources should all be protected. **Dev** is debatable (lower risk, faster iteration).\n\n---\n\n## Severity Classification I'll Use\n\n| Severity | Criteria |\n|---|---|\n| **Critical** | Plaintext secret in outputs; stateful replacement in prod |\n| **High** | Missing `protect` on prod stateful resources; replacement of any stateful resource |\n| **Medium** | Missing `protect` on dev resources; public S3 access detected |\n| **Low** | Informational: non-optimal sizing, missing tags |\n\n---\n\n**Please share the `pulumi preview --json` output and I'll produce a findings report.**",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-uuqc4_4n/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-uuqc4_4n/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-uuqc4_4n/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-uuqc4_4n/generated_3.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-uuqc4_4n/generated_4.json"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "FieldPath: spec.forProvider.instanceClass\\n      readiness:\\n        # FIX 2: declare readiness check so Crossplane can evaluate the\\n        # crossplane.io/ready condition on the managed Instance\\n        type: IsReady\\n' or 'checkType' in 'apiVersion: apiextensions.crossplane.io/v1\\nkind: Composition\\nmetadata:\\n  name: aws-web-service\\n  labels:\\n    crossplane.io/xrd: xawswebservices.app.example.com\\nspec:\\n  group: app.example.com\\n  mode: Pipeline\\n  resources:\\n    - name: rds-instance\\n      base:\\n        apiVersion: database.aws.upbound.io/v1beta1\\n        kind: Instance\\n        spec:\\n          forProvider:\\n            region: us-east-1\\n            engine: postgres\\n            engineVersion: \"16.1\"\\n            allocatedStorage: 20\\n            # Acceptance criteria: deletion protection, backup retention, no public access\\n            deletionProtection: true\\n            backupRetentionPeriod: 7\\n            publiclyAccessible: false\\n          providerConfigRef:\\n            name: default\\n      patches:\\n        # FIX 1: corrected fromFieldPath to match XRD schema property\\n        - fromFieldPath: spec.instanceClass\\n          toFieldPath: spec.forProvider.instanceClass\\n      readiness:\\n        # FIX 2: declare readiness check so Crossplane can evaluate the\\n        # crossplane.io/ready condition on the managed Instance\\n        type: IsReady\\n'))\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:15: AssertionError: Composition should have ReadinessChecks defined\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks\n============================== 2 failed in 0.01s ===============================\n",
+      "passed_count": 0,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1199,
+    "output": 2593
+  },
+  "content": "\n\n## Diagnosis\n\nTwo defects prevent the Composition from reaching `Ready`:\n\n| # | Defect | Impact |\n|---|--------|--------|\n| 1 | `fromFieldPath` references `spec.parameters.storageClass` (a field that doesn't exist in the XRD) | The patch fails to resolve; `instanceClass` is never set on the RDS Instance |\n| 2 | `readiness: {}` \u2014 no readiness checks defined on the RDS resource | Crossplane has no signal to determine the resource is ready, so the composite never transitions to `Ready` |\n\n## Fixed `composition.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n            # Acceptance criteria: deletion protection, backup retention, no public access\n            deletionProtection: true\n            backupRetentionPeriod: 7\n            publiclyAccessible: false\n          providerConfigRef:\n            name: default\n      patches:\n        # FIX 1: corrected fromFieldPath to match XRD schema property\n        - fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n      readiness:\n        # FIX 2: declare readiness check so Crossplane can evaluate the\n        # crossplane.io/ready condition on the managed Instance\n        type: IsReady\n```\n\n## What changed and why\n\n### Fix 1 \u2014 `fromFieldPath`\n\n```diff\n- fromFieldPath: spec.parameters.storageClass\n+ fromFieldPath: spec.instanceClass\n```\n\nThe XRD (`xrd.yaml`) defines `instanceClass` directly under `spec` in its openAPIV3Schema:\n\n```yaml\nspec:\n  properties:\n    instanceClass:\n      type: string\n      default: db.t3.medium\n```\n\nIn a Pipeline-mode Composition, `fromFieldPath` is resolved against the composite resource's object. The composite's spec mirrors the XRD schema, so the correct path is `spec.instanceClass`. The old path `spec.parameters.storageClass` pointed to a field that exists nowhere in the XRD, causing the patch to silently resolve to `null` and leaving `instanceClass` unset on the managed Instance.\n\nThe `transforms` block was also removed because the XRD default (`db.t3.medium`) is already a full RDS instance class \u2014 applying the `\"db.t3.%s\"` format string would have produced the invalid value `db.t3.db.t3.medium`.\n\n### Fix 2 \u2014 `ReadinessChecks`\n\n```diff\n- readiness: {}\n+ readiness:\n+   type: IsReady\n```\n\n`IsReady` is a shorthand that evaluates to true when the managed resource's `status.conditions` contains a condition with `type: Ready` and `status: \"True\"`. The Crossplane AWS RDS provider sets this condition once the instance is in the `available` state. Without this check, Crossplane has no readiness signal and the composite resource remains in `Unknown` / `NotReady` indefinitely.\n\n### Additional hardening (acceptance criteria)\n\nThe base spec now includes fields required by the acceptance criteria:\n\n| Field | Value | Criteria |\n|-------|-------|----------|\n| `deletionProtection` | `true` | RDS: deletion protection on |\n| `backupRetentionPeriod` | `7` | RDS: backup retention \u2265 7 days |\n| `publiclyAccessible` | `false` | RDS: no publicly accessible |",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-3hficmzj/composition.yaml"
+  ]
+}

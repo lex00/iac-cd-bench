@@ -1,0 +1,32 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 688,
+    "output": 957
+  },
+  "content": "\n\n# Pulumi Preview JSON Security Review\n\n**No Pulumi preview JSON was provided in your request.**\n\nI'm ready to review it once you paste the output. Here's what I'll be checking for based on your three concern areas, applied to this scenario:\n\n---\n\n## What to Look For\n\n### 1. Secrets in Plaintext Outputs\n\nIn a `pulumi preview --json` or `pulumi stack output --json` for this stack, I'll flag:\n\n| Indicator | Example |\n|-----------|---------|\n| `ConfigSecret` value echoed in outputs | `\"dbConnectionString\": \"postgres://user:password@host:5432/db\"` |\n| RDS master password in resource properties without `secret: true` | `\"masterPassword\": \"Sup3rS3cret!\"` |\n| S3 bucket policy or IAM policy with embedded secret | `\"policy\": \"{\\\"...\\\"}\"` containing ARNs with embedded credentials |\n| Stack output containing the connection string | `\"outputs\": { \"dbConn\": { \"value\": \"postgres://...\" } }` |\n\n**Expected correct state:** `ConfigSecret` values appear as `[secret]` in CLI output and as `{\"4dabf18193072939515e22adb298388d\": \"1b47ca227271c732...\"}` (Fernet-encrypted) in the JSON.\n\n### 2. Replacement of Stateful Resource\n\nLook for `replace` in the preview diff for:\n\n- **RDS instance** \u2014 if `allocatedStorage`, `instanceClass`, or `dbName` changed (forces replacement), this is a **data-loss event** if not protected.\n- **EKS cluster** \u2014 if `vpcId` or `subnetIds` changed.\n- **S3 bucket** \u2014 if `bucketName` changed (the bucket itself is destroyed/recreated).\n\nIn the JSON this appears as:\n\n```json\n{\n  \"op\": \"replace\",\n  \"urn\": \"urn:pulumi:prod::mystack::aws:rds/instance.PostgresInstance\",\n  \"old\": { ... },\n  \"new\": { ... }\n}\n```\n\n**Expected correct state:** In-place updates for parameter-group changes, backup-retention changes, etc. A `replace` on RDS in prod with no `protect: true` is a **critical** finding.\n\n### 3. Missing `protect` Flag\n\nFor **stateful / destructive-if-replaced** resources, `protect` should be `true` in prod:\n\n| Resource | `protect` expected in prod? |\n|----------|------------------------------|\n| RDS instance | \u2705 Yes |\n| EKS cluster | \u2705 Yes |\n| S3 bucket (if `forceDestroy` is a risk) | \u2705 Yes |\n| IAM role (with attached policies) | \u2705 Yes |\n| ALB / CloudFront | \u26a0\ufe0f Debatable, but recommended |\n\nIn the JSON, a missing protect shows as the resource having no `\"protect\": true` in its options, or an explicit `\"protect\": false`.\n\n---\n\n## Next Step\n\nPaste your `pulumi preview --json` (or the relevant excerpt) and I'll produce a line-by-line finding report with severity ratings (Critical / High / Medium / Low) and remediation commands.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m5u8jhzj/generated_0.json"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-opdt39x6/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-opdt39x6/index.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-types"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "t_q1_output_concat_footgun PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q2_protect_blocks_destroy PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q3_delete_before_replace_order_and_risk FAILED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q4_secret_export_masked PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q5_getnumber_default PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q6_rename_replaces_aliases_fix PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q7_arn_unknown_at_preview PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q3 risk should mention the availability window, got 'if the new resource fails to create after the old one is deleted, the resource is lost with no fallback'\n    assert False\n     +  where False = any(<generator object test_q3_delete_before_replace_order_and_risk.<locals>.<genexpr> at 0x10b30e6c0>)\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py:81: AssertionError: q3 risk should mention the availability window, got 'if the new resource fails to create after the old one is deleted, the resource is lost with no fallback'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q3_delete_before_replace_order_and_risk\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1825,
+    "output": 1716
+  },
+  "content": "\n\n```json\n{\n  \"q1\": {\n    \"contains\": \"output-repr\",\n    \"type\": \"Output<string>\"\n  },\n  \"q2\": {\n    \"completes\": false,\n    \"blocking_resource\": \"artifacts\"\n  },\n  \"q3\": {\n    \"order\": \"delete-then-create\",\n    \"risk\": \"if the new resource fails to create after the old one is deleted, the resource is lost with no fallback\"\n  },\n  \"q4\": \"masked\",\n  \"q5\": {\n    \"value\": 30,\n    \"error\": false\n  },\n  \"q6\": {\n    \"plan\": \"replace\",\n    \"fix_option\": \"aliases\"\n  },\n  \"q7\": \"unknown\"\n}\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-opdt39x6/generated_0.json"
+  ]
+}
