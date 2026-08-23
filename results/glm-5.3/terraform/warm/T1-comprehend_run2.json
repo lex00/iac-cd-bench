@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 726
+  },
+  "content": "# Terraform Plan Behavior Prediction\n\n## 1. What does the next plan show when a variable flips?\n\nExample: changing `db_instance_class` from `db.t3.micro` (dev) to `db.t3.medium` (prod).\n\n```\n~ resource \"aws_db_instance\" \"app\" {\n      instance_class           = \"db.t3.micro\" -> \"db.t3.medium\"\n      # (other attributes unchanged)\n  }\n```\n\n- **`~` update in-place** \u2014 most RDS arguments are modifiable via `ModifyDBInstance`.\n- Plan is computed as **configuration vs. state**: Terraform diffs the `.tf` desired state against recorded state, showing only the drift (plus any attribute changes that ripple from it, e.g. `arn` may show as `(known after apply)` if it embeds the class \u2014 it doesn't here, but `latest_restorable_time`-style values can churn).\n- If the variable flip touches something immutable (e.g., `storage_type` change requiring recreation), you'd see:\n  ```\n  -/+ replace ( forces replacement )\n  ```\n- If using `-var-file=prod.tfvars` with shared config, only resources whose variables changed show in the plan; untouched resources show `No changes.`\n\n## 2. What happens if the state file is deleted?\n\nTerraform loses all knowledge of existing infrastructure:\n\n- Next `terraform plan` shows **`+` create for everything** \u2014 it thinks nothing exists.\n- `terraform apply` would **fail or duplicate resources**: S3 bucket names are globally unique (creation errors), EKS/RDS names may collide, IAM user already exists.\n- The actual cloud resources are **orphaned, not destroyed** \u2014 deleting state does not delete infrastructure.\n- **Recovery**: use `terraform import` for each resource, or (better) restore from a remote state backend (S3 + DynamoDB locking). This is why remote backends with versioning are essential.\n\n## 3. How does Terraform handle the RDS instance class change?\n\n- Detected as an **in-place update** (`~`) \u2192 provider calls `ModifyDBInstance`.\n- AWS applies it either immediately or at the next maintenance window (`apply_immediately` flag).\n- **Brief downtime** for a single-AZ instance; for **multi-AZ (prod spec)**, failover is used, minimizing downtime.\n- If the instance were part of an immutable pattern (or `lifecycle { create_before_destroy }` + recreate trigger), it would be a `-/+` replacement with snapshot-based restore instead.\n\n## 4. State vs. Configuration\n\n| | Configuration (.tf files) | State (.tfstate) |\n|---|---|---|\n| Role | **Desired** state \u2014 what should exist | **Recorded** actual state \u2014 what Terraform last deployed |\n| Source | Written by humans, versioned in Git | Managed by Terraform, stored in backend (S3, etc.) |\n| Scope | Code, variables, tfvars per env | Real resource IDs, attributes, dependencies, workspace |\n| Answers | \"What do we want?\" | \"What do we have (per Terraform)?\" |\n\n**Plan = diff(configuration, state)** \u2014 and `refresh` updates state from the real cloud before diffing, so drift is also caught. Secrets note: the DB connection string from `-var-file`/SOPS lands **in state** (plaintext in state file), so state backend security matters as much as config encryption.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-0riuednk/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-0riuednk/generated_1.txt"
+  ]
+}

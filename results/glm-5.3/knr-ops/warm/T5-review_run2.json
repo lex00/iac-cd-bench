@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 487
+  },
+  "content": "# Security Review: knr-ops PR\n\n## Findings (ranked by severity)\n\n### \ud83d\udd34 Critical \u2014 must fix before merge\n\n**1. Plaintext password in deployment env vars**\n- Violates acceptance criterion #3 (secrets never in plaintext in Git). Once merged, the secret is in Git history permanently.\n- **Fix:** Store in SOPS-encrypted Secret (stack-native mechanism), inject via `secretKeyRef`. If already merged, rotate the credential and scrub history.\n\n**2. S3 bucket policy grants public read (`s3:GetObject` to `*`)**\n- Violates acceptance criterion #1 (no public access).\n- **Fix:** Remove the public policy; if assets must be served, front the bucket with CloudFront via Origin Access Identity/Control, and enable `PublicAccessBlock` (all four settings) as a guardrail.\n\n### \ud83d\udfe1 Warning \u2014 fix before or shortly after merge\n\n**3. No resource limits on containers**\n- Not a direct vulnerability but a DoS/noisy-neighbor risk on shared nodes, and fails most admission policies (e.g., OPA/Kyverno `requiredResources`). Per the spec's kustomize setup, set `resources.limits` (and requests) in `base/` with overlay overrides per env.\n\n### \ud83d\udfe2 Info / notes\n\n**4. RDS instance class change** \u2014 no security issue, but confirm prod keeps multi-AZ, encryption, deletion protection, and backup retention \u2265 7 days per acceptance criteria (diff doesn't show these being removed, so likely fine).\n\n**5. Overlay isolation check** \u2014 verify the bucket policy change lives in the correct overlay (`overlays/dev` vs `overlays/prod`). If the public policy was added to `base/`, it affects **both** environments \u2014 a violation of environment isolation (criterion #7) and makes issue #2 worse in prod.\n\n## Merge verdict\n\n**Block merge.** Items 1 and 2 must be resolved: rotate/encrypt the password via SOPS, and remove the public bucket policy (CloudFront + OAI instead). Add resource limits (item 3) in the same PR. Add a CI guard (e.g., a Flux/kustomize pre-commit or CI check scanning for plaintext env secrets and `Principal: \"*\"` bucket policies) to prevent regressions."
+}

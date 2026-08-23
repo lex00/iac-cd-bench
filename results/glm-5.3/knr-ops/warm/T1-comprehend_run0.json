@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1352,
+    "output": 875
+  },
+  "content": "# PR #42 Delivery Behavior Analysis\n\n## 1. What reconciles when PR #42 merges, and in what order?\n\nOn merge, Flux's reconciliation chain fires:\n\n1. **`GitRepository` source controller** detects the new commit (within its `interval` or immediately if webhooks push), fetches the new HEAD.\n2. Flux **`Kustomization` controllers** whose source references that GitRepository trigger. Assuming a typical dependency chain in `flux/kustomizations.yaml`:\n   - **infra kustomizations** (S3, RDS, IAM) reconcile first \u2014 these are infrastructure.\n   - **app/overlay kustomizations** reconcile after, gated on infra via `dependsOn`.\n3. Within each kustomization, `kustomize build` renders the overlay, then Flux server-side applies the result:\n   - **RDS CR**: modified (`db.t3.micro` \u2192 `db.t3.medium`) \u2014 patched in place.\n   - **S3 Bucket CR**: newly created \u2192 ACK S3 controller creates the bucket.\n   - **App deployment (prod overlay)**: patched to `replicas: 4` \u2192 Deployment controller scales up.\n\nOrder between infra kustomizations is parallel unless `dependsOn` constrains them; the app change lands only after its dependencies succeed.\n\n## 2. Does the RDS instance get recreated?\n\n**No.** An `instanceClass` change is a **spec modification**, not a deletion/recreation. Flux applies the updated `Instance` CR in place; the ACK RDS controller sees the drift between `spec.instanceClass` and `status` and issues a **`ModifyDBInstance`** API call. RDS applies it live (may require a reboot/window depending on settings). Recreation would only occur if the CR were deleted (and even then `DeletionProtection` blocks the underlying DB deletion). Expect a brief I/O suspension or failover if multi-AZ during the modification.\n\n## 3. What happens if the S3 bucket manifest is deleted from Git?\n\nFlux **prunes** resources removed from the kustomization: it deletes the `Bucket` CR. However:\n\n- ACK's default behavior with `deletionPolicy`/finalizers determines the AWS-side outcome. If the CR deletion propagates to AWS, deletion of a **non-empty bucket fails** (S3 refuses), leaving the CR stuck with a finalizer.\n- If deletion protection / retention policies (`deletionPolicy: retain` / `ORPHAN`) are configured, the AWS bucket **survives** but becomes unmanaged.\n- Best practice: set `deletionPolicy: retain` on prod buckets to avoid Git accidents destroying data.\n\n## 4. How does Flux handle the prod-only replica change?\n\nThe `replicas: 4` patch exists **only in `overlays/prod/`**. Flux applies per-environment kustomizations:\n\n- The **prod cluster's** (or prod kustomization's) rendered output includes the patch \u2192 Deployment scaled to 4.\n- The **dev kustomization** builds from `overlays/dev/`, which doesn't contain the patch \u2192 dev replicas unchanged (still base value).\n\nThis satisfies environment isolation: changing prod does not modify dev state. Note: if Flux also manages replicas via HPA, the HPA would fight the patch \u2014 ensure no overlap.\n\n## 5. Role of `dependsOn` between kustomizations\n\n`dependsOn` creates a **reconciliation ordering DAG**:\n\n- The app kustomization waits until infra kustomizations (IAM, RDS, S3) have successfully reconciled before applying.\n- **Gate on health, not just apply:** if an infra kustomization fails or becomes unhealthy (e.g., RDS modification stuck), dependent kustomizations are **skipped** \u2014 preventing the app from rolling out against missing buckets/credentials.\n- It also orders re-reconciliation: when infra changes, dependents re-run, picking up new connection secrets (e.g., SOPS-decrypted DB connection strings updated after the RDS change).\n\n**Net effect of PR #42:** infra reconciles first (RDS modification + new bucket), and only once healthy does the prod app scale to 4 replicas."
+}

@@ -1,0 +1,35 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\ninvalid-syntax: Expected an expression\n --> __main__.py:1:8\n  |\n1 | config:\n  |        ^\n2 |   webapp:scalingTargetCpu: \"60\"   # dev\n3 |   webapp:scalingMaxNodes: \"6\"\n  |\n\ninvalid-syntax: Unexpected indentation\n --> __main__.py:2:1\n  |\n1 | config:\n2 |   webapp:scalingTargetCpu: \"60\"   # dev\n  | ^^\n3 |   webapp:scalingMaxNodes: \"6\"\n  |\n\ninvalid-syntax: Expected a statement\n --> __main__.py:2:26\n  |\n1 | config:\n2 |   webapp:scalingTargetCpu: \"60\"   # dev\n  |                          ^\n3 |   webapp"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 628,
+    "output": 1159
+  },
+  "content": "## Approach\n\nThe key to **not triggering replacement** is: **don't touch existing resource definitions at all**. We only *add* new resources that *reference* existing ones. A scaling policy is an additive child object \u2014 attaching it to the existing AutoScaling group (via the EKS node group's `autoScalingGroup` output) causes zero drift on the cluster, buckets, or RDS instance.\n\nTwo additions:\n\n1. **Node group scaling policy** \u2014 target-tracking on the existing EKS node group's ASG (scale 2\u2192(2,6) dev, 4\u2192(4,12) prod).\n2. **ALB target tracking** \u2014 if the app is exposed via ALB, `ALBRequestCountPerTarget` scaling (only meaningful where an ASG exists \u2014 for EKS-backed apps this is typically handled by HPA/karpenter, so we keep the node-group policy as the primary).\n\n## Changes\n\n**New file: `scaling.py`** (added to the stack, referenced by `__main__.py`)\n\n```python\n\"\"\"Additive auto-scaling policies for existing EKS node groups.\n\nImport-only change: no existing resource properties are modified,\nso `pulumi preview` shows pure-create, no replacement/replacement-in-place.\n\"\"\"\nimport pulumi_aws as aws\nimport pulumi\n\n\ndef attach_node_group_scaling(\n    node_group,          # aws.eks.NodeGroup (existing resource)\n    target_cpu: int,\n    min_size: int,\n    max_size: int,\n) -> None:\n    # 1) Widen ASG bounds. min/max live on the ASG, not the policy.\n    #    IMPORTANT: the node group was created without explicit scaling_config\n    #    bounds here (or with bounds already >= these). Setting ASG min/max\n    #    via aws.autoscaling.Policy attachment does NOT replace the node group\n    #    because we update the ASG directly, not the NodeGroup resource.\n    #    If your node group *does* declare scaling_config in code, update\n    #    min_size/max_size in place \u2014 these are in-place updatable properties\n    #    (no replacement).\n    _policy = aws.autoscaling.Policy(\n        f\"{node_group._name}-target-tracking\",\n        resource_id=node_group.auto_scaling_group_name,  # reference, not ownership\n        policy_type=\"TargetTrackingScaling\",\n        target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n            predefined_metric_specification=aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n                predefined_metric_type=\"ASGAverageCPUUtilization\",\n            ),\n            target_value=target_cpu,\n        ),\n        opts=pulumi.ResourceOptions(parent=node_group),\n    )\n\n    # Optional: only if ASG min/max need widening and the node group code\n    # declares scaling_config. Change in code (in-place updatable):\n    #   scaling_config={\"min_size\": min_size, \"max_size\": max_size}\n    # Do NOT set force_new_version or change instance types/disk here.\n```\n\n**`__main__.py`** \u2014 append (do not reorder/modify existing code):\n\n```python\nfrom scaling import attach_node_group_scaling\nimport pulumi_config  # reads config.get(\"env\")\n\nenv = pulumi_config.env  # \"dev\" | \"prod\"\n\nif env == \"dev\":\n    attach_node_group_scaling(ng, target_cpu=60, min_size=2, max_size=6)\nelse:\n    attach_node_group_scaling(ng, target_cpu=50, min_size=4, max_size=12)\n```\n\n**Stack config** (`Pulumi.dev.yaml` / `Pulumi.prod.yaml`) \u2014 additive keys only:\n\n```yaml\nconfig:\n  webapp:scalingTargetCpu: \"60\"   # dev\n  webapp:scalingMaxNodes: \"6\"\n```\n```yaml\nconfig:\n  webapp:scalingTargetCpu: \"50\"   # prod\n  webapp:scalingMaxNodes: \"12\"\n```\n\n## Why nothing is replaced\n\n| Concern | Why safe |\n|---|---|\n| `eks.NodeGroup` | Untouched. `scaling_config.min_size/max_size` are **in-place updatable** anyway; we only adjust them if code declares them, never touching `instance_type`/`disk_size`/AMI (the replacement triggers). |\n| `autoscaling.Policy` | New resource, attached via `resource_id = node_group.auto_scaling_group_name` \u2014 a reference to an output, so it waits for the existing ASG and attaches post-hoc. |\n| Bucket / RDS / IAM | Zero code or config changes; not in the diff. |\n| Env isolation | Policies are created per-stack within each stack's project; `pulumi up` on dev does not touch prod state. |\n\n## Verification\n\n```bash\npulumi preview --stack webapp-dev\n# Expect: + 1 to create (aws:autoscaling/policy:Policy), ~ 1 maybe updated\n#         (ASG bounds), 0 to replace\n```\n\nIf `~ updated` on the node group appears, ensure only `scaling_config.min_size/max_size` changed \u2014 Pulumi labels true replacements as `+- replacement`; bounds widening shows as a safe in-place update.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ynlfyfyh/scaling.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ynlfyfyh/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ynlfyfyh/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ynlfyfyh/Pulumi.dev.yaml"
+  ]
+}

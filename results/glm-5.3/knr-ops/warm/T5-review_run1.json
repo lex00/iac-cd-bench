@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 542
+  },
+  "content": "# PR Security Review \u2014 knr-ops PR\n\n## Issues Identified (ranked by severity)\n\n### \ud83d\udd34 Critical \u2014 Block merge\n\n**1. S3 bucket policy grants public read access**\n- Violates acceptance criterion: \"Bucket: ... no public access.\"\n- Explicitly allows `s3:GetObject` to `Principal: \"*\"` \u2014 assets bucket becomes world-readable, data leak / unexpected egress exposure.\n- **Fix:** Remove public-read statement. If assets must be served publicly, front the bucket with CloudFront via Origin Access Control (OAC) and grant read only to the CloudFront OAI/OAC principal. Also ensure `PublicAccessBlock` (all four settings) is enabled in the bucket config.\n\n**2. Plaintext DB password in deployment env vars**\n- Violates criterion: \"Secret: never stored in plaintext in Git.\"\n- Password is permanently in Git history even after the fix \u2014 rotation required.\n- **Fix:** Move to SOPS-encrypted Secret (`sops` + KSOPS kustomize plugin or Flux `SopsSecret`), reference via `secretKeyRef` in the deployment. Rotate the leaked credential. Consider External Secrets Operator with IRSA as alternative.\n\n### \ud83d\udfe1 Warning \u2014 Fix before/shortly after merge\n\n**3. Missing resource limits on containers**\n- No QoS guarantees; a compromised or runaway container can exhaust node memory (DoS vector) and drive cost.\n- **Fix:** Add `resources.requests` and `resources.limits` (CPU/memory) to the deployment; enforce via `LimitRange` in the namespace and, ideally, admission policy (Kyverno/Gatekeeper).\n\n### \u2139\ufe0f Info \u2014 No action required\n\n**4. RDS instance class change (dev `db.t3.micro` \u2192 other class)**\n- Sizing-only change, matches env separation intent. Just confirm it's in the correct overlay (`overlays/dev/` vs `overlays/prod/`) so prod state is untouched, and verify deletion protection / backup retention / non-public flags remain set.\n\n## Pre-merge Checklist\n\n1. \u2705 Remove public-read bucket policy; add OAC + PublicAccessBlock (Critical)\n2. \u2705 Replace plaintext secret with SOPS-encrypted Secret; **rotate the leaked password** (Critical)\n3. \u2705 Add container resource requests/limits + LimitRange (Warning)\n4. \u2705 Confirm Flux will reconcile bucket policy change; scrub secret from Git history (`git filter-repo` or BFG) since rotate-without-purge still leaves history\n5. \u2705 Verify diff touches only the intended overlay (dev/prod isolation)"
+}

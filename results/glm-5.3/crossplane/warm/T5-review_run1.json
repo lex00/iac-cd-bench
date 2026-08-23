@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 805
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Changes Summary\n\n1. `deletionPolicy: Delete` added provider-wide (composition + claim defaults)\n2. S3 Bucket versioning removed from composition patching\n\n## Findings\n\n### \ud83d\udd34 Critical \u2014 Bucket versioning dropped\n\nThis **violates Acceptance Criterion #1** (versioning enabled). Removing versioning from the composition means:\n\n- All new/updated claims lose versioning \u2014 no rollback protection for asset objects.\n- For **existing buckets**: versioning is a one-way property on AWS \u2014 disabling it on an existing versioned bucket is a no-op at the API level, but the drift means Crossplane state and AWS reality diverge. Depending on the provider's `lateInit`/update behavior, this can trigger perpetual diffs or, worse, a delete/recreate if other properties change incompatibly.\n- Combined with `deletionPolicy: Delete`, an accidental claim deletion destroys the bucket **and all object versions** with no recovery path.\n\n**Ask:** Was this intentional (cost optimization?) and does it apply to dev *and* prod? If prod needs versioning per spec, gate it behind a composition patch (e.g., `versioningEnabled` boolean in `spec.parameters`) rather than removing the patch entirely.\n\n### \ud83d\udd34 Critical \u2014 `deletionPolicy: Delete` provider-wide\n\nApplying this bluntly across all managed resources is dangerous:\n\n- **RDS**: Acceptance Criterion #2 requires **deletion protection on**. `deletionPolicy: Delete` on the RDS instance means claim deletion destroys the database (and prod data). At minimum, RDS should be `Orphan` or rely on AWS-level deletion protection. This looks like a \"make cleanup easy\" change that bypasses a stated guardrail.\n- **Buckets with data**: delete on claim removal destroys data.\n- **Kubernetes cluster (EKS)**: full teardown on claim deletion \u2014 acceptable for dev, questionable for prod.\n- **IAM roles / OIDC providers**: deletion cascades could break running workloads.\n\n**Recommendation:** Make deletion policy a **composition parameter per environment** (e.g., `deletionPolicy: Orphan` for prod, `Delete` acceptable for dev). Something like:\n\n```yaml\n- fromFieldPath: spec.parameters.deletionPolicy\n  toFieldPath: spec.deletionPolicy\n```\n\nAlso note `deletionPolicy: Delete` is already the **default** in most Crossplane providers \u2014 adding it explicitly suggests it was added to *override* an existing `Orphan` somewhere. If so, that's the real review question: who/what was relying on `Orphan`?\n\n### \ud83d\udfe1 Moderate \u2014 Environment isolation (Criterion #7)\n\nIf this diff touches a shared composition used by dev and prod, both changes violate \"changing prod does not modify dev state\" in spirit \u2014 a single composition edit simultaneously changes both environments' teardown and versioning semantics. Reinforces the case for parameterizing rather than hardcoding.\n\n### \ud83d\udfe2 Minor\n\n- Ensure the claim diff updates the corresponding XRD/composition **test suite** (composition functions/patches tests) if present.\n- If versioning was dropped because the provider schema changed (e.g., `versioning` block \u2192 separate `versioningConfiguration` resource in `provider-aws-s3`), migrate rather than delete.\n\n## Verdict\n\n**Request changes.** Both changes remove safety rails required by the acceptance criteria (versioning, deletion protection posture) with no environment gating. Ask for:\n\n1. Restore bucket versioning (or parameterize it).\n2. Parameterize `deletionPolicy` per environment; keep prod on `Orphan`/protected for RDS and S3 at minimum.\n3. Confirm no existing buckets/resources are affected by drift from the versioning removal."
+}

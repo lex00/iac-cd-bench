@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 917
+  },
+  "content": "# Pulumi Preview Behavior \u2014 Answers\n\n## 1. Which property triggered the replace?\n\nWith the canonical spec, the replace-triggering property is almost certainly the **RDS instance class / storage** change between environments \u2014 specifically `instanceClass` (`db.t3.micro` \u2192 `db.t3.medium`). In the AWS provider, these RDS properties force replacement (or replacement-like behavior via simultaneous update + rename):\n\n- **`engineVersion`** (major version bumps) \u2014 hard replace\n- **`identifier`** \u2014 hard replace\n- **`instanceClass`** with storage changes \u2014 often a replace\n- **`allocatedStorage`** decreases \u2014 replace\n\nThe most likely culprit given a dev\u2192prod sizing change: **`instanceClass`**, and if `deletionProtection` is on (per acceptance criteria), Pulumi's preview will show **`replace` flagged as requiring deletion of a protected resource** \u2014 the preview will refuse/require confirmation because you cannot delete a resource with `protect: true`.\n\nTo confirm precisely, run:\n\n```bash\npulumi preview --diff --show-secrets  # shows the exact property diff\n# or inspect state:\npulumi stack export | jq '.deployment.resources[] | select(.type==\"aws:rds/instance:Instance\") | .inputs'\n```\n\nThe preview output annotates replaced resources with a `~> replace` marker; `--diff` shows exactly which input(s) changed.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target urn1 urn2 \u2026` restricts the operation to **only** the named URNs. It skips:\n\n- **Creation, updates, and replacement of every other resource** \u2014 even ones the targeted resource depends on (deps are assumed to already exist and are not reconciled).\n- **Dependency-aware cascades**: changing an input derived from a skipped resource does **not** propagate.\n- **Deletes** of resources no longer referenced \u2014 unless you also pass `--remove` (and even then only for targeted URNs).\n\n\u26a0\ufe0f Pitfalls:\n- **`--target` bypasses dependency ordering checks.** If the target references an output of an untargeted, not-yet-created resource, the deployment fails at runtime (or uses stale values).\n- A targeted replace of the DB will not target-dependents (e.g., the secret rotation or app wiring), leaving drift.\n- `--target-dependents` flag extends the set to transitive dependents \u2014 often the safer choice.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **Marking**: `pulumi.config.requireSecret(...)` / `Output.secret(...)` wraps values so they're encrypted in **state** (via the stack's passphrase or KMS/Azure Key Vault/GCP KMS encryption key in `Pulumi.<stack>.yaml`).\n- **State**: secrets are stored ciphertext \u2014 never plaintext in `pulumi stack export` or the backend.\n- **Outputs/preview**: secret values render as `[secret]` in CLI previews, logs, and the Pulumi Service UI. Diffs show `[secret]` (or `\u2192 [secret]`) rather than old/new values.\n- **Propagation is opt-in**: an `Output` produced *from* a secret (e.g., `connStr.apply(s => \\`postgres://${s}\\`)`) is automatically secret-typed only if derived via `.apply` on the secret \u2014 but resources receiving it must use `pulumi.secret(...)` in `additionalSecretOutputs` or the value must remain an `Output` to avoid leaking into state as plaintext.\n- **`additionalSecretOutputs`** on a resource marks specific output properties as secret retroactively, even if the provider didn't classify them (common for generated passwords / connection strings).\n\n```ts\nconst dbPassword = config.requireSecret(\"dbPassword\");\nconst connStr = pulumi.all([db.address, db.port, dbUsername, dbPassword])\n  .apply(([a, p, u, pw]) => `postgres://${u}:${pw}@${a}:${p}/app`);\n// connStr is a secret Output: masked in preview, encrypted in state\n```\n\n**Relevant to this scenario**: the DB connection string built from `requireSecret` stays masked in preview even when the RDS instance shows a replace \u2014 you'll see `~> password: [secret]` style diffs rather than leaked credentials.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ow2lcf_h/Pulumi.<stack>.yaml"
+  ]
+}

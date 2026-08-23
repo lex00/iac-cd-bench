@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1352,
+    "output": 755
+  },
+  "content": "## 1. What reconciles when PR #42 merges, and in what order?\n\n1. **GitRepository source controller** detects the merge (poll or webhook) and produces a new artifact snapshot.\n2. **Kustomizations reconcile** in dependency order (`dependsOn`): typically **clusters/CAPI \u2192 infra (S3/RDS/IAM) \u2192 app overlays (dev, prod)**.\n3. The RDS `Instance` CR change, the new S3 `Bucket` CR, and the prod overlay replica patch are applied server-side.\n4. **ACK controllers** then act asynchronously: the RDS controller issues a `ModifyDBInstance`, the S3 controller issues `CreateBucket`. The `replicas: 4` patch is applied immediately to the Deployment by the API server, and the ReplicaSet controller scales pods.\n5. If anything fails, Flux retries on the next interval and reports status on the Kustomization object.\n\n## 2. Does the RDS instance get recreated?\n\n**No.** `instanceClass` is a mutable field of the ACK `Instance` CR. ACK maps it to an RDS **in-place modification** (`ModifyDBInstance`), not replacement. Note:\n- Apply-time behavior is a patch \u2014 only `spec.instanceClass` changes, so the CR isn't replaced.\n- The change triggers an RDS instance reboot/maintenance window (brief outage for a class change).\n- If the CR also had immutable changes (e.g., changing `storageEngine` or deleting/recreating the CR), replacement would occur \u2014 and **deletion protection** would block deletion, requiring explicit toggle.\n\n## 3. What happens if the S3 bucket manifest is deleted from Git?\n\nFlux's **pruning** deletes the `Bucket` CR from the cluster. Then the ACK S3 controller attempts `DeleteBucket`. However:\n- If the bucket is **non-empty** (versioned objects present), S3 API refuses deletion and ACK reports an error \u2014 the bucket survives with orphaned state.\n- Idempotent GitOps practice is to either add `deletionPolicy: retain` (keep the AWS resource) or empty the bucket first. So: the CR is pruned; the AWS resource typically survives because it isn't empty (or is retained by policy), leaving drift you must clean manually.\n\n## 4. How does Flux handle the prod-only replica change?\n\nThe patch lives in `overlays/prod/kustomization.yaml`, so only the **prod Kustomization** is affected. Flux builds the prod overlay, renders the Deployment with `replicas: 4`, and server-side applies it. Dev's Kustomization builds unchanged and **is not touched** \u2014 environment isolation comes from the overlay structure, not Flux. Flux doesn't diff overlays; it just applies what each Kustomization renders. Result: prod HPA-less scale-up to 4 pods; dev stays at base replicas.\n\n## 5. Role of `dependsOn` between kustomizations?\n\n- **Ordering**: guarantees infra Kustomizations reconcile before app overlays (e.g., IAM role / S3 bucket exists before the app Deployment references it).\n- **Gating**: Flux won't reconcile a dependent until its dependencies are `Ready`; if the RDS Kustomization is unhealthy, the app rollout is blocked/retry \u2014 preventing deploying pods against missing secrets/infra.\n- **Change propagation**: a change to a dependency triggers reconciliation of dependents, so app configs refresh after infra updates.\n- Without it, ordering is nondeterministic and PR #42's RDS change and app scaling could apply out of order, causing transient errors."
+}

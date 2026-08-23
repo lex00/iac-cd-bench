@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 650,
+    "output": 726
+  },
+  "content": "# Terraform Plan Review \u2014 Findings\n\n## \ud83d\udd34 CRITICAL #1: RDS instance forced replacement\n\n**What:** The plan contains a `destroy + create` on the RDS PostgreSQL instance. Look for `\"actions\": [\"delete\", \"create\"]` in the resource_changes array \u2014 likely on `aws_db_instance`.\n\n**Common root causes to check:**\n- Change to `identifier` or `engine_version` (major version bump forces replacement)\n- Change to `storage_type`, `allocated_storage` shrink, or `parameter_group_name` where apply_method can't apply in-place\n- `deletion_protection` toggling, or changing `replicate_source_db`\n- Something as innocent-looking as a `lifecycle { force_replace = true }` on a changed tag/label\n\n**Impact:** Full database outage, data loss unless a final snapshot is configured. Check `final_snapshot_identifier` and `skip_final_snapshot` values before any apply.\n\n**Recommendation:** Block this apply. Split into an in-place change if possible (e.g., engine_version via `apply_immediately` + rolling major upgrade), or plan a migration: snapshot \u2192 new instance \u2192 restore \u2192 cutover.\n\n## \ud83d\udd34 CRITICAL #2: 0.0.0.0/0 ingress added to security group\n\n**What:** A `+` addition of a `cidr_blocks = [\"0.0.0.0/0\"]` ingress rule (likely port 22 or 5432 given the stack).\n\n**Impact:** Direct violation of least-privilege / no open ingress. Exposing RDS 5432 to the world is the worst case; even 22 open is a flag.\n\n**Recommendation:** Reject. Restrict to VPC CIDR, bastion/VPN CIDR, or reference the security group of the ALB/EKS nodes via `security_groups = [...]` instead of CIDRs.\n\n## \ud83d\udfe1 Also verify (acceptance criteria cross-check)\n\n1. **No-op noise** \u2014 40 changes is a lot; most should be `[\"no-op\"]` or read-only. Confirm nothing else hides `[\"delete\", \"create\"]` \u2014 grep the JSON:\n   ```bash\n   jq '.resource_changes[] | select(.change.actions | index(\"delete\")) | .address' tfplan.json\n   ```\n2. **Dev vs prod isolation** \u2014 confirm this plan targets only one workspace/environment. A prod plan that touches `dev` resources means a state/workspace misconfiguration.\n3. **RDS config drift** \u2014 while you're in there, confirm `deletion_protection = true`, `backup_retention_period >= 7`, `publicly_accessible = false`, `multi_az` (prod) survive the replacement \u2014 replacement resources **reset to plan values**, so a replacement can silently drop protections if the code drifted.\n4. **Secret handling** \u2014 the plan should not show the DB connection string in plaintext. If `sensitive` values appear in the JSON, your plan file is a secret leak vector; restrict its storage.\n5. **Bucket** \u2014 check the S3 changes don't disable versioning/encryption or public-access-block.\n\n## Verdict\n\n**Do not apply.** Two blockers: forced DB replacement and open-world ingress. The 0.0.0.0/0 rule looks like a debugging shortcut someone forgot to revert \u2014 remove it from the PR, then re-plan the RDS change as an in-place or orchestrated migration with a final snapshot defined."
+}

@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1006,
+    "output": 932
+  },
+  "content": "## Diagnosis\n\nTwo defects in `__main__.py`:\n\n1. **Secret read as plain string** \u2014 `config.get(\"dbPassword\")` returns a plain `str` (or `None`), logging the secret in state/plaintext and breaking Pulumi's secret encryption. Must use `config.require_secret()` which returns `Output[str]`.\n2. **`.apply()` misuse** \u2014 the `bucket_url` construction relies on a misused apply chain (returning `None`/wrong type where `Output[str]` is expected, crashing during preview). Use proper `Output.all()` / `.apply()` composition so the result is a genuine `Output`.\n\nAlso fixed per spec: `deletion_protection=True` (prod requirement), plus hardening (public access block, backup retention, `publicly_accessible=False`).\n\n## Fixed `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.require(\"env\")\nregion = config.get(\"region\", \"us-east-1\")\n\n# FIX 1: read the DB password as a Pulumi secret (Output[str], encrypted in state)\ndb_password = config.require_secret(\"dbPassword\")\n\n# S3 Bucket\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\n)\n\nbucket_versioning = aws.s3.BucketVersioningV2(\n    \"app-bucket-versioning\",\n    bucket=bucket.id,\n    versioning_configuration=aws.s3.BucketVersioningV2VersioningConfigurationArgs(\n        status=\"Enabled\",\n    ),\n)\n\nbucket_encryption = aws.s3.BucketServerSideEncryptionConfigurationV2(\n    \"app-bucket-encryption\",\n    bucket=bucket.id,\n    server_side_encryption_configuration=[\n        aws.s3.BucketServerSideEncryptionConfigurationV2RuleArgs(\n            apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationV2RuleApplyServerSideEncryptionByDefaultArgs(\n                sse_algorithm=\"AES256\",\n            ),\n        ),\n    ],\n)\n\nbucket_public_block = aws.s3.BucketPublicAccessBlock(\n    \"app-bucket-public-block\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# FIX 2: build the URL with a proper Output-returning apply over bucket.id\nbucket_url = bucket.id.apply(\n    lambda bucket_id: f\"https://s3.{region}.amazonaws.com/{bucket_id}\"\n)\n\n# RDS Instance\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.medium\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app-user\",\n    password=db_password,          # Output[str] accepted by Pulumi resource args\n    skip_final_snapshot=True,\n    deletion_protection=True,      # FIX: required by spec\n    publicly_accessible=False,     # FIX: required by spec\n    backup_retention_period=7,     # FIX: >= 7 days\n)\n\n# Outputs\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\npulumi.export(\"dbPassword\", db_password)  # exported as a secret Output, never plaintext\n```\n\n## Stack config (`Pulumi.dev.yaml` / `Pulumi.prod.yaml`)\n\nSet the secret via the CLI so it's encrypted at rest:\n\n```bash\npulumi config set dbPassword --secret\npulumi config set env dev        # or prod\npulumi config set region us-east-1\n```\n\n## Verification checklist\n\n- `db_password` is now `Output[str]`; secret is marked `secure:` in the YAML and encrypted in state \u2714\n- `bucket_url` is a real `Output` built via `.apply()` on `bucket.id`; no crash \u2714\n- `deletion_protection=True`, `backup_retention_period=7`, `publicly_accessible=False`, bucket versioning + AES-256 + public access block \u2714\n- Environments isolated via separate stack configs (`Pulumi.dev.yaml`, `Pulumi.prod.yaml`) \u2714",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-0nzzkoqz/__main__.py"
+  ]
+}

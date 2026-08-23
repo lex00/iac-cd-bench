@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=1\nERR: Error: bad file '/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-kzg1mql7/kustomization.yaml': yaml: line 2, column 9: mapping values are not allowed in this context\n\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-kzg1mql7/kustomization.yaml - failed validation: error unmarshalling resource: error converting YAML to JSON: yaml: line 2: mapping values are not allowed in this context\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-kzg1mql7: exit=1\nERR: Error: invalid Kustomization: yaml: line 2: mapping values are not allowed in this context\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 652
+  },
+  "content": "# PR Security Review \u2014 knr-ops\n\n## Issues Ranked by Severity\n\n### \ud83d\udd34 Critical \u2014 Block merge\n\n**1. S3 bucket policy grants public read access**\n- Violates acceptance criterion: \"no public access.\"\n- Exposes application assets (potentially anything uploaded) to the internet; risk of data leak or hosting abuse.\n- **Fix before merge:** Remove the public-read `Statement`. If assets must be public, use CloudFront with an Origin Access Identity/Control instead of a bucket policy \u2014 the spec already calls for CloudFront in prod. Additionally add `PublicAccessBlock` (all four flags) and keep SSE + versioning.\n\n**2. Plaintext DB password in deployment env vars**\n- Violates \"Secret: never stored in plaintext in Git\" \u2014 the secret is now permanently in Git history even if removed later.\n- **Fix before merge:** Move to SOPS-encrypted Secret (stack-native mechanism per spec):\n  - `kustomize` cannot natively consume encrypted files cleanly; use SOPS + `ksops` (kustomize plugin) or Flux's `sops` decryption in `kustomization.yaml`:\n    ```yaml\n    apiVersion: kustomize.config.k8s.io/v1beta1\n    kind: Kustomization\n    metadata:\n      annotations:\n        config.kubernetes.io/function-...  # Flux: decryption: provider: sops\n    ```\n    In Flux, set `spec.decryption.provider: sops` on the Kustomization and reference the encrypted Secret. Also **rotate the leaked credential** and consider history scrub (BFG/git filter-repo) since it's already committed.\n\n### \ud83d\udfe1 Warning \u2014 Should fix before or immediately after merge\n\n**3. Missing resource limits on containers**\n- Container could exhaust node memory/CPU \u2014 a DoS/nohoisy-neighbor risk, worse on shared prod nodes.\n- **Fix:** Add `resources.limits` (and requests) in the base deployment so it applies to both dev and prod overlays, e.g.:\n  ```yaml\n  resources:\n    requests: { cpu: 100m, memory: 128Mi }\n    limits:   { cpu: 500m, memory: 256Mi }\n  ```\n- Ideally enforce via a `LimitRange`/Kyverno policy so it can't regress.\n\n### \u26aa Info \u2014 No action required\n\n**4. RDS instance class change** \u2014 No security impact per the diff. Verify it's applied only to the intended overlay (dev vs prod) to preserve environment isolation, and confirm deletion protection / backup retention remain untouched.\n\n## Merge Checklist\n\n1. \u274c Remove public-read S3 policy; add PublicAccessBlock; serve assets via CloudFront OAC.\n2. \u274c Remove plaintext password, introduce SOPS-encrypted Secret with Flux `decryption.provider: sops`, rotate the credential.\n3. \u26a0\ufe0f Add resource requests/limits in `base/`.\n4. \u2705 RDS change: verify overlay scoping only.\n\n**Verdict: Do not merge.** Two critical violations of the repo's security acceptance criteria must be resolved first.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-kzg1mql7/kustomization.yaml"
+  ]
+}

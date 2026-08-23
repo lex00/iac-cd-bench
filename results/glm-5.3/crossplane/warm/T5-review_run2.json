@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 579
+  },
+  "content": "# Crossplane Diff Review\n\n## \ud83d\udd34 Blocking Issues\n\n### 1. Bucket versioning dropped\nDirect violation of **Acceptance Criteria #1** (versioning enabled) and the spine spec (\"versioned, encryption\" for both dev and prod). This is a functional regression, not a cleanup \u2014 likely a merge accident or a parameter default changed. **Must be reverted** unless there's a documented exception (there isn't in this spec).\n\n### 2. `deletionPolicy: Delete` applied provider-wide\nThis is high-risk for prod:\n\n- **RDS**: Changing deletion policy to `Delete` means removing a claim/manifest destroys the database. Spec requires **deletion protection on** (AC #2). Even if `deletionProtection` remains set on the RDS resource itself, you're removing a safety layer at the Crossplane level \u2014 if someone toggles both, the DB is gone. Prod RDS should be `Orphan` or `Delete` only with strong guardrails.\n- **S3 buckets**: data is destroyed with the claim. Versioning being dropped *at the same time* compounds this \u2014 non-versioned bucket + `Delete` policy means irrecoverable asset loss.\n- **EKS**: cluster deletion is acceptable (stateless spine), but node group/cluster recreation churn is costly in prod.\n\n**Recommended pattern:** scope deletion policy per environment via composition patches:\n\n```yaml\n# dev composition patch\n- fromValue: Delete   # dev: cheap, disposable\n# prod composition patch  \n- fromValue: Orphan   # prod: requires explicit manual cleanup\n```\n\nOr leave the resource-level `deletionProtection: true` (RDS) and `DeletionProtection` on the EKS cluster as defense-in-depth \u2014 verify those weren't also touched.\n\n## \ud83d\udfe1 Follow-ups\n\n- **Combined blast radius**: both changes together remove the two main recovery mechanisms (versioned objects, orphan-on-delete). If a claim is accidentally deleted in prod, the data is permanently lost. This pairing should trigger extra scrutiny \u2014 was this intentional or a careless bulk edit?\n- **Environment isolation (AC #7)**: confirm `deletionPolicy` was patched per-environment in compositions, not set in a shared base that affects both dev and prod claims. A provider-wide blanket change violates env-independent tuning.\n- Check if dropped versioning was implicit (e.g., removed from composition `patchDefinitions`/default parameters) \u2014 then existing buckets may silently drift instead of updating. Verify `updatePolicy`/late-init behavior.\n\n## Verdict\n\n**Request changes.** Restore bucket versioning; move `deletionPolicy: Delete` to dev-only (prod = `Orphan` or equivalent guardrail)."
+}

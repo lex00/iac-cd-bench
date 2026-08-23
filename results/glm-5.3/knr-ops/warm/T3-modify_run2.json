@@ -1,0 +1,34 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\n# overlays/prod/kustomization.yaml  (final)\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base\n  - s3-replication.yaml\npatches:\n  - target:\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n  - target:\n      group: rds.aws.upbound.io\n      version: v1beta1\n      kind: Instance\n      name: db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/instanceClass\n        value: db.t\n[validate CRDs] kubeconform: exit=0\nSummary: 4 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 4\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ldqgbur_/overlays/prod: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from '../../base': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ldqgbur_/base' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ldqgbur_/base: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ldqgbur_/base' : lstat /private/va"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 801,
+    "output": 839
+  },
+  "content": "# Prod Overlay Changes \u2014 knr-ops (kustomize)\n\nOnly `overlays/prod/kustomization.yaml` is modified. Dev overlay untouched.\n\n```yaml\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nresources:\n  - ../../base\n\npatches:\n  # 1. App deployment replicas: 2 -> 4\n  - target:\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  # 2 & 3. RDS: db.t3.micro -> db.t3.medium, multi-AZ enabled\n  - target:\n      group: rds.aws.upbound.io\n      version: v1beta1\n      kind: Instance\n      name: db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/instanceClass\n        value: db.t3.medium\n      - op: replace\n        path: /spec/forProvider/multiAz\n        value: true\n\n# 4. S3 cross-region replication to us-west-2 (new resource in prod only)\nresources:\n  - ../../base\n  - replication-config.yaml\n```\n\nSince you can't split `resources` across two keys, the final consolidated file:\n\n```yaml\n# overlays/prod/kustomization.yaml  (final)\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nresources:\n  - ../../base\n  - s3-replication.yaml\n\npatches:\n  - target:\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  - target:\n      group: rds.aws.upbound.io\n      version: v1beta1\n      kind: Instance\n      name: db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/instanceClass\n        value: db.t3.medium\n      - op: replace\n        path: /spec/forProvider/multiAz\n        value: true\n```\n\nAnd the new prod-only file referenced above:\n\n```yaml\n# overlays/prod/s3-replication.yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketReplicationConfiguration\nmetadata:\n  name: assets-replication\nspec:\n  forProvider:\n    region: us-east-1\n    roleRef:\n      name: s3-replication-role\n    bucketRef:\n      name: assets-bucket\n    rule:\n      - id: replicate-to-us-west-2\n        status: Enabled\n        filter: {}\n        destination:\n          - bucketRef:\n              name: assets-replica-bucket\n            storageClass: STANDARD\n---\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: assets-replica-bucket\nspec:\n  forProvider:\n    region: us-west-2\n    versioning:\n      - enabled: true\n```\n\n### Why this satisfies the constraints\n\n- **Dev isolation**: kustomize overlays compose independently \u2014 `overlays/dev/kustomization.yaml` still renders `../../base` unpatched. Rendering dev (`kustomize build overlays/dev`) yields the original 2 replicas / db.t3.micro / single-AZ / no replication.\n- **Only prod overlay modified**: patches live solely in `overlays/prod/`; base manifests are untouched.\n- **Idiomatic**: JSON6902 patches via the `patches` field for scalar field overrides; a prod-only resource composition for the replication config (can't express \"add a resource\" via a patch cleanly).\n- Adjust `group/version/kind/name` targets if your base uses different identifiers (e.g., `terraform-controller` CRDs instead of Upbound Crossplane).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ldqgbur_/overlays/prod/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ldqgbur_/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ldqgbur_/generated_2.yaml"
+  ]
+}

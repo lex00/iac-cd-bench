@@ -1,0 +1,37 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `pulumi`\n --> generated_0.py:1:1\n  |\n1 | pulumi.export(\"dbConnectionString\", db_conn.apply(pulumi.unsecret))\n  | ^^^^^^\n2 | # or better, wrap when exporting:\n3 | pulumi.export(\"dbConnectionString\", db_password.apply(\n  |\n\nF821 Undefined name `db_conn`\n --> generated_0.py:1:37\n  |\n1 | pulumi.export(\"dbConnectionString\", db_conn.apply(pulumi.unsecret))\n  |                                     ^^^^^^^\n2 | # or better, wrap when exporting:\n3 | pulumi.export(\"dbConnectionString\", d"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 636,
+    "output": 734
+  },
+  "content": "# Pulumi Preview Security Review\n\n## Findings\n\n### \ud83d\udd34 Critical: Secret exposed in plaintext stack output\n\n```json\n\"outputs\": {\n  \"dbConnectionString\": {\n    \"value\": \"postgresql://admin:P@ssw0rd123@db-prod.xxxx.us-east-1.rds.amazonaws.com:5432/appdb\"\n  }\n}\n```\n\nThe RDS connection string (with password) is exported as a plaintext stack output. This will be stored in the Pulumi state file **unencrypted** and visible to anyone with state access (backend, CI logs, `pulumi stack output`).\n\n**Fix:** Mark the output as secret:\n```python\npulumi.export(\"dbConnectionString\", db_conn.apply(pulumi.unsecret))\n# or better, wrap when exporting:\npulumi.export(\"dbConnectionString\", db_password.apply(\n    lambda pw: Output.secret(f\"postgresql://admin:{pw}@{host}:5432/appdb\")))\n```\nAlso ensure the password itself came from `ConfigSecret`:\n```python\nconfig = pulumi.Config()\ndb_password = config.require_secret(\"db_password\")\n```\n\n### \ud83d\udfe0 High: RDS instance being replaced without `protect`\n\n```json\n\"steps\": [\n  {\"op\": \"delete-replaced\", \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::appDb\"},\n  {\"op\": \"create-replacement\", \"urn\": \"...\", \"replaceKeys\": [\"instanceClass\"]}\n]\n```\n\nChanging `instance_class` (or storage/`identifier`-type forces) triggers a **destroy-and-recreate** of the production database. Combined with no `protect` flag, this could mean data loss on a routine preview-driven apply.\n\n**Fix:**\n```python\napp_db = aws.rds.Instance(\n    \"appDb\",\n    opts=pulumi.ResourceOptions(protect=True),\n    ...\n)\n```\nIf a resize is genuinely intended, use `instance_class` changes that AWS supports in-place where possible, take a final snapshot (`final_snapshot_identifier`, `skip_final_snapshot=False`), and temporarily run with `pulumi destroy --protect=false` under change control.\n\n### \ud83d\udfe1 Medium: Missing `protect` on S3 bucket\n\nStateful resource with replication config \u2014 no `protect=True`. A stack destroy or accidental resource removal deletes versioned assets.\n\n```python\nbucket = aws.s3.Bucket(\"appAssets\",\n    opts=pulumi.ResourceOptions(protect=True))\n```\n\n### \ud83d\udfe1 Medium: Verify RDS hardening in the diff\n\nConfirm the previewed instance retains (per acceptance criteria):\n- `deletion_protection=True` (prod)\n- `backup_retention_period >= 7`\n- `publicly_accessible=False`\n- `storage_encrypted=True` (prod)\n\nIf the diff removes or lowers any of these, block the change.\n\n## Acceptance Criteria Check\n\n| Criterion | Status |\n|---|---|\n| 3. Secret not in plaintext | \u274c Fail (plaintext output) |\n| 2. RDS deletion protection | \u274c Fail (replacement + no protect flag) |\n| 1. Bucket versioning/SSE/no public | \u26a0\ufe0f Verify diff didn't alter these |\n| 7. Env isolation | \u26a0\ufe0f Confirm preview ran against `prod` stack only; `dev.yaml` untouched |\n\n## Verdict\n\n**Do not apply.** Fix the secret output, add `protect=True` to RDS and S3, and review the RDS replacement plan (snapshot before apply).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8mp2e_p8/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8mp2e_p8/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8mp2e_p8/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8mp2e_p8/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8mp2e_p8/generated_2.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8mp2e_p8/generated_3.py"
+  ]
+}

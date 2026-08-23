@@ -1,0 +1,34 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1006,
+    "output": 829
+  },
+  "content": "## Fixes\n\n**Defect 1 \u2014 Secret read as plain string:** `config.get(\"dbPassword\")` returns the secret in plaintext (and stores it unencrypted in state). Must use `config.require_secret(\"dbPassword\")`, which returns an `Output[str]` marked secret. Passing that `Output` directly to RDS `password` is correct \u2014 Pulumi resolves it and keeps it encrypted in state.\n\n**Defect 2 \u2014 `.apply()` misuse:** `bucket.arn.apply(...)` is fine in principle (it *does* return an `Output`), but the lambda formats the **ARN** (not the bucket name) into a URL, producing an invalid value \u2014 a common pattern when the \"result used where Output expected\" bug appears downstream. Use the bucket name (`bucket.bucket`) or build the URL from the right attribute. (If `apply` were assigned inside a function returning `str` typed code, the crash occurs \u2014 keep everything in Output land.)\n\nAlso fixed prod-unsafe defaults (`deletion_protection`, `publicly_accessible`, backups).\n\n### Corrected `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.get(\"env\")\nregion = config.get(\"region\", \"us-east-1\")\n\n# FIX 1: read as a secret Output \u2014 never a plain string\ndb_password = config.require_secret(\"dbPassword\")\n\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=pulumi.Output.concat(\"myapp-assets-\", env),\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\n)\n\naws.s3.BucketVersioning(\n    \"app-bucket-versioning\",\n    bucket=bucket.id,\n    versioning_configuration=aws.s3.BucketVersioningV2VersioningConfigurationArgs(\n        status=\"Enabled\",\n    ),\n)\n\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-pab\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\naws.s3.BucketServerSideEncryptionConfiguration(\n    \"app-bucket-sse\",\n    bucket=bucket.id,\n    rule=aws.s3.BucketServerSideEncryptionConfigurationRulesArgs(\n        apply_side_encryption_algorithm_by_default=aws.s3.BucketServerSideEncryptionConfigurationRulesApplySideEncryptionAlgorithmByDefaultArgs(\n            sse_algorithm=\"AES256\",\n        ),\n    ),\n)\n\n# FIX 2: apply over the correct attribute (bucket name, not ARN) \u2014 stays an Output\nbucket_url = bucket.bucket.apply(lambda name: f\"https://s3.{region}.amazonaws.com/{name}\")\n\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.medium\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app-user\",\n    password=db_password,          # secret Output passed through\n    skip_final_snapshot=False,\n    deletion_protection=True,      # FIX: was False\n    publicly_accessible=False,\n    backup_retention_period=7,     # FIX: meet >= 7 days\n    storage_encrypted=True,\n)\n\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n```\n\n### Config (`Pulumi.dev.yaml` / `Pulumi.prod.yaml`)\n\n```yaml\nconfig:\n  myapp:env: dev\n  myapp:region: us-east-1\n  myapp:dbPassword:\n    secure: AAABANm...   # encrypted via pulumi config set --secret dbPassword ...\n```\n\nSet it with: `pulumi config set --secret dbPassword '<value>'` \u2014 never commit the plaintext value.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-r5gifydf/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-r5gifydf/Pulumi.dev.yaml"
+  ]
+}

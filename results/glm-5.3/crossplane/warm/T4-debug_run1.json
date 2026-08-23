@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-dplkenzo/composition.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 1, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "ldPath: spec.parameters.instanceClass\\n        toFieldPath: spec.forProvider.instanceClass\\n    readinessChecks:\\n      - type: None\\n' and ('ReadinessChecks' in 'resources:\\n  - name: rds-instance\\n    base:\\n      apiVersion: database.aws.upbound.io/v1beta1\\n      kind: Instance\\n      spec:\\n        forProvider:\\n          region: us-east-1\\n          engine: postgres\\n          engineVersion: \"16.1\"\\n          allocatedStorage: 20\\n          autoMinorVersionUpgrade: true\\n          backupRetentionPeriod: 7\\n          deletionProtection: true\\n          publiclyAccessible: false\\n          storageEncrypted: true\\n        providerConfigRef:\\n          name: default\\n    patches:\\n      - fromFieldPath: spec.parameters.instanceClass\\n        toFieldPath: spec.forProvider.instanceClass\\n    readinessChecks:\\n      - type: None\\n' or 'checkType' in 'resources:\\n  - name: rds-instance\\n    base:\\n      apiVersion: database.aws.upbound.io/v1beta1\\n      kind: Instance\\n      spec:\\n        forProvider:\\n          region: us-east-1\\n          engine: postgres\\n          engineVersion: \"16.1\"\\n          allocatedStorage: 20\\n          autoMinorVersionUpgrade: true\\n          backupRetentionPeriod: 7\\n          deletionProtection: true\\n          publiclyAccessible: false\\n          storageEncrypted: true\\n        providerConfigRef:\\n          name: default\\n    patches:\\n      - fromFieldPath: spec.parameters.instanceClass\\n        toFieldPath: spec.forProvider.instanceClass\\n    readinessChecks:\\n      - type: None\\n'))\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:15: AssertionError: Composition should have ReadinessChecks defined\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks\n========================= 1 failed, 1 passed in 0.00s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1122,
+    "output": 576
+  },
+  "content": "# Fix: Composition never Ready\n\nTwo defects, both in `composition.yaml`:\n\n## Defect 1: Wrong `fromFieldPath`\n\nThe XRD schema exposes `spec.parameters.instanceClass`, but the patch reads `spec.parameters.storageClass` (non-existent). The patch silently fails, leaving `instanceClass` unset \u2192 RDS instance can't be created properly.\n\n```yaml\npatches:\n  - fromFieldPath: spec.parameters.instanceClass   # was: spec.parameters.storageClass\n    toFieldPath: spec.forProvider.instanceClass\n    transforms:\n      - type: String\n        string:\n          type: Format\n          format: \"db.t3.%s\"\n```\n\n\u26a0\ufe0f With the format transform `\"db.t3.%s\"`, the XRD's default `db.t3.medium` would become `db.t3.db.t3.medium`. Either:\n- change XRD default/claim values to bare sizes (`medium`, `micro`), or\n- drop the transform and pass full class names. Simplest fix:\n\n```yaml\npatches:\n  - fromFieldPath: spec.parameters.instanceClass\n    toFieldPath: spec.forProvider.instanceClass\n```\n\n## Defect 2: Missing readiness check\n\n`readiness: {}` on an upbound resource means no conditions are evaluated, so the composed resource never reports Ready and the Composition stalls.\n\n```yaml\nreadinessChecks:\n  - type: None    # let the managed resource's own Ready condition drive readiness\n```\n\n(or use `readinessChecks: [{type: MatchString, fieldPath: status.atProvider.state, matchString: available}]` for explicit control).\n\n## Fixed `composition.yaml` (resources section)\n\n```yaml\nresources:\n  - name: rds-instance\n    base:\n      apiVersion: database.aws.upbound.io/v1beta1\n      kind: Instance\n      spec:\n        forProvider:\n          region: us-east-1\n          engine: postgres\n          engineVersion: \"16.1\"\n          allocatedStorage: 20\n          autoMinorVersionUpgrade: true\n          backupRetentionPeriod: 7\n          deletionProtection: true\n          publiclyAccessible: false\n          storageEncrypted: true\n        providerConfigRef:\n          name: default\n    patches:\n      - fromFieldPath: spec.parameters.instanceClass\n        toFieldPath: spec.forProvider.instanceClass\n    readinessChecks:\n      - type: None\n```\n\n(I also added spec-required fields to satisfy the acceptance criteria \u2014 backup retention \u2265 7 days, deletion protection, not public, encryption \u2014 but the two defects blocking Ready were the `fromFieldPath` and `readiness: {}`.)\n\n**Verify:** `kubectl get awswebservices` should show `READY: True` once the RDS instance reaches `available`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-dplkenzo/composition.yaml"
+  ]
+}

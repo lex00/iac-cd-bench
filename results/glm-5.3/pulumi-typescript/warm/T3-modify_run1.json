@@ -1,0 +1,36 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nz2_0aql/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nz2_0aql/webApp.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-t"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 1202
+  },
+  "content": "# Migrating a Flat Pulumi Program to ComponentResource (No Replacement)\n\nThe key: when you wrap resources into a `ComponentResource`, the URN changes (a type prefix is added, e.g. `pkg:index:WebApp` \u2192 the new parent path). Without `aliases`, every child resource gets **replaced**. Passing `aliases` (old URNs) in each resource preserves state.\n\n## 1. Before: flat program (`index.ts`)\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst cfg = new pulumi.Config();\n\nconst bucket = new aws.s3.Bucket(\"assets\", {\n    versioning: { enabled: true },\n    serverSideEncryptionConfiguration: {\n        rule: { applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" } },\n    },\n});\n\nconst db = new aws.rds.Instance(\"db\", {\n    engine: \"postgres\",\n    instanceClass: cfg.require(\"dbInstanceClass\"),\n    multiAz: cfg.getBoolean(\"dbMultiAz\") ?? false,\n    deletionProtection: true,\n    backupRetentionPeriod: 7,\n    publiclyAccessible: false,\n});\n\nconst dbSecret = new pulumi.Config().getSecret(\"dbPassword\");\n\nexport const bucketName = bucket.bucket;\nexport const dbEndpoint = db.address;\n```\n\nResources exist with flat URNs like:\n`urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets`\n\n## 2. After: ComponentResource (`webApp.ts`)\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nexport interface WebAppArgs {\n    environment: \"dev\" | \"prod\";\n    dbInstanceClass: pulumi.Input<string>;\n    dbMultiAz?: boolean;\n    dbPassword: pulumi.Output<string>;\n}\n\nexport class WebApp extends pulumi.ComponentResource {\n    public readonly bucketName: pulumi.Output<string>;\n    public readonly dbEndpoint: pulumi.Output<string>;\n\n    constructor(name: string, args: WebAppArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"myorg:web:WebApp\", name, {}, opts);\n\n        // \u2705 Aliases preserve the ORIGINAL flat URNs \u2014 no replacement\n        const bucket = new aws.s3.Bucket(\"assets\", {\n            versioning: { enabled: true },\n            serverSideEncryptionConfiguration: {\n                rule: { applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" } },\n            },\n        }, { parent: this, aliases: [{ name: \"assets\" }] }); // old URN: root-level \"assets\"\n\n        const db = new aws.rds.Instance(\"db\", {\n            engine: \"postgres\",\n            instanceClass: args.dbInstanceClass,\n            multiAz: args.dbMultiAz,\n            deletionProtection: true,\n            backupRetentionPeriod: 7,\n            publiclyAccessible: false,\n            password: args.dbPassword, // secret via ConfigSecret\n        }, { parent: this, aliases: [{ name: \"db\" }] });\n\n        this.bucketName = bucket.bucket;\n        this.dbEndpoint = db.address;\n        this.registerOutputs();\n    }\n}\n```\n\n**Alias semantics:** `aliases: [{ name: \"assets\" }]` resolves relative to the component's *parent* URN. The old flat resources had no parent type prefix, so the alias must match the **legacy root-level URN**. If the simple form doesn't match, use explicit URN strings:\n\n```ts\naliases: [\"urn:pulumi:dev::app::aws:s3/bucket:Bucket::assets\"]\n```\n\n(Safest: run `pulumi stack export`, grab each old URN, and paste exact URNs.)\n\n## 3. New `index.ts`\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport { WebApp } from \"./webApp\";\n\nconst cfg = new pulumi.Config();\nconst env = pulumi.getStack() as \"dev\" | \"prod\"; // dev.yaml / prod.yaml\n\nconst app = new WebApp(\"app\", {\n    environment: env,\n    dbInstanceClass: cfg.require(\"dbInstanceClass\"),\n    dbMultiAz: cfg.getBoolean(\"dbMultiAz\"),\n    dbPassword: cfg.getSecret(\"dbPassword\")!, // Pulumi secrets, never in Git\n});\n\nexport const bucketName = app.bucketName;\nexport const dbEndpoint = app.dbEndpoint;\n```\n\n## 4. Verify no replacement\n\n```bash\npulumi preview\n```\n\nExpected output \u2014 `+1` (the component itself, which is stateless metadata), `~` or nothing for children, **no `replaces`**:\n\n```\n     Type                       Name        Plan\n +   pulumi:pulumi:Stack        app-dev     create\n +   \u2514\u2500 myorg:web:WebApp        app         create     \u2190 component only\n```\n\nIf you see `replaces` on children, your alias URNs don't match the exported state \u2014 fix the alias strings and re-preview before `up`.\n\n## Notes\n\n- **One-time migration**: after the first successful `pulumi up` with aliases, you can leave them in place (harmless) or remove them in a later update.\n- **Env isolation**: dev/prod are separate stacks with separate config files; the alias URNs include the stack name, so aliases must be per-stack correct (using `[{ name: ... }]` handles this automatically \u2014 a reason to prefer it over hardcoded URNs).\n- **Secrets**: `dbPassword` in `dev.yaml`/`prod.yaml` via `pulumi config set --secret dbPassword` \u2014 satisfies \"never plaintext in Git\".",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nz2_0aql/index.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nz2_0aql/webApp.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nz2_0aql/index.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nz2_0aql/generated_3.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nz2_0aql/generated_0.txt"
+  ]
+}
