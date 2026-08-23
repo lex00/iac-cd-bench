@@ -1,0 +1,30 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "ace or model_output.md\n____________ ERROR at setup of test_q3_secret_propagates_to_export _____________\nE   Failed: no parseable answers.json found in workspace or model_output.md\n_______________ ERROR at setup of test_q4_delete_before_replace ________________\nE   Failed: no parseable answers.json found in workspace or model_output.md\n_________________ ERROR at setup of test_q5_stack_config_wins __________________\nE   Failed: no parseable answers.json found in workspace or model_output.md\n_____________ ERROR at setup of test_q6_outputs_unknown_at_preview _____________\nE   Failed: no parseable answers.json found in workspace or model_output.md\n_____________ ERROR at setup of test_q7_fstring_prints_output_repr _____________\nE   Failed: no parseable answers.json found in workspace or model_output.md\n=========================== short test summary info ============================\nERROR ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q1_protect_blocks_destroy\nERROR ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q2_logical_rename_replaces\nERROR ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q3_secret_propagates_to_export\nERROR ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q4_delete_before_replace\nERROR ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q5_stack_config_wins\nERROR ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q6_outputs_unknown_at_preview\nERROR ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q7_fstring_prints_output_repr\n============================== 7 errors in 0.01s ===============================\n",
+      "passed_count": 0,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1829,
+    "output": 109
+  },
+  "content": "{\n  \"q1\": {\n    \"completes\": false,\n    \"blocking_resource\": \"artifacts\"\n  },\n  \"q2\": \"replace\",\n  \"q3\": \"masked\",\n  \"q4\": \"delete-then-create\",\n  \"q5\": {\n    \"value\": 4,\n    \"changes_if_removed\": true\n  },\n  \"q6\": \"unknown\",\n  \"q7\": \"output-repr\"\n}"
+}

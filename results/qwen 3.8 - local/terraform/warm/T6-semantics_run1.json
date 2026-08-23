@@ -1,0 +1,30 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mInitializing provider plugins found in the configuration...\u001b[0m\n- Finding hashicorp/aws versions matching \"~> 5.0\"...\n- Installing hashicorp/aws v5.100.0...\n- Installed hashicorp/aws v5.100.0 (signed by HashiCorp)\n\n\n\nTerraform has created a lock file \u001b[1m.terraform.lock.hcl\u001b[0m to record the provider\nselections it made above. Include this file in your version control repository\nso that Terraform can guarantee to make the same selections by default when\nyou run \"terraform init\" in the fut\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "presses_remote_drift PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place FAILED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q7_destroy_blocked_by_prevent_destroy PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q1: expected error, got 'replace'\n    assert 'error' in 'replace'\n     +  where 'replace' = _norm('replace')\n     +    where 'replace' = <built-in method get of dict object at 0x1075ee680>('q1', '')\n     +      where <built-in method get of dict object at 0x1075ee680> = {'q1': 'replace', 'q2': ['aws_subnet.private[2]'], 'q3': 'destroy-and-recreate-all', 'q4': 'no-change', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py:44: AssertionError: q1: expected error, got 'replace'\nE   AssertionError: q6: expected update-in-place, got 'replace'\n    assert 'update' in 'replace'\n     +  where 'replace' = _norm('replace')\n     +    where 'replace' = <built-in method get of dict object at 0x1075ee680>('q6', '')\n     +      where <built-in method get of dict object at 0x1075ee680> = {'q1': 'replace', 'q2': ['aws_subnet.private[2]'], 'q3': 'destroy-and-recreate-all', 'q4': 'no-change', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py:78: AssertionError: q6: expected update-in-place, got 'replace'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q1_prevent_destroy_errors\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place\n========================= 2 failed, 5 passed in 0.01s ==========================\n",
+      "passed_count": 5,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1767,
+    "output": 107
+  },
+  "content": "```json\n{\n  \"q1\": \"replace\",\n  \"q2\": [\"aws_subnet.private[2]\"],\n  \"q3\": \"destroy-and-recreate-all\",\n  \"q4\": \"no-change\",\n  \"q5\": \"no-change\",\n  \"q6\": \"replace\",\n  \"q7\": {\n    \"completes\": false,\n    \"blocking_resource\": \"aws_s3_bucket.artifacts\"\n  }\n}\n```"
+}
