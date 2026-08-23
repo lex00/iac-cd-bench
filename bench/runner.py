@@ -335,9 +335,13 @@ class OpenAICompatAdapter(ModelAdapter):
             timeout = 300
         elif "glm" in self.model.lower():
             # GLM reasoning burns the whole budget on long IaC outputs;
-            # disable thinking unless explicitly requested
+            # disable thinking unless explicitly requested. When an effort IS
+            # requested, enable thinking and forward the level (GLM-5.3
+            # supports low/high/max via reasoning_effort).
             payload["temperature"] = 0
             if self.reasoning_effort and self.reasoning_effort != "none":
+                payload["thinking"] = {"type": "enabled"}
+                payload["reasoning_effort"] = self.reasoning_effort
                 payload["max_tokens"] = 32768  # room for thinking + answer
             else:
                 payload["thinking"] = {"type": "disabled"}
@@ -498,6 +502,9 @@ def main() -> None:
     parser.add_argument("--api-key", default=None, help="API key (defaults to env ANTHROPIC_API_KEY)")
     parser.add_argument("--reasoning-effort", default=None,
                         help="Reasoning effort for reasoning models (e.g. none, low, high, max)")
+    parser.add_argument("--results-tag", default=None,
+                        help="Suffix tag for the results directory (e.g. 'low' -> results/<model>-low/). "
+                             "Prevents re-runs with different settings from overwriting prior runs.")
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -551,6 +558,8 @@ def main() -> None:
 
             # Write results
             model_name = adapter.name.replace("/", "-")
+            if args.results_tag:
+                model_name = f"{model_name}-{args.results_tag}"
             result_dir = RESULTS_DIR / model_name / stack / args.condition
             result_dir.mkdir(parents=True, exist_ok=True)
             for r in results:
