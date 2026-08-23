@@ -210,12 +210,14 @@ class AnthropicAdapter(ModelAdapter):
         }
 
         # Opus 5.x and Opus 4.8 use adaptive thinking with output_config.effort
-        # (4.8 rejects legacy budget_tokens with a 400 pointing at adaptive)
+        # (4.8 rejects legacy budget_tokens with a 400 pointing at adaptive).
+        # 900s read: max-effort 16k-token generations can exceed 600s non-streaming
+        # (observed ReadTimeout loops on pulumi-typescript T3).
         if self.model.startswith("claude-opus-5") or self.model == "claude-opus-4-8":
             if self.reasoning_effort and self.reasoning_effort != "none":
                 payload["thinking"] = {"type": "adaptive"}
                 payload["output_config"] = {"effort": self.reasoning_effort}
-                timeout = 600
+                timeout = 900
             else:
                 timeout = 120
         # Older models with extended thinking (opus 4.x, sonnet 4.x)
