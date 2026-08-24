@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 653
+  },
+  "content": "Here are the review findings based on the described Crossplane claim/composition changes.\n\n## Findings\n\n### 1. Dropping bucket versioning violates the canonical spec\n**Severity: High**\n\nThe canonical scenario explicitly requires the application S3 bucket to be **versioned** in both dev and prod:\n\n- Dev: \u201cversioned, encryption\u201d\n- Prod: \u201cversioned, encryption, cross-region replication \u2026\u201d\n- Acceptance criteria #1: \u201c**Bucket: versioning enabled** \u2026\u201d\n\nIf this diff removes bucket versioning from the composed bucket resource, the resulting infrastructure no longer satisfies the required baseline. In prod, this is especially risky because replication setups commonly depend on versioning being enabled.\n\n**Recommendation:** Restore explicit bucket versioning in the composition for all environments.\n\n---\n\n### 2. Provider-wide `deletionPolicy: Delete` is unsafe for stateful resources\n**Severity: High**\n\nApplying `deletionPolicy: Delete` provider-wide means that claim/composite deletion will cascade into actual cloud resource deletion unless each resource overrides it. That is dangerous for persistent resources in this stack, especially:\n\n- **RDS** instance\n- **S3** bucket and contents\n- potentially secrets and IAM resources\n\nThis conflicts with the durability expectations implied by the spec, particularly for production data. It also increases the blast radius of mistakes during claim deletion, composition updates, or environment teardown.\n\nWhile `Delete` may be acceptable for some ephemeral resources, making it the default across the composition is too broad for a stack that includes persistent data stores.\n\n**Recommendation:**  \nUse resource-specific deletion policies instead of a provider-wide default. At minimum, consider `Orphan` or equivalent protection for stateful resources like RDS and S3, and only use `Delete` on clearly disposable resources.\n\n---\n\n### 3. `deletionPolicy: Delete` increases risk of violating RDS protection expectations\n**Severity: Medium**\n\nAcceptance criteria require:\n\n- **deletion protection on**\n- backup retention >= 7 days\n- not publicly accessible\n\nEven if the RDS managed resource still has deletion protection enabled at the cloud-provider level, setting Crossplane deletion behavior to `Delete` creates operational tension:\n\n- Crossplane will attempt to delete the DB on claim/composite removal.\n- If deletion protection blocks it, teardown may hang/fail.\n- If deletion protection is not consistently enforced everywhere, the DB could be removed unexpectedly.\n\nThis makes lifecycle behavior less predictable and easier to misconfigure over time.\n\n**Recommendation:** Align lifecycle semantics explicitly:\n- keep deletion protection enabled on RDS,\n- avoid broad `Delete` defaults,\n- define intentional retention behavior for database resources.\n\n---\n\n## Summary\n\nThis diff appears to introduce two material problems:\n\n1. **Bucket versioning removal** directly breaks the stated requirements.\n2. **Provider-wide `deletionPolicy: Delete`** is too aggressive for a composition that manages persistent data resources.\n\nIf you want, I can also turn this into a PR-style review comment set with suggested remediation text."
+}

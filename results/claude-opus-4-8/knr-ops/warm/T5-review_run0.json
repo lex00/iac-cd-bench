@@ -1,0 +1,30 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 1485
+  },
+  "content": "I'll review this PR diff for security issues. Note: I'm working from the diff description in the task, since the actual rendered diff text isn't included in the message. Let me analyze each identified change against the canonical spec's acceptance criteria.\n\n## Security Review Summary\n\n| # | Issue | Severity |\n|---|-------|----------|\n| 1 | S3 bucket policy grants public read | \ud83d\udd34 **CRITICAL** |\n| 2 | Plaintext DB password in deployment env vars | \ud83d\udd34 **CRITICAL** |\n| 3 | Missing resource limits on containers | \ud83d\udfe1 **WARNING** |\n| 4 | RDS instance class change | \ud83d\udfe2 **INFO** (no issue) |\n\n---\n\n## \ud83d\udd34 CRITICAL \u2014 Block merge\n\n### 1. S3 bucket policy grants public read access\n**Violates Acceptance Criteria #1** (\"no public access\").\n\n- A `Principal: \"*\"` with `s3:GetObject` (or a public-read ACL/`BlockPublicPolicy: false`) exposes application assets to the internet. This is a common data-exposure vector even for \"non-sensitive\" asset buckets (enables enumeration, cost abuse via egress, and accidental exposure of anything mistakenly uploaded).\n\n**Required change:**\n- Remove the public `Principal: \"*\"` statement.\n- Keep/enforce S3 Public Access Block (`BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, `RestrictPublicBuckets` all `true`).\n- If public asset delivery is genuinely required, serve via CloudFront with an Origin Access Control (OAC) and keep the bucket private \u2014 this matches the spec's HTTPS/CloudFront exposure model.\n\n### 2. Plaintext DB password in deployment env vars\n**Violates Acceptance Criteria #3** (\"Secret never stored in plaintext in Git\").\n\n- The credential is committed to Git in cleartext. Git history is permanent, so this must be treated as **compromised** \u2014 the password needs rotation, not just removal from the current revision.\n\n**Required change:**\n- Remove the plaintext value from the manifest.\n- Use the stack-native mechanism for knr-ops: **SOPS-encrypted secret** decrypted by Flux (`sops` decryption on the Kustomization).\n- Reference via `secretKeyRef` / `envFrom` a Secret, not an inline `value:`.\n- **Rotate the exposed credential** in RDS after merge, since it has already leaked into history.\n\n---\n\n## \ud83d\udfe1 WARNING \u2014 Should fix before merge\n\n### 3. Missing resource limits on containers\nNot a direct acceptance-criteria item, but a real operational-security concern:\n\n- No `resources.limits` allows a single pod to consume node CPU/memory (noisy-neighbor / DoS risk, resource exhaustion). Combined with the shared node groups in the spec, this can take down co-located workloads.\n\n**Required change:**\n- Add `resources.requests` and `resources.limits` (CPU + memory) to each container.\n- Consider these belong in `base/` with env-specific overrides in overlays (dev smaller, prod larger) to stay idiomatic.\n\n---\n\n## \ud83d\udfe2 INFO \u2014 No action\n\n### 4. RDS instance class change\n- Sizing change only; consistent with dev/prod differentiation via overlays. No security impact **provided** the following spec requirements remain intact (verify they weren't inadvertently altered): deletion protection on, backup retention \u2265 7 days, `PubliclyAccessible: false`, encryption enabled (prod). If the diff only touches instance class, this is fine.\n\n---\n\n## Merge recommendation: **REQUEST CHANGES / BLOCK**\n\nTwo critical data-exposure issues (public S3, plaintext secret) must be resolved and the leaked credential rotated before this can merge. The resource-limits gap should be addressed in the same PR to avoid a follow-up.\n\n---\n\n### Caveat on this review\nI based this on the **summary of changes provided** in the task, not the literal diff hunks (they weren't pasted into the message). If you share the actual diff text, I can:\n- Confirm the exact S3 policy statement / ACL / public-access-block settings,\n- Verify the RDS diff didn't silently flip `PubliclyAccessible`, disable encryption, or drop deletion protection,\n- Check whether the secret is referenced anywhere else that also needs cleanup.",
+  "regraded_current_harness": true
+}

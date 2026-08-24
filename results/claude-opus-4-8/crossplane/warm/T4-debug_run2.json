@@ -1,0 +1,35 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 4 resources found in 4 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 4\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1854,
+    "output": 1703
+  },
+  "content": "I'll analyze the defects and fix both files.\n\n## Analysis\n\n**Defect 1 \u2014 Wrong `fromFieldPath`:** The patch references `spec.parameters.storageClass`, but the XRD defines `spec.instanceClass` (not `spec.parameters.instanceClass`, and not `storageClass`). Also the `String Format` transform expects a suffix (e.g. `medium`) to produce `db.t3.medium`, but the XRD default is already the full `db.t3.medium`. I'll align the field path and transform so they're consistent.\n\n**Defect 2 \u2014 Missing `ReadinessChecks`:** With `readiness: {}`, Crossplane defaults to `MatchCondition Ready=True` on the managed resource \u2014 but for upbound provider RDS instances, the correct approach is an explicit readiness check confirming the resource condition. The empty block leaves it ambiguous; we make it explicit.\n\nHere are the corrected files.\n\n## composition.yaml\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n            # Acceptance criteria: RDS hardening\n            deletionProtection: true\n            backupRetentionPeriod: 7\n            publiclyAccessible: false\n            storageEncrypted: true\n          providerConfigRef:\n            name: default\n      patches:\n        # FIX (Defect 1): reference the real XRD field spec.instanceClass.\n        # The XRD default is already the full value \"db.t3.medium\",\n        # so pass it through directly with no Format transform.\n        - fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n\n        - fromFieldPath: spec.deletionProtection\n          toFieldPath: spec.forProvider.deletionProtection\n      # FIX (Defect 2): explicit ReadinessCheck so the Composition can\n      # actually reach Ready. The MR is Ready when its Ready condition is True.\n      readiness:\n        policy: MatchCondition\n        matchCondition:\n          type: Ready\n          status: \"True\"\n```\n\n## xrd.yaml\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  names:\n    kind: XAWSWebService\n    plural: xawswebservices\n  claimNames:\n    kind: AWSWebService\n    plural: awswebservices\n  versions:\n    - name: v1alpha1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                instanceClass:\n                  type: string\n                  default: db.t3.medium\n                deletionProtection:\n                  type: boolean\n                  default: true\n              required:\n                - instanceClass\n```\n\n## Summary of fixes\n\n| # | Defect | Fix |\n|---|--------|-----|\n| 1 | `fromFieldPath: spec.parameters.storageClass` \u2014 non-existent field, plus a `Format` transform that would double-prefix `db.t3.` | Changed to `fromFieldPath: spec.instanceClass` (the actual XRD field) and removed the `String/Format` transform, since the XRD already supplies the full `db.t3.medium` value |\n| 2 | `readiness: {}` \u2014 no readiness definition, so the Composition never settled to Ready | Added an explicit `readiness.policy: MatchCondition` checking the MR's `Ready=True` condition |\n\n### Notes on correctness\n- **Transform mismatch was a hidden second half of Defect 1.** Even if you'd only \"fixed\" the path to point at `instanceClass`, the `Format: \"db.t3.%s\"` transform would have produced `db.t3.db.t3.medium`. Removing the transform is required for the value to be valid.\n- I also added `names.kind`/`names.plural` to the XRD (required fields that were missing in the seed) and the RDS hardening fields (`deletionProtection`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false`, `storageEncrypted`) to satisfy acceptance criterion #2 \u2014 otherwise the resource would provision but violate the spec.\n\n### Verify\n```bash\nkubectl apply -f xrd.yaml\nkubectl apply -f composition.yaml\nkubectl get composite -o wide          # SYNCED=True, READY=True expected\nkubectl describe instance <name>       # confirm Ready condition flips True\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-bz4_47md/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-bz4_47md/generated_1.yaml"
+  ],
+  "regraded_current_harness": true
+}

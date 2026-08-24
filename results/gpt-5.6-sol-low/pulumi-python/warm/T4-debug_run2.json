@@ -1,0 +1,35 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.01s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1005,
+    "output": 1443
+  },
+  "content": "The shown `.apply()` expression does **not** return `None`; Pulumi Python\u2019s `Output.apply()` returns another `Output`. However, using the bucket ARN to construct an S3 HTTPS URL is incorrect. Use the bucket\u2019s regional domain name with `Output.format()` instead.\n\n### `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\n\nenv = config.require(\"env\")\nif env not in (\"dev\", \"prod\"):\n    raise pulumi.ConfigError(\"env must be either 'dev' or 'prod'\")\n\n# require_secret returns an Output[str] marked as secret. It can be passed\n# directly to resource inputs and remains encrypted in Pulumi state.\ndb_password = config.require_secret(\"dbPassword\")\n\nis_prod = env == \"prod\"\n\n# S3 bucket\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(\n        enabled=True,\n    ),\n    server_side_encryption_configuration=(\n        aws.s3.BucketServerSideEncryptionConfigurationArgs(\n            rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n                apply_server_side_encryption_by_default=(\n                    aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                        sse_algorithm=\"AES256\",\n                    )\n                ),\n                bucket_key_enabled=False,\n            ),\n        )\n    ),\n    tags={\n        \"Environment\": env,\n        \"Project\": \"myapp\",\n    },\n)\n\nbucket_public_access = aws.s3.BucketPublicAccessBlock(\n    \"app-bucket-public-access\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# Output.format returns Output[str]. Unlike the original expression, this uses\n# the bucket's DNS name rather than incorrectly embedding an ARN in a URL.\nbucket_url = pulumi.Output.format(\n    \"https://{0}\",\n    bucket.bucket_regional_domain_name,\n)\n\n# RDS PostgreSQL\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.medium\" if is_prod else \"db.t3.micro\",\n    engine=\"postgres\",\n    engine_version=\"16\",\n    allocated_storage=20,\n    storage_encrypted=True,\n    multi_az=is_prod,\n    db_name=\"appdb\",\n    username=\"app_user\",\n    password=db_password,\n    publicly_accessible=False,\n    backup_retention_period=7,\n    deletion_protection=True,\n    skip_final_snapshot=False,\n    final_snapshot_identifier=f\"myapp-{env}-final\",\n    tags={\n        \"Environment\": env,\n        \"Project\": \"myapp\",\n    },\n)\n\n# Secret propagation is preserved: because db_password is secret, this entire\n# formatted Output is also secret.\ndb_connection_string = pulumi.Output.format(\n    \"postgresql://app_user:{0}@{1}/appdb\",\n    db_password,\n    db.endpoint,\n)\n\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"bucketName\", bucket.id)\npulumi.export(\"dbEndpoint\", db.endpoint)\npulumi.export(\"dbConnectionString\", db_connection_string)\n```\n\n### Configure independent stacks\n\nUse Pulumi stacks for dev/prod isolation:\n\n```bash\npulumi stack init dev\npulumi config set env dev\npulumi config set aws:region us-east-1\npulumi config set --secret dbPassword 'DEV_PASSWORD'\n\npulumi stack init prod\npulumi config set env prod\npulumi config set aws:region us-east-1\npulumi config set --secret dbPassword 'PROD_PASSWORD'\n```\n\nThis produces separate `Pulumi.dev.yaml` and `Pulumi.prod.yaml` files. The password values in those files are encrypted ciphertext and can safely be committed, assuming the stack\u2019s secrets provider is managed appropriately.\n\nThe essential fixes are:\n\n```python\ndb_password = config.require_secret(\"dbPassword\")\n```\n\nand:\n\n```python\nbucket_url = pulumi.Output.format(\n    \"https://{0}\",\n    bucket.bucket_regional_domain_name,\n)\n```\n\nThe seed repository still does not define the EKS cluster, IAM service-account integration, HTTPS/CloudFront resources, or production cross-region S3 replication from the broader canonical scenario; those are separate missing-resource issues rather than the secret/`Output` failure described here.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gja49isc/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gja49isc/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gja49isc/Pulumi.prod.yaml"
+  ]
+}

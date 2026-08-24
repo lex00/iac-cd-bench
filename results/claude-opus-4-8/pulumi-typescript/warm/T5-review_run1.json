@@ -1,0 +1,35 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 1005
+  },
+  "content": "I'll help you review a Pulumi preview JSON output for security issues. However, I don't see the actual JSON output in your message\u2014you've provided the scenario specification but not the preview JSON to review.\n\nPlease paste the Pulumi preview JSON (from `pulumi preview --json`) and I'll analyze it for the three issue categories you mentioned:\n\n1. **Secrets in plaintext outputs**\n2. **Replacement of stateful resources**\n3. **Missing `protect` flag**\n\n## What I'll Look For\n\nTo help you prepare, here's what my review will target based on your acceptance criteria:\n\n### 1. Secrets in plaintext outputs\n```json\n// RED FLAGS in the JSON:\n\"outputs\": {\n  \"dbConnectionString\": \"postgresql://user:pass@...\"  // plaintext!\n}\n// vs. properly secret-wrapped:\n\"dbConnectionString\": { \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", ... }\n```\n- Check `steps[].newState.outputs` and top-level `outputs`\n- The signature `4dabf18193072939515e22adb298388d` marks a properly encrypted secret\n- Watch for RDS passwords, connection strings, IAM access keys leaking into non-secret outputs\n\n### 2. Replacement of stateful resources\n```json\n\"steps\": [\n  {\n    \"op\": \"replace\",              // or \"create-replacement\" / \"delete-replaced\"\n    \"urn\": \"...:aws:rds/instance:Instance...\",\n    \"detailedDiff\": { ... },\n    \"replaceReasons\": [ \"...\" ]   // which property forces replacement\n  }\n]\n```\n- **Critical for**: RDS instances, S3 buckets, EBS/persistent volumes\n- I'll flag any `op: \"replace\"` on `aws:rds/instance`, `aws:s3/bucket`, or stateful stores\n- I'll identify the triggering property (e.g., `engineVersion`, `availabilityZone`, `bucket` name change)\n\n### 3. Missing protect flag\n```json\n\"newState\": {\n  \"protect\": true    // should be present on stateful/prod resources\n}\n```\n- I'll cross-check RDS, S3, and prod resources for `protect: true`\n- This ties to your **AC #2** (RDS deletion protection) and **AC #7** (prod isolation)\n\n### Bonus checks tied to your spec\n- **AC #1/#2**: bucket versioning/encryption + RDS `deletionProtection`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false` in the diff\n- **AC #4**: IAM wildcard actions on prod\n- **AC #7**: whether the preview is scoped to a single stack (dev vs prod)\n\n---\n\n**Please paste the JSON** (redact any real secret values with `REDACTED` if needed\u2014though if they're already plaintext in the output, that itself is finding #1). If it's large, you can share the relevant `steps` array and `outputs` sections.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-t6y89xhr/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-t6y89xhr/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-t6y89xhr/generated_2.json"
+  ],
+  "regraded_current_harness": true
+}

@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 909
+  },
+  "content": "1. **Which property triggered the replace?**  \n   The one Pulumi marks as **forcing replacement** in the preview for the RDS resource. In practice, it will be an input on the DB that the AWS provider treats as immutable. Common examples for `aws.rds.Instance` are things like:\n\n   - `name` / initial DB name\n   - `username`\n   - `storageEncrypted`\n   - some networking/subnet-related fields\n   - certain engine/version/class changes, depending on AWS behavior\n\n   In the preview, look for the field annotated with something like **\u201creplace\u201d** or **\u201cforces replacement\u201d**. That exact field is the trigger.\n\n2. **What does `pulumi up --target` skip?**  \n   It skips **unrelated resources** outside the target set.\n\n   More specifically:\n\n   - Pulumi updates the targeted resource(s)\n   - It includes **dependencies required** for those targets\n   - It **does not** update everything else in the stack\n   - It also generally skips **dependents** of the target unless you target them too\n\n   So `--target` is a partial update, not a full reconciliation of the whole stack.\n\n3. **How does Pulumi handle secrets in outputs?**  \n   Pulumi tracks secrets as **secret-typed values**.\n\n   That means:\n\n   - secret outputs are **redacted** in CLI output as `[secret]`\n   - they are stored in state **encrypted** using the stack\u2019s secrets provider\n   - if you build a new output from a secret, the result is usually **tainted as secret too**\n\n   Example: if your DB connection string uses a secret password, the exported connection string output will also be treated as a secret.\n\nIf you want, I can also show what this looks like in a real Pulumi preview diff for an `aws.rds.Instance`."
+}

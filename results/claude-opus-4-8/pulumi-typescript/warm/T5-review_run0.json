@@ -1,0 +1,35 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmphyt6u3q0/generated_0.ts(2,14): error TS2451: Cannot redeclare block-scoped variable 'dbUrl'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmphyt6u3q0/generated_0.ts(2,36): error TS2304: Cannot find name 'user'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmphyt6u3q0/generated_0.ts(2,44): error TS2304: Cannot find name 'password'.\n../../../../../../../var/folders/9k/7l8wf7fn55z"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 1866
+  },
+  "content": "# Pulumi Preview JSON Security Review\n\nTo perform this review, I need you to **paste the Pulumi preview JSON output**. Run one of these and share the result:\n\n```bash\npulumi preview --json > preview.json\n# or\npulumi preview --json --diff\n```\n\nIn the meantime, here is exactly **what I will check** and **how to read the findings**, so you know what to look for even before I get the file.\n\n---\n\n## What I Look For\n\n### 1. Secrets in Plaintext Outputs\n\nIn the preview JSON, I scan `steps[].newState.outputs` and `.inputs` for:\n\n| Signal | Meaning |\n|---|---|\n| `\"secret\": true` wrapper | \u2705 Good \u2014 value is encrypted in state |\n| Raw string where a secret belongs (DB connection string, password, token) | \u274c **Finding** \u2014 plaintext leak |\n| `additionalSecretOutputs` missing on a resource emitting credentials | \u26a0\ufe0f Warning |\n\n**Common leak sources:**\n- `rds.Instance.password` set from `config.get()` instead of `config.getSecret()`\n- Connection string built via string interpolation \u2192 loses `secret` taint\n- `pulumi.interpolate` / `.apply()` that returns an unwrapped value into a stack output\n\n```typescript\n// \u274c BAD \u2014 plaintext in output\nexport const dbUrl = `postgres://${user}:${password}@${host}/db`;\n\n// \u2705 GOOD \u2014 preserves secret taint\nexport const dbUrl = pulumi.secret(\n  pulumi.interpolate`postgres://${user}:${dbPassword}@${host}/db`\n);\n```\nIn JSON, the good version shows `\"dbUrl\": { \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", \"value\": \"...\" }` (the ciphertext sentinel).\n\n---\n\n### 2. Replacement of Stateful Resources\n\nI scan for `steps[].op == \"replace\"` or `\"delete-replaced\"` / `\"create-replacement\"` and cross-reference the resource `type`:\n\n| Resource type | Replacement = |\n|---|---|\n| `aws:rds/instance:Instance` | \u274c **CRITICAL** \u2014 data loss (per AC #2) |\n| `aws:s3/bucket:Bucket` | \u274c **CRITICAL** \u2014 asset loss (per AC #1) |\n| `aws:eks/cluster` node groups | \u26a0\ufe0f acceptable if rolling |\n| ALB / listener / CloudFront | \u2705 usually fine (stateless) |\n\nI also inspect `detailedDiff` for **which property forced replacement** (look for `\"kind\": \"UPDATE_REPLACE\"` / `\"ADD_REPLACE\"`). Typical culprits:\n- RDS: `availabilityZone`, `dbSubnetGroupName`, `engineVersion` (major), `storageEncrypted` toggle\n- S3: `bucket` (name change) \u2192 forces new bucket\n\n---\n\n### 3. Missing `protect` Flag\n\nI check each stateful resource's `newState` for the `protect` field:\n\n```json\n\"newState\": {\n  \"type\": \"aws:rds/instance:Instance\",\n  \"protect\": true   // \u2190 must be present for prod RDS/S3\n}\n```\n\nAgainst the spec:\n\n| Resource | Expected in prod |\n|---|---|\n| RDS PostgreSQL | `protect: true` **AND** `deletionProtection: true` (AC #2) |\n| S3 assets bucket | `protect: true` (versioned data) |\n| RDS in dev | `protect` optional; `deletionProtection` may be off |\n\n```typescript\nnew aws.rds.Instance(\"app-db\", {\n  deletionProtection: isProd,\n  // ...\n}, { protect: isProd });   // \u2190 the flag I verify in JSON\n```\n\n---\n\n## Additional Checks I'll Apply (from the spec)\n\n- **RDS**: `backupRetentionPeriod >= 7`, `publiclyAccessible: false`, `storageEncrypted: true` (prod)\n- **S3**: `versioning.enabled`, SSE config present, public access block\n- **IAM**: no `\"Action\": \"*\"` / `\"Resource\": \"*\"` on prod policies\n- **HTTPS**: listener port 443, valid `certificateArn`\n- **Env isolation**: confirm the diff belongs to a single stack (`dev` vs `prod`), not cross-stack drift\n\n---\n\n## Report Format You'll Receive\n\n| # | Severity | Resource (URN) | Issue | Evidence (JSON path) | Fix |\n|---|---|---|---|---|---|\n| 1 | \ud83d\udd34 Critical | `...rds:app-db` | Replacement causes data loss | `steps[3].op=\"replace\"`, `detailedDiff.availabilityZone` | Use additive change / `ignoreChanges` |\n| 2 | \ud83d\udd34 Critical | stack output `dbUrl` | Plaintext secret | `outputs.dbUrl` (no sentinel) | `pulumi.secret(...)` |\n| 3 | \ud83d\udfe0 High | `...rds:app-db` | Missing `protect` | `newState.protect` absent | Add `{ protect: true }` |\n\n---\n\n**Please paste your `preview.json`** (or a redacted excerpt of the `steps` array) and I'll produce the full findings table.\n\nIf the file is large, the minimum I need is:\n- The `steps[]` array (with `op`, `type`, `detailedDiff`)\n- Any `outputs` block\n- `newState.protect` / `newState.inputs` for RDS and S3",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-uhb0dce2/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-uhb0dce2/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-uhb0dce2/generated_1.ts"
+  ],
+  "regraded_current_harness": true
+}

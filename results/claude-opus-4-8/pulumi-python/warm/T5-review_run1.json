@@ -1,0 +1,30 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1058,
+    "output": 883
+  },
+  "content": "I'll review a Pulumi preview JSON for the three specified security issues. However, I don't see the actual preview JSON in your message \u2014 the task description and canonical scenario are present, but no JSON payload to analyze.\n\nPlease paste the Pulumi preview output. You can generate it with:\n\n```bash\npulumi preview --json > preview.json\n```\n\n## What I'll check when you provide it\n\nHere's the review checklist I'll apply, so you know what to expect:\n\n### 1. Secret in plaintext outputs\n- Scan `steps[].newState.outputs` and `.inputs` for unencrypted secret values (DB connection strings, passwords, tokens).\n- Verify secrets appear as `{\"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", ...}` (Pulumi's secret signature) rather than raw strings.\n- Flag any RDS `password`, `masterPassword`, or connection string surfaced in plaintext.\n- Confirm `ConfigSecret` usage (the spec's Pulumi-native mechanism).\n\n### 2. Replacement of stateful resource\n- Look for `steps[].op == \"replace\"` or `\"replace\"` in `detailedDiff` / `replacements` arrays.\n- Cross-reference against **stateful** resources:\n  - `aws:rds/instance:Instance`\n  - `aws:s3/bucket:Bucket` (or `bucketV2`)\n- Identify which property triggers replacement (e.g., changing `engineVersion`, `availabilityZone`, `bucket` name) \u2014 these cause **data loss**.\n- Distinguish safe replacements (stateless: ALB, node groups) from dangerous ones.\n\n### 3. Missing protect flag\n- Check `newState.protect` (or `custom` resource options) on:\n  - RDS instance (must be `true` in prod)\n  - S3 bucket (must be `true` in prod)\n- Correlate with acceptance criteria: **RDS deletion protection on**, and Pulumi-level `protect: true` to guard against accidental `pulumi destroy`.\n\n### Bonus (from acceptance criteria) \u2014 will note if visible in the diff\n- Bucket: `versioning.enabled`, SSE (AES256/KMS), public access block\n- RDS: `deletionProtection`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false`\n- Which stack (`dev`/`prod`) the preview targets \u2014 severity differs by environment\n\n---\n\n**Paste the JSON and I'll produce a findings table** (Severity / Resource / Issue / Evidence / Remediation) plus the exact code/config changes.",
+  "regraded_current_harness": true
+}

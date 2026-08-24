@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 769
+  },
+  "content": "1. **After a variable flips**\n\n   Run the plan with the same workspace and environment inputs, for example:\n\n   ```bash\n   terraform workspace select prod\n   terraform plan -var-file=prod.tfvars\n   ```\n\n   Terraform refreshes the tracked resources, evaluates the new configuration, and compares it with state. The plan shows only the affected differences:\n\n   - `~` update in place\n   - `-/+` destroy and recreate when an attribute is `ForceNew`\n   - `+` create\n   - `-` destroy\n\n   For example, changing prod\u2019s RDS class from `db.t3.micro` to `db.t3.medium` would normally show:\n\n   ```text\n   ~ resource \"aws_db_instance\" \"postgres\" {\n       instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n     }\n   ```\n\n   With correctly isolated workspaces or separate state backends, changing prod variables does not modify dev.\n\n2. **If the state file is deleted**\n\n   Terraform loses its mapping between resource addresses and the existing cloud resource IDs. The next plan generally proposes creating all resources still present in configuration, even though they may already exist in AWS.\n\n   Applying that plan can:\n\n   - Fail because names or identifiers already exist\n   - Create duplicates where AWS permits them\n   - Leave the original resources unmanaged\n\n   Terraform does not automatically reconstruct state by discovering all matching infrastructure. Recovery options are:\n\n   - Restore the state from the remote backend\u2019s version/history or backup\n   - Use `terraform import` or import blocks to re-associate existing resources\n   - Avoid applying until state has been recovered\n\n   Deleting local state is less consequential when a configured remote backend contains the authoritative state; `terraform init` can retrieve it again.\n\n3. **RDS instance class change**\n\n   AWS permits most `aws_db_instance.instance_class` changes as an in-place modification, so Terraform normally shows `~`, not replacement. During apply, AWS may reboot the database and cause downtime:\n\n   - With `apply_immediately = true`, the modification is requested immediately.\n   - With `apply_immediately = false`, AWS generally schedules it for the maintenance window.\n\n   Multi-AZ can reduce disruption but does not guarantee a completely interruption-free class change. Terraform replaces the instance only if another changed property requires replacement or the particular AWS transition cannot be performed in place. Deletion protection does not block an in-place resize, but it can block a replacement\u2019s destroy step.\n\n4. **State versus configuration**\n\n   | Configuration | State |\n   |---|---|\n   | `.tf` files and variable values | Terraform\u2019s resource-tracking data |\n   | Describes the desired infrastructure | Maps Terraform addresses to real resource IDs and known attributes |\n   | Should normally be version controlled | Must be protected, locked, backed up, and usually stored remotely |\n   | Changing it expresses intent | Used with provider refresh results to calculate changes |\n   | Does not prove a resource exists | Records what Terraform manages; it is not the infrastructure itself |\n\n   In simplified terms:\n\n   ```text\n   configuration (desired)\n          vs.\n   refreshed state / provider observations (managed reality)\n          =\n   plan\n   ```\n\n   State can contain sensitive values even when marked `sensitive`, so it should be encrypted at rest and access-controlled. Marking an output sensitive only suppresses display; it does not remove the value from state."
+}

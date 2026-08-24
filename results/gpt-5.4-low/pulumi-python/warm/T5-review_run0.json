@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 634,
+    "output": 320
+  },
+  "content": "Please paste the Pulumi preview JSON, and I\u2019ll review it for:\n\n- plaintext secrets in outputs\n- replacement of stateful resources\n- missing `protect` on critical resources\n\nIf you haven\u2019t generated it yet, use something like:\n\n```bash\npulumi preview --json > preview.json\n```\n\nIf the stack uses secrets/provider data, you may also want to redact obvious sensitive values before sharing.\n\nWhat I\u2019ll check in the JSON\n1. Secret leakage\n   - outputs containing raw connection strings, passwords, access keys\n   - `ConfigSecret`/secret-marked values that appear as plain strings\n   - diff sections showing secret values inline\n\n2. Stateful replacements\n   - RDS instance, S3 bucket, EKS cluster/node groups, secrets stores\n   - any `\"replace\"`/delete-create operations on persistent resources\n   - property changes that force replacement\n\n3. Missing protection\n   - critical prod resources lacking `\"protect\": true`\n   - especially:\n     - RDS\n     - S3 bucket\n     - EKS cluster\n     - CloudFront/ACM in prod, if business-critical\n\nIf you want, you can paste either:\n- the full JSON, or\n- just the `steps`, `diagnostics`, and `resourceChanges` sections."
+}

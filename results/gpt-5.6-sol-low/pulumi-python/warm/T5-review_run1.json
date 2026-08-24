@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `pulumi`\n --> generated_0.py:1:6\n  |\n1 | opts=pulumi.ResourceOptions(protect=True)\n  |      ^^^^^^\n\nFound 1 error.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 634,
+    "output": 507
+  },
+  "content": "Please paste or upload the Pulumi preview JSON; it wasn\u2019t included in the request. **Redact actual secret values first**, while preserving field names and whether the value appears as plaintext or Pulumi\u2019s secret marker.\n\nGenerate it with:\n\n```bash\npulumi preview --stack dev --json > preview-dev.json\npulumi preview --stack prod --json > preview-prod.json\n```\n\nI\u2019ll review the `resourcePreEvent` / `resourceOutputsEvent` records for:\n\n1. **Plaintext secrets**\n   - DB connection strings, passwords, tokens, access keys, or secret-bearing URLs in `inputs` or `outputs`\n   - Values lacking Pulumi\u2019s secret signature/wrapper\n   - Expected remediation: `config.require_secret(...)`, `pulumi.Output.secret(...)`, and encrypted stack configuration\n\n2. **Stateful resource replacement**\n   - `metadata.op` values such as `replace`, `create-replacement`, or `delete-replaced`\n   - Especially RDS, S3 buckets, EKS clusters/node groups, and persistent storage\n   - I\u2019ll identify the triggering property from `detailedDiff` where available\n\n3. **Missing protection**\n   - Stateful production resources whose metadata has `protect: false` or no effective protection\n   - RDS should additionally have AWS `deletionProtection: true`\n   - S3 and RDS should generally use Pulumi resource protection in prod:\n\n```python\nopts=pulumi.ResourceOptions(protect=True)\n```\n\nA missing Pulumi `protect` flag and a missing provider-side deletion-protection setting are separate findings. Include both dev and prod previews so environment isolation and prod-specific safeguards can be assessed.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-x8ng2kd6/generated_0.py"
+  ]
+}

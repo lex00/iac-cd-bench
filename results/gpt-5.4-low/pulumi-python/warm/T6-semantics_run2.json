@@ -1,0 +1,30 @@
+{
+  "model": "gpt-5.4",
+  "task": "T6-semantics",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q1_protect_blocks_destroy PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q2_logical_rename_replaces PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q3_secret_propagates_to_export PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q4_delete_before_replace PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q5_stack_config_wins PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q6_outputs_unknown_at_preview PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q7_fstring_prints_output_repr PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1718,
+    "output": 332
+  },
+  "content": "```answers.json\n{\n  \"q1\": {\"completes\": false, \"blocking_resource\": \"artifacts\"},\n  \"q2\": \"replace\",\n  \"q3\": \"masked\",\n  \"q4\": \"delete-then-create\",\n  \"q5\": {\"value\": 4, \"changes_if_removed\": true},\n  \"q6\": \"unknown\",\n  \"q7\": \"output-repr\"\n}\n```"
+}

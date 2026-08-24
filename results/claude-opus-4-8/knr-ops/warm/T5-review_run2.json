@@ -1,0 +1,30 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 1656
+  },
+  "content": "# PR Security Review: knr-ops GitOps Changes\n\n## Summary\n\nReviewed 4 changes. Found **2 critical**, **1 warning**, **1 info**. This PR should **not merge** until the critical issues are resolved.\n\n---\n\n## Findings by Severity\n\n### \ud83d\udd34 CRITICAL #1 \u2014 Plaintext password in deployment env vars\n\n**Change:** App deployment manifest with plaintext password in `env`.\n\n**Why critical:**\n- Violates Acceptance Criterion #3: *\"Secret never stored in plaintext in Git; encrypted at rest via stack-native mechanism.\"*\n- Secrets in Git are permanent \u2014 even if removed later, they persist in commit history and any repo clones/forks.\n- Flux syncs manifests to the cluster, so the credential is exposed both in Git and as a readable env var on the pod (visible via `kubectl describe pod`, crash dumps, logs).\n\n**Required fix (knr-ops idiom):**\n```yaml\n# Encrypt with SOPS, reference via secretKeyRef\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: db-connection\n        key: password\n```\n- Store the actual secret in a **SOPS-encrypted** Kubernetes Secret manifest (`sops -e`), decrypted in-cluster by the Flux SOPS provider / `sops-age` key.\n- **Rotate the leaked credential immediately** \u2014 assume it is compromised the moment it lands in Git history. Removing the line is not enough.\n\n---\n\n### \ud83d\udd34 CRITICAL #2 \u2014 S3 bucket policy grants public read access\n\n**Change:** New S3 bucket policy allowing public read.\n\n**Why critical:**\n- Violates Acceptance Criterion #1: *\"no public access.\"*\n- The bucket holds application assets; a public-read policy (`Principal: \"*\"` with `s3:GetObject`, or disabled Block Public Access) risks data exposure and can be enumerated/scraped.\n\n**Required fix:**\n- Remove the public-read statement entirely.\n- Ensure **S3 Block Public Access** is enabled (all four settings) at bucket and/or account level.\n- If assets genuinely need public distribution, front the bucket with **CloudFront + Origin Access Control (OAC)** and keep the bucket private \u2014 this matches the spec's prod HTTPS/CloudFront topology.\n\n---\n\n### \ud83d\udfe1 WARNING \u2014 Missing resource limits on containers\n\n**Change:** Deployment containers without `resources.limits` / `requests`.\n\n**Why warning (not critical):**\n- Not a direct data-exposure issue, but a real availability/security concern: a container without limits can consume node resources, enabling **noisy-neighbor** or resource-exhaustion (DoS) conditions affecting co-located workloads.\n- Not covered by an explicit acceptance criterion, but standard hardening.\n\n**Recommended fix:**\n```yaml\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi\n```\n- Tune per environment via kustomize overlays (dev smaller, prod larger). Consider a `LimitRange` as a backstop.\n\n---\n\n### \ud83d\udd35 INFO \u2014 RDS instance class change\n\n**Change:** RDS instance class modification.\n\n**Assessment:** No security issue. Confirm before merge:\n- The change is applied in the **correct overlay** (`overlays/dev` vs `overlays/prod`) and doesn't bleed into the other env (Criterion #7 \u2014 environment isolation).\n- Sizing still aligns with spec (`db.t3.micro` dev / `db.t3.medium` prod) unless intentionally scaling.\n- Unrelated attributes untouched: `deletion_protection: on`, `backup_retention >= 7`, `publicly_accessible: false` (Criterion #2).\n\n---\n\n## Merge Decision\n\n| # | Issue | Severity | Blocks merge? |\n|---|-------|----------|---------------|\n| 1 | Plaintext DB password | \ud83d\udd34 Critical | **Yes** |\n| 2 | Public S3 bucket policy | \ud83d\udd34 Critical | **Yes** |\n| 3 | Missing resource limits | \ud83d\udfe1 Warning | Strongly recommended |\n| 4 | RDS instance class | \ud83d\udd35 Info | No (verify overlay scope) |\n\n**Verdict: REQUEST CHANGES.** Fix both criticals, rotate the exposed credential, and add resource limits before merge.\n\n### Pre-merge checklist\n- [ ] Remove public-read S3 statement; verify Block Public Access on\n- [ ] Move DB password to SOPS-encrypted Secret + `secretKeyRef`\n- [ ] **Rotate the leaked DB credential**\n- [ ] Add resource requests/limits\n- [ ] Confirm RDS change is scoped to the intended overlay only",
+  "regraded_current_harness": true
+}

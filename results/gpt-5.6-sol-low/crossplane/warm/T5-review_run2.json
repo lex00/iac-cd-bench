@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 585
+  },
+  "content": "## Review: changes requested\n\n### 1. **Blocker \u2014 Bucket versioning was removed**\n\nThis violates the canonical requirement that both dev and prod buckets are versioned.\n\nIt also breaks or prevents prod cross-region replication: S3 replication requires versioning on both the source and destination buckets. Depending on how the provider applies the change, AWS may reject the replication configuration or leave it nonfunctional.\n\n**Required fix:** restore enabled versioning for both environments, including the prod replication destination bucket.\n\n```yaml\nversioningConfiguration:\n  status: Enabled\n```\n\nKeep server-side encryption and public-access blocking unchanged.\n\n---\n\n### 2. **High \u2014 Provider-wide `deletionPolicy: Delete` is unsafe**\n\nApplying `Delete` indiscriminately means deleting a claim/XR can trigger deletion of every composed external resource, including S3 buckets and RDS instances in prod. This turns claim lifecycle operations, composition migrations, and accidental namespace deletion into destructive infrastructure operations.\n\nAdditional risks:\n\n- RDS deletion protection may cause reconciliation/deletion to remain stuck rather than providing a controlled retention workflow.\n- S3 deletion may fail when objects or historical versions remain.\n- IAM, networking, and cluster resources may be removed while retained stateful resources become inaccessible.\n- A provider-wide policy removes the ability to choose lifecycle semantics by resource criticality.\n\n**Required fix:** define deletion behavior per composed resource. Use retention semantics such as `Orphan` for production/stateful resources unless intentional destruction is explicitly part of the design. `Delete` may be reasonable for replaceable resources in dev, but should be selected through environment/composition parameters rather than globally.\n\nExample:\n\n```yaml\nspec:\n  deletionPolicy: Orphan\n```\n\nFor newer Crossplane/provider versions, also verify the configured `managementPolicies`; they can affect whether deletion of the external resource is permitted.\n\n---\n\n## Verdict\n\n**Do not merge as-is.** Restore bucket versioning and replace the provider-wide deletion policy with explicit, environment- and resource-specific lifecycle policies."
+}

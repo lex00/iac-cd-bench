@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n# Keep the existing resources/components/etc. unchanged.\npatches:\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n  - target:\n      group: database.aws.crossplane.io\n      version: v1beta1\n      kind: RDSInstance\n      name: app-db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstanceClass\n   \n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6ce_ykqu/overlays/prod: exit=0"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 796,
+    "output": 1302
+  },
+  "content": "Because the resource names and AWS CRD schemas are not included, an exact valid patch cannot be produced without inspecting the manifests under `clusters/` and `infra/`. The following is the intended prod-only structure, assuming:\n\n- Deployment: `app`\n- Crossplane RDS resource: `RDSInstance/app-db`\n- Crossplane S3 resource: `S3Bucket/app-assets`\n- A versioned destination bucket and replication IAM role already exist in the base\n\nAppend these entries to the existing `patches:` list in `overlays/prod/kustomization.yaml`, preserving its existing `resources` and other settings:\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\n# Keep the existing resources/components/etc. unchanged.\n\npatches:\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  - target:\n      group: database.aws.crossplane.io\n      version: v1beta1\n      kind: RDSInstance\n      name: app-db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstanceClass\n        value: db.t3.medium\n      - op: replace\n        path: /spec/forProvider/multiAZ\n        value: true\n\n  - target:\n      group: storage.aws.crossplane.io\n      version: v1alpha3\n      kind: S3Bucket\n      name: app-assets\n    patch: |-\n      - op: add\n        path: /spec/forProvider/replicationConfiguration\n        value:\n          role: arn:aws:iam::PROD_ACCOUNT_ID:role/app-assets-replication\n          rules:\n            - id: replicate-to-us-west-2\n              status: Enabled\n              priority: 1\n              destination:\n                bucket: arn:aws:s3:::app-assets-us-west-2\n                storageClass: STANDARD\n```\n\nReplace the names, API groups/versions, account ID, role ARN, and destination bucket with those in the repository.\n\nS3 replication cannot be made operational merely by setting a region: the destination bucket must exist in `us-west-2`, versioning must be enabled on both buckets, and the replication role must have the required source and destination permissions. If those resources do not already exist in the base, the stated constraint of \u201cpatches only\u201d and modifying only `overlays/prod/kustomization.yaml` makes that requirement impossible\u2014Kustomize patches can modify existing resources but cannot create missing targets.\n\nNo change to `overlays/dev/kustomization.yaml` is needed, so the dev rendering remains unaffected. Validate with:\n\n```sh\nkustomize build overlays/dev  > /tmp/dev.yaml\nkustomize build overlays/prod > /tmp/prod.yaml\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6ce_ykqu/overlays/prod/kustomization.yaml"
+  ]
+}

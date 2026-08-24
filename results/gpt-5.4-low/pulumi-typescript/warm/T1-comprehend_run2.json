@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 743
+  },
+  "content": "1. **Which property triggered the replace?**  \n   In Pulumi preview, it\u2019s the **input property marked as requiring replacement**. For an RDS instance, Pulumi will usually show the exact field in the diff and annotate it as a replacement-causing change.  \n   \n   Look for something like:\n   - a `+-` on the DB resource, and\n   - a property line in the diff that says it **forces replacement** / **replace**.\n\n   So the answer is: **the specific DB property shown in the preview diff as \u201cforces replacement\u201d**.  \n   Common RDS examples include immutable fields like `username`, `name`, `storageEncrypted`, some subnet/group settings, etc.\n\n2. **What does `pulumi up --target` skip?**  \n   `--target` tells Pulumi to operate on **only the targeted resource(s)** plus any **required dependencies**. It skips:\n   - unrelated resources in the stack\n   - resources that would normally be updated in a full run\n   - dependents of the target unless they are also explicitly targeted or required\n\n   In short: **it does not do a full stack update**.\n\n3. **How does Pulumi handle secrets in outputs?**  \n   Pulumi treats secret values as **secret-tainted outputs**:\n   - in CLI output they are shown as **`[secret]`**\n   - in state they are **encrypted** using the stack\u2019s secrets provider\n   - if you combine a secret with other values, the resulting output usually remains **secret**\n\n   So secrets are **redacted in output and encrypted at rest in state**."
+}

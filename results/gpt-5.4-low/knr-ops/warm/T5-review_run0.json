@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 1011
+  },
+  "content": "Here\u2019s the security review of the PR diff, ranked by severity.\n\n## Summary\n\n### Critical\n1. **S3 bucket policy grants public read access**\n2. **Plaintext password committed in app env vars**\n\n### Warning\n3. **Containers missing resource limits**\n\n### Info / No security issue\n4. **RDS instance class change** \u2014 not a security issue by itself\n\n---\n\n# 1) Security issues found\n\n## 1. Public S3 bucket access\n**Severity: Critical**\n\nThe new bucket policy allows public read access.  \nThis violates the stated acceptance criteria:\n\n- **Bucket: no public access**\n- Bucket should be private, versioned, and encrypted\n\n### Why this is a problem\n- Anyone on the internet may be able to read bucket contents\n- Can expose application assets, internal files, build artifacts, or sensitive static content\n- Public buckets are a common source of data leaks\n- Even if the contents seem harmless now, future uploads may not be\n\n### What to change before merge\n- **Remove public read access from the bucket policy**\n- Ensure:\n  - S3 Block Public Access is enabled\n  - Bucket policy only allows required principals\n  - Access is granted via IAM roles/service accounts, not `\"Principal\": \"*\"`\n- If public delivery is needed, use **CloudFront** with controlled origin access instead of direct public bucket access\n\n---\n\n## 2. Plaintext password in deployment env vars\n**Severity: Critical**\n\nThe app deployment includes a password directly in environment variables in the manifest.\n\nThis violates the acceptance criteria:\n\n- **Secret: never stored in plaintext in Git**\n- Must use a stack-native encrypted secret mechanism\n\n### Why this is a problem\n- The secret is now exposed in Git history\n- Anyone with repo access can retrieve it\n- It may leak through:\n  - PR diffs\n  - CI logs\n  - deployment tooling\n  - kubectl manifest inspection\n- Rotation becomes urgent once merged, because exposure is effectively permanent in history unless fully rewritten\n\n### What to change before merge\n- **Remove the plaintext password from the manifest**\n- Store the secret using the approved mechanism for this stack:\n  - **SOPS-encrypted secret in knr-ops**\n  - Then reference it from Kubernetes Secret / External Secret flow\n- Update the Deployment to use:\n  - `envFrom.secretRef`\n  - or `env[].valueFrom.secretKeyRef`\n- Since the secret has already appeared in the PR, treat it as compromised:\n  - **Rotate the password before merge**\n  - Ensure old value is no longer valid\n\n---\n\n## 3. Missing container resource limits\n**Severity: Warning**\n\nThe deployment manifests lack resource limits.\n\n### Why this matters\nThis is mainly an availability / multi-tenant cluster safety issue, but it has security implications too:\n- A compromised or buggy container can consume excessive CPU/memory\n- Can cause noisy-neighbor impact\n- Increases risk of denial-of-service inside the cluster\n- Makes scheduling and capacity control weaker\n\n### What to change before merge\nAdd `resources.requests` and `resources.limits` for each container, for example:\n\n```yaml\nresources:\n  requests:\n    cpu: \"100m\"\n    memory: \"128Mi\"\n  limits:\n    cpu: \"500m\"\n    memory: \"512Mi\"\n```\n\nAlso consider:\n- Namespace `LimitRange`\n- `ResourceQuota`\n- Pod security and runtime hardening if not already present\n\n---\n\n# 2) Severity classification\n\n## Critical\n- **Public S3 bucket policy**\n- **Plaintext password in env vars / Git**\n\nThese should block merge.\n\n## Warning\n- **Missing resource limits**\n\nShould be fixed before merge if possible; at minimum, tracked immediately.\n\n## Info\n- **RDS instance class change**\n\nNo security finding from the class resize alone.\n\n---\n\n# 3) Required changes before merge\n\n## Must fix\n1. **Remove public access from the S3 bucket**\n   - No `Principal: \"*\"` read grants\n   - Enforce private access via IAM\n   - Prefer CloudFront-origin-controlled access if public content is intended\n\n2. **Remove plaintext secret from manifests**\n   - Replace with SOPS-encrypted secret workflow\n   - Reference via `secretKeyRef` / `secretRef`\n   - **Rotate the exposed password**\n\n## Should fix\n3. **Add container resource requests and limits**\n   - Prevent cluster abuse and improve resilience\n\n---\n\n# Merge recommendation\n\n**Do not merge as-is.**\n\nThe PR introduces **two critical security issues**:\n- public S3 exposure\n- plaintext credential exposure\n\nBoth violate the repo\u2019s canonical acceptance criteria and should be remediated before merge."
+}

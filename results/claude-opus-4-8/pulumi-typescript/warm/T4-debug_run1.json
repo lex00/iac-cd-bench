@@ -1,0 +1,34 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmp1cpnebd6/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmp1cpnebd6/index.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmp1cpnebd6/index.ts(20,6): error TS7006: Parameter 'arn' im"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1795,
+    "output": 1851
+  },
+  "content": "I'll fix the async misuse and incorrect `pulumi.output()` wrapping, along with the related correctness issues the defects imply.\n\n## Root Cause Analysis\n\n**Defect 1 \u2014 async misuse:** `await arn` on a `pulumi.Output` doesn't resolve the underlying value during preview (the value is unknown at preview time). Using an `async` function returns a `Promise`, not an `Output`, which breaks Pulumi's dependency tracking and crashes preview. The idiomatic fix is `.apply()`.\n\n**Defect 2 \u2014 wrong `pulumi.output()` wrapping:** Wrapping a string literal with `pulumi.output()` creates a *non-secret* Output holding a plaintext password. Secrets must come from `config.requireSecret()` so they're encrypted at rest and marked secret in state.\n\n## Fixed `index.ts`\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") || \"dev\";\nconst region = config.get(\"region\") || \"us-east-1\";\nconst isProd = env === \"prod\";\n\n// S3 Bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: { enabled: true },\n    tags: { Environment: env, Project: \"myapp\" },\n});\n\n// FIX (Defect 1): Use .apply() to transform an Output value.\n// Never `await` an Output \u2014 the value is unknown at preview time.\n// `.apply()` preserves the Output type and dependency graph.\nconst bucketUrl: pulumi.Output<string> = bucket.arn.apply(\n    (arn) => `https://s3.${region}.amazonaws.com/${arn}`,\n);\n\n// FIX (Defect 2): Source the secret from encrypted stack config.\n// `requireSecret` returns Output<string> that is marked secret (encrypted\n// at rest in state and redacted in previews). Do NOT wrap literals.\n//\n//   pulumi config set --secret dbPassword <value>\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\n// RDS Instance\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app-user\",\n    password: dbPassword,                     // Output<string> (secret) \u2014 accepted directly\n    multiAz: isProd,\n    storageEncrypted: isProd,\n    backupRetentionPeriod: 7,                  // AC #2: >= 7 days\n    deletionProtection: true,                  // AC #2: deletion protection on\n    publiclyAccessible: false,                 // AC #2: not publicly accessible\n    skipFinalSnapshot: !isProd,\n});\n\n// Outputs \u2014 these are proper Outputs, not Promises.\nexport const bucketEndpoint = bucketUrl;      // Output<string>\nexport const dbEndpoint = db.endpoint;        // Output<string>\n```\n\n## What changed and why\n\n| Item | Before | After | Reason |\n|---|---|---|---|\n| `getBucketUrl` | `async` fn + `await arn` \u2192 returns `Promise` | `bucket.arn.apply(...)` \u2192 returns `Output<string>` | `await` on an Output crashes preview; `.apply()` is the idiomatic transform that keeps dependency tracking |\n| `bucketEndpoint` export | exports a `Promise` | exports an `Output<string>` | Pulumi exports must be Outputs/plain values, not Promises |\n| `dbPassword` | `pulumi.output(\"plain-text-password\")` | `config.requireSecret(\"dbPassword\")` | Plaintext secret in Git; `requireSecret` encrypts at rest & redacts (AC #3) |\n| `deletionProtection` | `false` | `true` | AC #2 |\n| Added `backupRetentionPeriod` | missing | `7` | AC #2 |\n| Added `publiclyAccessible` | missing | `false` | AC #2 |\n| Sizing / multiAZ / encryption | hardcoded | keyed off `env` | AC #5 / prod hardening |\n\n## Key takeaway on the two defects\n\n- **`await` vs `.apply()`**: An `Output<T>` is *not* a `Promise<T>`. During `pulumi preview`, resource properties are frequently *unknown*. `.apply()` lazily runs your transform when the value is known and short-circuits during preview; `await` forces resolution that doesn't exist yet \u2192 crash.\n- **`pulumi.output(literal)`**: `pulumi.output()` only *lifts* a plain value into the Output type \u2014 it adds no secrecy and no dependency edges. For secrets, always go through `config.requireSecret()` (or `pulumi.secret()` if wrapping a computed value), never a bare literal.\n\nTo set the secret before deploy:\n\n```bash\npulumi config set env dev\npulumi config set --secret dbPassword 'super-secret-value'\n```\n\nNote: environment isolation (AC #7) is achieved via separate `Pulumi.dev.yaml` / `Pulumi.prod.yaml` stack configs \u2014 the `env`/`region`/`dbPassword` keys above live in those per-stack files, keeping dev and prod independently deployable.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nan1brhv/index.ts"
+  ],
+  "regraded_current_harness": true
+}

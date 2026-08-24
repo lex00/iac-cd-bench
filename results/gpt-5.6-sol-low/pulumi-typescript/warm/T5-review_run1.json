@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[tsc check] tsc: exit=0"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 354
+  },
+  "content": "Please provide the Pulumi preview JSON, ideally generated with:\n\n```bash\npulumi preview --json > preview.json\n```\n\nRedact account IDs, hostnames, and other identifiers if needed, but preserve:\n\n- `steps`, operation types, and replacement reasons\n- Resource URNs and types\n- `oldState` / `newState`, including `inputs` and `outputs`\n- Secret metadata/signatures\n- Resource options such as `protect`\n\nI\u2019ll review specifically for:\n\n1. **Plaintext secrets**\n   - DB connection strings, passwords, tokens, or access keys visible in outputs\n   - Values not represented as Pulumi secret envelopes\n   - Configuration that should use `config.requireSecret(...)` and `pulumi.secret(...)`\n\n2. **Stateful resource replacement**\n   - `replace`, `create-replacement`, or `delete-replaced` operations affecting RDS, S3, or other persistent resources\n   - Replacement triggered by immutable property changes\n   - Potential deletion, outage, or data-loss impact\n\n3. **Missing protection**\n   - Production RDS, S3, and other critical resources lacking:\n     ```ts\n     { protect: true }\n     ```\n   - RDS also lacking AWS-side `deletionProtection: true`\n\nI\u2019ll also check the preview against the supplied criteria: bucket encryption/versioning/public access, RDS backups and public accessibility, least-privilege IAM, EKS sizing, HTTPS configuration, and dev/prod isolation.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wrn6l5c5/generated_0.ts"
+  ]
+}

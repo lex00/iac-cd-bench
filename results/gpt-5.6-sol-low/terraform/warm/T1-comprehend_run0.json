@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 800
+  },
+  "content": "1. **Next plan after the variable flips**\n\n   Terraform evaluates the selected workspace/`tfvars` against its state and refreshed provider data. The plan shows only the resulting differences:\n\n   - `~` for attributes that can be updated in place\n   - `-/+` for resources that must be replaced\n   - `+` or `-` if the variable changes resource membership via `for_each`, `count`, or conditionals\n\n   For example, changing the RDS class from `db.t3.micro` to `db.t3.medium` would normally show:\n\n   ```text\n   ~ resource \"aws_db_instance\" \"postgres\" {\n       instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n     }\n   ```\n\n   If dev and prod use separate workspaces/state files, a prod variable change affects only the prod plan, provided the correct workspace and prod variable file are selected.\n\n2. **If the state file is deleted**\n\n   Terraform loses the mapping between configuration resource addresses and existing AWS resource IDs. The next plan generally proposes creating every configured resource:\n\n   ```text\n   Plan: N to add, 0 to change, 0 to destroy.\n   ```\n\n   It does **not** imply that the existing AWS resources were deleted. Applying such a plan may:\n\n   - Fail because names or identifiers already exist, such as an S3 bucket or RDS identifier\n   - Create duplicates where AWS permits them\n   - Cause unmanaged infrastructure and unexpected cost\n\n   Recovery should use a state backup, remote-backend recovery/versioning, or `terraform import`/import blocks to reconnect existing resources to their Terraform addresses. Deleting only local state has no effect if an intact remote backend is configured and Terraform can retrieve that state.\n\n3. **RDS instance class change**\n\n   AWS normally supports an RDS `instance_class` change as an **in-place modification**, so Terraform generally marks the DB instance with `~`, not replacement.\n\n   The AWS modification can cause downtime or a reboot/failover. Timing depends on configuration:\n\n   - `apply_immediately = true`: AWS starts the modification as soon as possible\n   - `apply_immediately = false`: AWS generally defers it to the maintenance window\n\n   Terraform waits for the RDS modification to reach the expected state. Other RDS changes\u2014such as certain engine, storage, identifier, or encryption changes\u2014may require replacement, but an ordinary compatible instance-class resize usually does not. The actual plan and AWS API constraints are authoritative.\n\n4. **State versus configuration**\n\n   - **Configuration (`.tf` plus input variables):** The desired infrastructure definition\u2014what Terraform should manage and how it should be configured.\n   - **State (`terraform.tfstate` or remote state):** Terraform\u2019s record mapping resource addresses to real provider objects and their known attributes.\n   - **Real infrastructure:** The resources currently present in AWS.\n   - **Plan:** Terraform\u2019s proposed operations after comparing configuration with state and, normally, refreshing state from the real infrastructure.\n\n   State is not the infrastructure itself, and deleting it does not delete AWS resources. Conversely, removing a resource from configuration does not immediately delete it; Terraform proposes deletion on the next plan only if that resource is still tracked in state. Sensitive values can also appear in state, so state must be encrypted and access-controlled even when secrets are not committed to Git."
+}

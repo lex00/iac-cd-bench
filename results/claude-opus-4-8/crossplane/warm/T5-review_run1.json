@@ -1,0 +1,33 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmp1nv6kgua/generated_0.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1049,
+    "output": 1350
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## \ud83d\udd34 BLOCKING Issues\n\n### 1. `deletionPolicy: Delete` added provider-wide\n\nThis is the most dangerous change in the diff. In Crossplane, `deletionPolicy` governs what happens to the **external cloud resource** when the managed resource (MR) is deleted from the cluster.\n\n**Why this is catastrophic:**\n\n- A `kubectl delete`, a failed reconcile, a namespace teardown, or an accidental claim removal now **permanently destroys the underlying S3 bucket and RDS instance** \u2014 including all data.\n- Applied **provider-wide**, this hits **both dev and prod**. Prod data loss is a resume-generating event.\n- This directly **violates AC #2** (RDS deletion protection on). Crossplane's `deletionPolicy: Delete` is orthogonal to AWS's `deletionProtection`, but combining them creates a confusing false sense of safety \u2014 Crossplane will attempt the delete regardless.\n\n**Required fix:**\n\n```yaml\n# For stateful resources (S3, RDS), pin explicitly:\nspec:\n  deletionPolicy: Orphan   # never let Crossplane delete cloud state\n```\n\nBest practice: **default to `Orphan` for all stateful resources.** Use `Delete` only for ephemeral/stateless MRs (e.g., IAM policy attachments you can safely recreate). Never apply it as a blanket provider-wide default.\n\nAlso verify whether the newer `managementPolicies` field is in play \u2014 if so, ensure `Delete` is not in the policy set for stateful resources.\n\n---\n\n### 2. Bucket versioning dropped\n\n**Violates AC #1** (versioning enabled) directly.\n\n**Why this compounds Issue #1:**\n\n- Versioning is your last line of defense against data loss/corruption.\n- Combined with `deletionPolicy: Delete`, you now have **zero recovery path**: an accidental delete removes the bucket, and there are no object versions to recover even if the bucket survived.\n- Cross-region replication (prod, per spec) **requires versioning on both source and destination**. Dropping versioning silently breaks prod DR.\n\n**Required fix:**\n\n```yaml\n- name: bucket-versioning\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketVersioning\n    spec:\n      forProvider:\n        versioningConfiguration:\n          - status: Enabled\n```\n\n---\n\n## Questions for the Author\n\n1. **Was the `deletionPolicy` change intentional or a copy-paste default?** This reads like a scaffolding default that leaked in. If intentional, what's the justification?\n2. **Why was versioning dropped?** If it was to reduce storage cost in dev, that's an *overlay-specific* decision, not a base composition change \u2014 and it still breaks prod replication.\n3. Are you using `deletionPolicy` or `managementPolicies`? Confirm the provider version.\n\n---\n\n## Recommendations\n\n| Concern | Recommendation |\n|---|---|\n| Deletion safety | `Orphan` for S3/RDS in the base composition; document exceptions |\n| Env isolation (AC #7) | Ensure these changes are scoped via composition parameters per ProviderConfig, not global \u2014 a provider-wide change modifying prod when touching dev violates isolation |\n| Versioning | Restore in base; only override sizing/replication in env params |\n| Guardrail | Add a policy check (Kyverno/OPA) rejecting `deletionPolicy: Delete` on `Bucket`/`RDSInstance` kinds |\n| Testing | Add a `kuttl`/composition render test asserting versioning=Enabled and deletionPolicy=Orphan |\n\n---\n\n## Verdict\n\n**\ud83d\udd34 Request changes \u2014 do not merge.**\n\nBoth changes independently violate acceptance criteria; together they create a catastrophic data-loss profile across all environments. Restore versioning and revert the `deletionPolicy` to `Orphan` for stateful resources before re-review.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vhzam1x1/generated_0.yaml"
+  ],
+  "regraded_current_harness": true
+}

@@ -1,0 +1,30 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2243,
+    "output": 1892
+  },
+  "content": "# Delivery Behavior Analysis: PR #42\n\n## 1. What reconciles when PR #42 merges, and in what order?\n\n**Trigger chain:** The `GitRepository` source polls Git on its interval, detects the new commit, and updates the artifact. This wakes the `Kustomization` controllers, which re-build their overlays and apply.\n\n**Order is governed by `dependsOn` in `flux/kustomizations.yaml`**, not by file layout. Typical topological order for this stack:\n\n1. **`clusters/eksa`** (CAPA) \u2014 cluster/infra must exist first (usually unchanged here, so a no-op reconcile).\n2. **`infra` kustomizations** \u2014 the ACK controllers must be running and IAM/service accounts present. Within this PR:\n   - **RDS Instance** patch (`db.t3.micro` \u2192 `db.t3.medium`)\n   - **New S3 Bucket** manifest\n3. **`overlays/prod`** app kustomization \u2014 the `replicas: 4` patch on the app deployment.\n\nWithin a single Kustomization, Flux applies via server-side apply and does **not** guarantee ordering between the RDS and S3 objects (they're independent ACK CRs applied in the same batch). The RDS change and S3 add reconcile concurrently at the ACK layer.\n\nOnly the changed objects actually diff and apply; everything else is a no-op drift check.\n\n## 2. Does the RDS instance get recreated?\n\n**No \u2014 it's an in-place modification, not a recreate.**\n\n- Flux applies the updated `Instance` CR (new `instanceClass`). The ACK RDS controller diffs the CR spec against the live AWS resource and issues a `ModifyDBInstance` API call.\n- `instanceClass` is a **modifiable attribute** in RDS \u2014 AWS performs a compute resize, not a destroy/create. On a Multi-AZ prod instance this is typically a rolling change (standby resized first, then failover), so there's a brief failover blip but the DB identity, endpoint, and storage persist.\n- **Caveat:** Recreation would only happen if a *replacement-forcing* field changed (e.g., certain identity or engine-level immutable fields). `instanceClass` is not one. So no data loss and no new endpoint.\n\nThe `DeletionProtection` flag is irrelevant to a modify \u2014 it only blocks deletes.\n\n## 3. What happens to the S3 bucket if its manifest is deleted from Git?\n\nDepends on the Kustomization's **prune setting**:\n\n- **`prune: true`** (the idiomatic knr-ops setting): Flux garbage-collects the object. It removes the ACK `Bucket` CR from the cluster, and the ACK S3 controller then issues a **delete against AWS**. If the bucket is non-empty or protected, the AWS delete may fail and leave the CR in a deleting/error state.\n- **`prune: false`**: the CR is orphaned in the cluster \u2014 Flux stops managing it but doesn't delete it.\n\n**Important nuance:** deletion behavior also depends on the ACK **deletion policy annotation** (`services.k8s.aws/deletion-policy`). If set to `retain`, ACK removes the CR but leaves the real S3 bucket in AWS. This is the safe pattern for stateful buckets \u2014 prune removes the K8s object, but the AWS resource survives.\n\n## 4. How does Flux handle the prod-only replica change?\n\nThis is **environment isolation via kustomize overlays** (Acceptance Criterion #7):\n\n- The `replicas: 4` patch lives in `overlays/prod/`. It's a strategic-merge/JSON patch layered on the shared `base/` app deployment.\n- The `overlays/prod` Kustomization renders `base + prod patches` \u2192 applies deployment with `replicas: 4`.\n- The `overlays/dev` Kustomization is a **separate** Flux object rendering `base + dev patches`. PR #42 doesn't touch dev's overlay, so its build output is unchanged \u2192 **dev reconcile is a no-op**. Dev keeps its own replica count.\n\nBecause dev and prod are distinct Kustomizations pointing at distinct overlay paths, changing prod cannot mutate dev \u2014 they're independently deployable, satisfying the isolation requirement.\n\n## 5. Role of `dependsOn` between kustomizations\n\n`dependsOn` enforces **ordered, gated reconciliation** across Kustomization objects:\n\n- A dependent Kustomization won't reconcile until its dependencies report **`Ready`** (health checks passed), not merely \"applied.\"\n- **Purpose here:**\n  - `infra` depends on `clusters` \u2192 don't apply ACK CRs before the cluster + ACK controllers exist.\n  - `app`/overlays depend on `infra` \u2192 don't roll out the app before RDS/S3/IAM (and the DB secret) are provisioned, avoiding CrashLoop from missing dependencies.\n- It provides **back-pressure**: if the RDS modify leaves the Instance non-Ready, downstream Kustomizations wait rather than deploying against a half-ready backend.\n- On failure, Flux **retries on the next interval**; the dependency gate holds the downstream until health is restored.\n\n**Key limitation:** `dependsOn` orders *Kustomizations*, but ACK's actual AWS reconciliation is asynchronous \u2014 an object being \"applied and Ready\" at the Flux/K8s level doesn't guarantee the AWS resource is fully materialized unless health checks are wired to the ACK CR's `Ready`/`Synced` condition. Robust setups add `healthChecks` on the ACK CRs so `dependsOn` reflects true AWS readiness.",
+  "regraded_current_harness": true
+}

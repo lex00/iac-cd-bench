@@ -1,0 +1,35 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 1433
+  },
+  "content": "Please paste the Pulumi preview JSON and I\u2019ll review it directly.\n\nMeanwhile, here\u2019s exactly what I would check for the three issues you named in a Pulumi preview:\n\n## What to look for\n\n### 1) Secret exposed in plaintext outputs\nIn Pulumi preview JSON, inspect:\n- `steps[].newState.outputs`\n- `steps[].oldState.outputs`\n- stack outputs if present\n\nRed flags:\n- values like `password`, `connectionString`, `dbUrl`, `secret`, `token`, `accessKey`\n- output values shown as normal strings instead of Pulumi secret-wrapped values\n- a DB connection string appearing directly in `outputs`\n\nFor Pulumi, sensitive values should typically be represented as secrets, not plain text. In TypeScript, that usually means `pulumi.secret(...)` or `config.requireSecret(...)`.\n\nExample red flag:\n```json\n{\n  \"outputs\": {\n    \"dbConnectionString\": \"postgres://user:pass@host:5432/app\"\n  }\n}\n```\n\nSafer pattern:\n- the output is marked secret in preview/state\n- the code uses `new pulumi.Config().requireSecret(\"dbConnectionString\")`\n\n---\n\n### 2) Replacement of a stateful resource\nIn preview JSON, check `steps[].op`.\n\nHigh-risk operations:\n- `\"replace\"`\n- `\"create-replacement\"`\n- `\"delete-replaced\"`\n\nEspecially dangerous for:\n- RDS instances\n- S3 buckets\n- EKS clusters\n- persistent volumes\n- IAM identities used by workloads\n\nFor this scenario, the most important stateful resource is the RDS PostgreSQL instance. If preview shows replacement of the DB, that is a major risk unless explicitly intended and migration-safe.\n\nLook for entries like:\n```json\n{\n  \"op\": \"replace\",\n  \"urn\": \"...:aws:rds/instance:Instance::db\"\n}\n```\n\nAlso inspect replacement reasons if present. Common causes:\n- immutable property change\n- name change\n- subnet group / storage encryption / engine config changes\n\nFor prod, replacing:\n- `aws:rds/instance:Instance`\n- `aws:s3/bucket:Bucket`\nshould be treated as high severity.\n\n---\n\n### 3) Missing `protect` flag\nPulumi supports `protect: true` to prevent accidental deletion/replacement.\n\nCheck `newState.protect` for critical resources:\n- RDS instance\n- S3 bucket\n- possibly EKS cluster\n- production ACM/CloudFront resources depending on policy\n\nRed flag:\n```json\n{\n  \"type\": \"aws:rds/instance:Instance\",\n  \"protect\": false\n}\n```\nor no `protect` field at all on critical prod resources.\n\nFor this scenario, I\u2019d strongly expect `protect: true` on at least:\n- prod RDS\n- prod S3 assets bucket\n\nPossibly also:\n- prod EKS cluster\n\n---\n\n## Quick review logic I would apply\n\n### Severity: Critical\n- plaintext DB secret in outputs\n- replacement of prod RDS\n- replacement of prod S3 bucket with data\n- deletion of protected/stateful resource\n- prod critical resources missing `protect`\n\n### Severity: Medium\n- replacement of EKS cluster or node group\n- IAM policy broadening unexpectedly\n- secret-like values in non-secret config/outputs but not obviously credential-bearing\n\n### Severity: Low\n- replacement of stateless resources\n- protect missing on ephemeral/dev-only resources\n\n---\n\n## Useful jq checks\n\nIf your preview file is `preview.json`, these help.\n\n### Find possible plaintext secrets\n```bash\njq '\n  .. | objects\n  | select(has(\"outputs\"))\n  | .outputs\n  | to_entries[]\n  | select(.key | test(\"secret|password|token|key|conn|connection\"; \"i\"))\n' preview.json\n```\n\n### Find replacements\n```bash\njq '\n  .steps[]\n  | select(.op == \"replace\" or .op == \"create-replacement\" or .op == \"delete-replaced\")\n  | {op, urn: .urn, type: .newState.type // .oldState.type}\n' preview.json\n```\n\n### Find RDS / S3 / EKS operations\n```bash\njq '\n  .steps[]\n  | select(\n      (.newState.type // .oldState.type // \"\") |\n      test(\"aws:rds/instance:Instance|aws:s3/bucket:Bucket|aws:eks/cluster:Cluster\")\n    )\n  | {op, urn, type: (.newState.type // .oldState.type), protect: (.newState.protect // .oldState.protect)}\n' preview.json\n```\n\n### Find missing protect on critical resources\n```bash\njq '\n  .steps[]\n  | select(\n      (.newState.type // .oldState.type // \"\") |\n      test(\"aws:rds/instance:Instance|aws:s3/bucket:Bucket|aws:eks/cluster:Cluster\")\n    )\n  | select((.newState.protect // .oldState.protect // false) == false)\n  | {urn, type: (.newState.type // .oldState.type), op, protect: (.newState.protect // .oldState.protect)}\n' preview.json\n```\n\n---\n\n## What I\u2019d expect in a compliant Pulumi stack for your scenario\n\n### Secret handling\n- DB connection string comes from `ConfigSecret`\n- no plaintext secret in stack outputs\n- if output is necessary, it is exported as a secret output\n\nExample:\n```ts\nconst config = new pulumi.Config();\nconst dbConnectionString = config.requireSecret(\"dbConnectionString\");\n\nexport const appDbConn = dbConnectionString;\n```\n\n### RDS safety\n- no replacement unless explicitly planned\n- `deletionProtection: true`\n- `backupRetentionPeriod >= 7`\n- `publiclyAccessible: false`\n- prod DB should be `protect: true`\n\n### S3 safety\n- versioning enabled\n- SSE enabled\n- public access blocked\n- prod bucket ideally `protect: true`\n\n---\n\n## If you want, paste the JSON and I\u2019ll return a report in this format\n\n### Findings\n- `CRITICAL`: Plaintext secret exposed at `...`\n- `CRITICAL`: RDS replacement planned for `...`\n- `HIGH`: Missing `protect` on prod bucket `...`\n\n### Evidence\n- JSON path(s)\n- resource URN/type\n- relevant old/new values\n\n### Recommended fix\n- exact Pulumi TypeScript change to make\n\nPaste the preview JSON or even just the relevant `steps` section.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-xztixqrb/preview.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-xztixqrb/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-xztixqrb/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-xztixqrb/generated_3.json"
+  ]
+}

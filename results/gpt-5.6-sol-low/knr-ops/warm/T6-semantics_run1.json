@@ -1,0 +1,30 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T6-semantics",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: infra-controllers\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./infra/controllers\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n  wait: true\n  timeout: 5m\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: infra-aws\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./infra/aws\n  prune: true\n  dependsOn:\n    - name: infra-controllers\n  sourc\n[validate CRDs] kubeconform: exit=0\nSummary: 7 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 7\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "flux build kustomizations.yaml: exit=1\nERR: \u2717 invalid resource path \"\"\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q1_rds_class_change_in_place PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q2_prune_kustomization PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q3_default_deletion_policy_deletes PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q4_retain_annotation_orphans PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q5_suspended_kustomization_applies_nothing PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q6_dependency_gate_blocks_apps_dev PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q7_reconcile_order PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2072,
+    "output": 408
+  },
+  "content": "```answers.json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\n    \"kustomization\": \"infra-aws\",\n    \"outcome\": \"pruned\"\n  },\n  \"q3\": \"deleted\",\n  \"q4\": \"retained\",\n  \"q5\": {\n    \"changes\": false,\n    \"reason\": \"apps-prod is suspended\"\n  },\n  \"q6\": {\n    \"apps_dev_reconciles\": false,\n    \"reason\": \"infra-aws remains unready, so dependsOn blocks apps-dev\"\n  },\n  \"q7\": [\n    \"infra-controllers\",\n    \"infra-aws\",\n    \"apps-dev\"\n  ]\n}\n```"
+}

@@ -1,0 +1,34 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `web_node_group`\n  --> generated_0.py:10:12\n   |\n 8 | # web_node_group = aws.eks.NodeGroup(...)\n 9 |\n10 | asg_name = web_node_group.resources.apply(\n   |            ^^^^^^^^^^^^^^\n11 |     lambda resources: resources.autoscaling_groups[0].name\n12 | )\n   |\n\nF821 Undefined name `pulumi`\n --> generated_1.py:1:11\n  |\n1 | is_prod = pulumi.get_stack() == \"prod\"\n  |           ^^^^^^\n2 |\n3 | web_node_group = aws.eks.NodeGroup(\n  |\n\nF821 Undefined name `aws`\n --> generated_1.py:3:18\n "
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 626,
+    "output": 1220
+  },
+  "content": "Add the scaling policy as a **new standalone resource** and reference the Auto Scaling group created by the existing EKS managed node group. Do not rename or recreate the node group.\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenvironment = pulumi.get_stack()\n\n# Existing managed node group\u2014leave its logical name and arguments unchanged.\n# web_node_group = aws.eks.NodeGroup(...)\n\nasg_name = web_node_group.resources.apply(\n    lambda resources: resources.autoscaling_groups[0].name\n)\n\nweb_cpu_scaling_policy = aws.autoscaling.Policy(\n    \"web-node-cpu-scaling-policy\",\n    autoscaling_group_name=asg_name,\n    policy_type=\"TargetTrackingScaling\",\n    estimated_instance_warmup=300,\n    target_tracking_configuration=(\n        aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n            target_value=60.0,\n            disable_scale_in=False,\n            predefined_metric_specification=(\n                aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n                    predefined_metric_type=\"ASGAverageCPUUtilization\",\n                )\n            ),\n        )\n    ),\n)\n```\n\nThe existing node group must have a scaling range that permits the policy to act while retaining the required initial capacity:\n\n```python\nis_prod = pulumi.get_stack() == \"prod\"\n\nweb_node_group = aws.eks.NodeGroup(\n    \"web-node-group\",  # Keep the existing Pulumi logical name.\n    cluster_name=cluster.name,\n    node_role_arn=node_role.arn,\n    subnet_ids=private_subnet_ids,\n    instance_types=[\"t3.large\" if is_prod else \"t3.medium\"],\n    scaling_config=aws.eks.NodeGroupScalingConfigArgs(\n        desired_size=4 if is_prod else 2,\n        min_size=4 if is_prod else 2,\n        max_size=8 if is_prod else 4,\n    ),\n    # Preserve all other existing arguments and aliases/options.\n)\n```\n\nIf an external scaler will modify `desired_size`, prevent Pulumi from resetting that field on later updates:\n\n```python\nweb_node_group = aws.eks.NodeGroup(\n    \"web-node-group\",\n    # Existing arguments...\n    opts=pulumi.ResourceOptions(\n        ignore_changes=[\"scalingConfig.desiredSize\"],\n    ),\n)\n```\n\nBefore applying, verify the preview:\n\n```bash\npulumi stack select dev\npulumi preview --diff\n\npulumi stack select prod\npulumi preview --diff\n```\n\nThe preview should show only:\n\n```text\n+ aws:autoscaling/policy:Policy web-node-cpu-scaling-policy create\n```\n\nIf changing `min_size` or `max_size` is necessary, those should appear as in-place node-group updates, not replacements. Do not proceed if the preview shows `replace` for the cluster, node group, RDS instance, bucket, IAM resources, or HTTPS resources.\n\nIf the scaling policy already exists outside Pulumi, import it instead of creating a duplicate:\n\n```bash\npulumi import aws:autoscaling/policy:Policy \\\n  web-node-cpu-scaling-policy \\\n  '<autoscaling-group-name>/<policy-name>'\n```\n\nNote that Kubernetes-aware scaling is generally better handled by Cluster Autoscaler or Karpenter; an ASG CPU target-tracking policy scales EC2 capacity without considering pending pods. However, attaching the standalone policy above satisfies the non-replacement requirement.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8_opxrs6/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8_opxrs6/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-8_opxrs6/generated_2.py"
+  ]
+}

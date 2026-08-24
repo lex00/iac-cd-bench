@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 784
+  },
+  "content": "1. **Next plan after the variable flips**\n\nTerraform reevaluates the configuration using the new variable value, refreshes the selected workspace\u2019s state, and displays the difference:\n\n- `~` for resources updated in place\n- `-/+` for resources that must be replaced\n- `+` or `-` if conditional resources are added or removed\n\nFor example, changing production RDS from `db.t3.micro` to `db.t3.medium` would typically show:\n\n```text\n# aws_db_instance.database will be updated in-place\n~ resource \"aws_db_instance\" \"database\" {\n    ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n}\n```\n\nAny other attributes derived from the flipped variable\u2014such as EKS node count/type, Multi-AZ, encryption, or replication resources\u2014would also appear in the plan. Only the currently selected workspace/state should be affected; a prod variable change must not alter dev state.\n\n2. **If the state file is deleted**\n\nTerraform loses the mapping between configuration resource addresses and the existing cloud resource IDs. The next plan generally proposes creating every managed resource again:\n\n```text\nPlan: N to add, 0 to change, 0 to destroy.\n```\n\nTerraform does **not** automatically rediscover and adopt existing resources. Applying such a plan may:\n\n- Fail because names already exist, such as an S3 bucket name\n- Create duplicates where the provider permits them\n- Leave the original resources unmanaged\n\nRecovery should use a state backup, restore the remote backend, or run `terraform import`/import blocks for each existing resource.\n\nIf a remote backend is configured, deleting a local `terraform.tfstate` may not delete the authoritative remote state; `terraform init` can retrieve it again. State deletion also does not delete the actual AWS resources.\n\n3. **RDS instance class change**\n\nAWS normally supports an RDS `instance_class` change as an **in-place modification**, so Terraform generally shows `~`, not replacement. AWS may reboot the database and cause downtime.\n\nTiming depends on configuration:\n\n- `apply_immediately = true`: AWS applies the modification as soon as possible.\n- `apply_immediately = false`: AWS usually schedules it for the next maintenance window.\n\nSome combinations of engine, storage, instance class, or other simultaneous changes may be unsupported or may have different AWS behavior. The provider plan is authoritative for whether replacement is required. Changes such as enabling encryption on an existing unencrypted RDS instance commonly require replacement or a snapshot/restore migration, unlike a simple class resize.\n\n4. **State versus configuration**\n\n| Concept | Purpose |\n|---|---|\n| Configuration (`.tf`, variables, modules) | Declares the desired infrastructure |\n| State (`terraform.tfstate`) | Records Terraform\u2019s mapping to real resources, including IDs and known attributes |\n| Plan | Compares configuration, refreshed real-resource information, and state to determine actions |\n\nConfiguration is not an inventory of what Terraform already created. State supplies resource identity and dependency information. It may also contain sensitive values, so it should be stored in a secured remote backend with encryption, access control, locking, and versioning; it should not be committed to Git."
+}

@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 893
+  },
+  "content": "## Security review\n\n### Critical \u2014 plaintext database password in deployment manifest\n\n**Issue:**  \nA password is committed directly in a container `env` value. This exposes it through:\n\n- Git history and PR artifacts\n- Repository access and clones\n- Rendered manifests and deployment tooling logs\n- Kubernetes Deployment/Pod specifications\n\nIt also violates the requirement that secrets be SOPS-encrypted and never stored in plaintext in Git.\n\n**Required before merge:**\n\n- Remove the plaintext value.\n- Store the credential in a SOPS-encrypted Kubernetes `Secret`, scoped to the appropriate environment overlay.\n- Reference it using `valueFrom.secretKeyRef`, for example:\n\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: app-db\n        key: password\n```\n\n- Ensure the decrypted `Secret` is not committed or emitted into CI artifacts.\n- If the password is real or has ever been pushed to the remote repository, rotate it immediately. Removing it from the latest commit is not sufficient because it may remain in Git/PR history.\n\n---\n\n### Critical \u2014 S3 bucket grants public read access\n\n**Issue:**  \nThe new bucket policy permits unauthenticated/public object reads, commonly through a principal such as `\"Principal\": \"*\"` with `s3:GetObject`.\n\nThis violates the explicit requirement that the application-assets bucket have **no public access**. It can lead to unintended data disclosure and bypasses least-privilege access controls.\n\n**Required before merge:**\n\n- Remove the public-read policy statement.\n- Enable and retain all S3 Block Public Access settings:\n\n```yaml\nblockPublicAcls: true\nignorePublicAcls: true\nblockPublicPolicy: true\nrestrictPublicBuckets: true\n```\n\n- Grant access only to specific application IAM roles or, if CloudFront serves the assets, to a CloudFront Origin Access Control/Origin Access Identity.\n- Verify bucket encryption and versioning remain enabled.\n- Check both dev and prod rendered overlays; a base policy change must not accidentally expose both environments.\n\n---\n\n### Warning \u2014 containers have no resource limits\n\n**Issue:**  \nContainers without CPU and memory limits can consume excessive node resources, causing resource exhaustion, noisy-neighbor effects, pod eviction, or denial of service to other workloads.\n\nThis is primarily an availability and workload-isolation risk.\n\n**Required before merge:**\n\nAdd appropriate requests and limits based on expected usage, for example:\n\n```yaml\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi\n```\n\nValues should be tuned for the application rather than copied blindly. Apply them to all application containers and relevant sidecars/init containers.\n\n---\n\n### Info \u2014 RDS instance class change\n\nThe instance class change is not itself a security issue, assuming it matches the intended environment sizing.\n\nBefore merge, verify the rendered RDS resource still has:\n\n- `publiclyAccessible: false`\n- deletion protection enabled\n- backup retention of at least 7 days\n- encryption enabled in prod\n- multi-AZ enabled in prod\n- security-group/network access restricted to expected application sources\n\nAlso confirm the change is isolated to the intended overlay and does not alter the other environment.\n\n## Merge recommendation\n\n**Do not merge as-is.** The plaintext credential and public S3 access are blocking issues. Remove public access, move the password to a SOPS-encrypted secret and rotate it if genuine, then add container resource constraints. Re-render and review both dev and prod overlays before approval."
+}

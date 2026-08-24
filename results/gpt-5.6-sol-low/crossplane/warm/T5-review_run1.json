@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 722
+  },
+  "content": "## Review findings\n\n### 1. **Blocker \u2014 Bucket versioning no longer meets the specification**\n\nDropping the bucket versioning configuration violates the acceptance criterion requiring versioning in both `dev` and `prod`.\n\nIf versioning is represented by a separate Crossplane managed resource, removing it from the composition may also cause Crossplane to delete that resource. Depending on the provider behavior, this can suspend versioning on the existing bucket rather than merely stop managing it.\n\n**Required change:** Restore explicit versioning with status `Enabled` for both environments. Ensure the composed versioning resource remains associated with the bucket and has correct dependency/reference handling.\n\n---\n\n### 2. **High \u2014 Provider-wide `deletionPolicy: Delete` creates unsafe teardown behavior**\n\nApplying `deletionPolicy: Delete` indiscriminately means deleting a claim/XR, changing composition resource names, or removing resources from the composition can trigger deletion of external infrastructure. This is especially risky for:\n\n- Production S3 data\n- RDS databases\n- Secrets\n- IAM and cluster resources during composition refactors\n\nRDS deletion protection may reject deletion, but that leaves the managed resource/XR stuck rather than making provider-wide `Delete` safe. A versioned, non-empty S3 bucket may similarly fail deletion, while empty buckets or other resources can still be destroyed.\n\n**Required change:** Choose deletion behavior per resource and environment rather than provider-wide. At minimum, use `Orphan` for stateful production resources such as S3 and RDS, or introduce an explicit, separately reviewed teardown path. If `Delete` is intentionally retained for ephemeral dev resources, scope it only to dev compositions/parameters.\n\nAlso verify that composition upgrades do not rename composed-resource annotations or otherwise make Crossplane interpret existing resources as removed and recreate/delete them.\n\n## Verdict\n\n**Do not merge as-is.** Restore bucket versioning and replace the blanket deletion policy with resource- and environment-specific lifecycle handling."
+}

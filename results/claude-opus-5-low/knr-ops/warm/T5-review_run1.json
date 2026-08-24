@@ -1,0 +1,29 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 1565
+  },
+  "content": "## Caveat first\n\nI don't have the actual diff \u2014 only a four-line prose summary of what it supposedly contains. Everything below is a review of the *described* findings, plus what I'd check once the real hunks are available. I can't verify line numbers, which overlay each change lands in (dev vs prod matters a lot here), or whether there are additional issues the summary omitted. Please paste the raw diff for a real review.\n\n---\n\n## Findings, ranked\n\n### \ud83d\udd34 CRITICAL \u2014 S3 bucket policy grants public read\n\nViolates acceptance criterion #1 (\"no public access\") outright. A policy with `\"Principal\": \"*\"` (or `{\"AWS\": \"*\"}`) and `s3:GetObject` makes every object in the bucket world-readable. If this bucket holds \"application assets\" it may still leak anything mistakenly uploaded there, and it's a one-line change away from being a data breach.\n\n**Block merge.** Required changes:\n- Remove the public statement entirely. Serve assets via CloudFront with an Origin Access Control and a bucket policy scoped to the distribution's service principal + `AWS:SourceArn` condition.\n- Add/keep an explicit `PublicAccessBlockConfiguration` with all four flags `true` so this can't be reintroduced accidentally.\n- Confirm this isn't landing in `overlays/prod/` \u2014 if it is, severity is unambiguous; if dev-only, it's still a critical finding because dev buckets get real data.\n\n### \ud83d\udd34 CRITICAL \u2014 Plaintext DB password in deployment env vars\n\nViolates criterion #3. Two distinct problems, and people usually only fix the first:\n1. The secret is now in Git history permanently. Redacting it in a follow-up commit does **not** remove it.\n2. Plaintext env vars are visible to anyone with `get pod` / `describe pod` RBAC and leak into crash dumps and logging sidecars.\n\n**Block merge.** Required changes:\n- Rotate the credential in RDS *now*, before merge. Treat it as compromised.\n- Replace with a SOPS-encrypted `Secret` in the repo (the stack-native mechanism per spec), referenced via `envFrom.secretRef` or `valueFrom.secretKeyRef`.\n- Scrub the blob from history (`git filter-repo` / BFG) or, if the branch hasn't merged, force-push a cleaned branch.\n- Add a pre-commit secret scanner (gitleaks) so this fails at commit time rather than review time.\n\n### \ud83d\udfe1 WARNING \u2014 Missing resource limits/requests\n\nNot a confidentiality issue, but a genuine availability one: a container without limits can consume node memory until the kubelet starts evicting neighbours, and without requests the scheduler can't place it sanely. On a 2-node dev cluster this takes the whole environment down.\n\nSet `requests` and `limits` for `cpu` and `memory` in `base/`, with overlay patches if dev and prod need different ceilings. Consider a `LimitRange` or a Kyverno/Gatekeeper policy so unbounded containers are rejected at admission.\n\n### \ud83d\udfe2 INFO \u2014 RDS instance class change\n\nSummary says \"no issue.\" Two things I'd still confirm against the real diff, because instance class changes often ride along with other RDS field edits:\n- Multi-AZ, `storage_encrypted`, `deletion_protection`, and `backup_retention_period >= 7` are unchanged on prod (criterion #2).\n- `publicly_accessible` is still `false`.\n- The class matches spec: `db.t3.micro` dev, `db.t3.medium` prod. A prod downsize would be a capacity concern, not security.\n\n---\n\n## Merge gate\n\nDo not merge. Two criticals, one of which (the leaked password) requires an out-of-band credential rotation that a code change alone won't fix. The resource-limits item can reasonably ship as a fast follow if you're time-pressed; the other two cannot.\n\n## What I'd want to see in the real diff\n\nThings the summary wouldn't have mentioned but that commonly co-occur with this change set: IAM policy wildcards (criterion #4), whether the S3 policy change also touched the replication config, whether the deployment dropped a `securityContext`, and whether any of this bypasses the `base/` \u2192 overlay structure by editing prod directly."
+}

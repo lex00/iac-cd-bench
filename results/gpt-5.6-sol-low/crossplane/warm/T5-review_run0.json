@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 721
+  },
+  "content": "## Review result: **Request changes**\n\n### 1. **Blocking \u2014 Bucket versioning was removed**\nThe canonical specification requires versioning in both dev and prod. Production cross-region replication also requires versioning on both source and destination buckets.\n\nRestore an explicit versioning resource/configuration, for example:\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketVersioning\nspec:\n  forProvider:\n    versioningConfiguration:\n      status: Enabled\n```\n\nDo not rely on AWS defaults or Crossplane late initialization. Also ensure the replication configuration depends on versioning being enabled. If the diff explicitly changes versioning to `Disabled` or `Suspended`, existing object history is retained but new versions will no longer be created and replication may fail.\n\n### 2. **Blocking \u2014 Provider-wide `deletionPolicy: Delete` is unsafe**\nApplying `Delete` indiscriminately means deleting a claim, composite, composition revision, or environment can trigger deletion of all composed external resources, including:\n\n- S3 buckets and their contents/configuration\n- RDS instances\n- EKS clusters\n- IAM resources\n- Other stateful or security-sensitive resources\n\nThis is especially risky for prod and undermines independent lifecycle protection. RDS `deletionProtection: true` does not make this safe: AWS may reject deletion, leaving the managed resource stuck rather than cleanly protecting the composition.\n\nUse lifecycle policy by resource and environment:\n\n- **Prod stateful resources** such as RDS and asset buckets: `deletionPolicy: Orphan`\n- **Ephemeral/recreatable resources**: `Delete` where intentional\n- Dev may use `Delete`, but it should be an explicit environment parameter rather than a provider-wide default\n\nExample patch from a composition parameter:\n\n```yaml\nspec:\n  parameters:\n    deletionPolicy:\n      type: string\n      enum:\n        - Delete\n        - Orphan\n```\n\n```yaml\npatches:\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.parameters.deletionPolicy\n    toFieldPath: spec.deletionPolicy\n```\n\nSet dev and prod independently, with prod stateful resources defaulting to `Orphan`. If using newer Upjet/provider APIs, also review `managementPolicies`; those policies determine whether deletion is permitted and should be consistent with `deletionPolicy`.\n\n### Required before approval\n\n- Restore bucket versioning for dev and prod.\n- Verify source and destination versioning for prod replication.\n- Remove the provider-wide `Delete` default.\n- Apply deletion behavior per resource/environment, protecting prod RDS and buckets.\n- Add a test/render assertion covering:\n  - bucket versioning is `Enabled`;\n  - prod stateful resources are not externally deleted on claim removal;\n  - dev and prod claims/provider configs remain independently deployable.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-dmwdfgn2/generated_0.yaml"
+  ]
+}

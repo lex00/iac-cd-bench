@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[tsc check] tsc: exit=0"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 340
+  },
+  "content": "Please provide the Pulumi preview JSON to review. Generate it with:\n\n```bash\npulumi preview --stack <stack-name> --json > preview.json\n```\n\nI\u2019ll specifically check for:\n\n1. **Plaintext secrets**\n   - Database connection strings, passwords, tokens, or access keys exposed in resource properties or stack outputs.\n   - Sensitive Pulumi outputs not marked secret via `pulumi.secret(...)` or sourced from `config.requireSecret(...)`.\n\n2. **Stateful resource replacement**\n   - `replace`, `create-replacement`, or `delete-replaced` operations affecting RDS, S3 buckets, or other persistent resources.\n   - Replacement causes such as immutable property changes and whether data-loss safeguards exist.\n\n3. **Missing protection**\n   - Stateful production resources lacking Pulumi\u2019s:\n     ```ts\n     { protect: true }\n     ```\n   - AWS-native safeguards, especially RDS `deletionProtection: true` and adequate backups.\n\nYou may redact actual secret values before posting, but preserve property names, operation types, URNs, resource options, and secret markers. Note that preview JSON alone may not prove whether `protect` is configured when no protected deletion/replacement is being attempted; relevant TypeScript may also be needed.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3m6kvec5/generated_0.ts"
+  ]
+}

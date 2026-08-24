@@ -1,0 +1,36 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1091,
+    "output": 1692
+  },
+  "content": "# Pulumi Preview: DB Replace Behavior\n\n## 1. Which property triggered the replace?\n\nFor an RDS PostgreSQL instance in this scenario, look for the `[replace]` (or `+-`) marker in the preview diff. Pulumi annotates the exact triggering property:\n\n```\n    ~ aws:rds/instance:Instance: (replace)\n        [id=db-xxxx]\n        ~ engineVersion    : \"14.7\" => \"15.4\"   # example\n        ~ storageEncrypted : false => true       # <-- replacement trigger\n```\n\nPulumi will print the property that forces replacement, and importantly, tag which ones are replacement-forcing:\n\n```\n    ++aws:rds/instance:Instance: (create-replacement)\n    +-aws:rds/instance:Instance: (replace)\n```\n\n**Common replace triggers for RDS in this spec:**\n\n| Property | Replace? | Why |\n|---|---|---|\n| `storageEncrypted` (false\u2192true) | **Yes** | Encryption can't be toggled in place |\n| `dbName` / `name` | **Yes** | Immutable after creation |\n| `engine` | **Yes** | Can't swap engine type |\n| `availabilityZone` | **Yes** | Physical placement change |\n| `kmsKeyId` | **Yes** | Tied to encryption-at-rest |\n| `instanceClass` (t3.micro\u2192t3.medium) | No | In-place modify |\n| `multiAz` | No | In-place modify |\n| `allocatedStorage` (increase) | No | In-place modify |\n| `backupRetentionPeriod` | No | In-place modify |\n\nGiven the dev\u2192prod delta here (`db.t3.micro, single AZ` \u2192 `db.t3.medium, multi-AZ, encrypted`), if you were promoting a *single* instance the **`storageEncrypted` / `kmsKeyId` change is the classic replace trigger** \u2014 enabling encryption on an existing unencrypted RDS instance requires recreation. Instance class and multi-AZ alone would not.\n\n> Note: In the correct implementation, `dev` and `prod` are **separate stacks**, so this replace should never occur cross-environment \u2014 each stack owns its own instance. A replace within `prod` most likely comes from an encryption/engine/identifier change.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target <urn>` restricts the operation to the specified resource(s):\n\n- **Skips** all resources **not** listed in `--target` (and not required as dependencies).\n- By default Pulumi still processes **dependencies** of the target. Add `--target-dependents` to also include downstream resources that depend on the target.\n- Use `--exclude` / `--exclude-dependents` for the inverse.\n\n```bash\n# Only touch the RDS instance, skip cluster/bucket/IAM\npulumi up --target 'urn:pulumi:prod::app::aws:rds/instance:Instance::db'\n```\n\n**Caveats:**\n- Targeting can leave state **inconsistent** \u2014 Pulumi warns that outputs/dependents may be stale.\n- It does **not** skip refresh of the targeted resource; use `--skip-preview` / `--refresh=false` separately to control those.\n- Newly-required resources not in the target set cause an error unless you broaden the target or use `--target-dependents`.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n**Encryption at rest & tracking:**\n- A value marked secret (via `config.requireSecret(...)`, `pulumi.secret(...)`, or `--secret`) is stored **encrypted** in stack state using the stack's encryption provider (Pulumi Service default key, `passphrase`, or a cloud KMS/`awskms://`/`gcpkms://` provider set in `Pulumi.yaml`/`secretsProvider`).\n- The DB connection string here should be a `ConfigSecret`:\n\n```typescript\nconst dbPassword = config.requireSecret(\"dbPassword\");\nconst connStr = pulumi.secret(\n  pulumi.interpolate`postgres://user:${dbPassword}@${db.address}:5432/app`\n);\n```\n\n**Taint propagation:**\n- Secretness is **contagious**. Any `Output` derived from a secret (via `apply`, `interpolate`, `all`) is automatically marked secret. So the full connection string above is secret because `dbPassword` is.\n\n**Display & export:**\n- In CLI output, secret values show as `[secret]`:\n  ```\n  Outputs:\n      connStr: \"[secret]\"\n  ```\n- `pulumi stack output connStr` also masks it; use `pulumi stack output connStr --show-secrets` to reveal.\n- Exported stack outputs (`export const connStr = ...`) remain encrypted in state and masked in `stack export` unless `--show-secrets` is passed.\n\n**Spec compliance:** The connection string is never in plaintext in Git \u2014 it lives encrypted in `Pulumi.prod.yaml` (config secret) and encrypted in state, satisfying acceptance criterion #3.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-z2_v_9g4/Pulumi.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-z2_v_9g4/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-z2_v_9g4/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-z2_v_9g4/generated_2.txt"
+  ],
+  "regraded_current_harness": true
+}

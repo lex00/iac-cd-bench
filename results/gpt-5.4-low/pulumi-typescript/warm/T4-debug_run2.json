@@ -1,0 +1,35 @@
+{
+  "model": "gpt-5.4",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-_sugcxx2/generated_1.ts(1,19): error TS2304: Cannot find name 'bucket'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-_sugcxx2/generated_1.ts(1,36): error TS7006: Parameter 'arn' implicitly has an 'any' type.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-_sugcxx2/generated_1.ts(1,57): error TS2304: Cannot find n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1081,
+    "output": 757
+  },
+  "content": "Here\u2019s the fix for the preview crash and the bad secret handling.\n\n### What was wrong\n\n1. **Async misuse**\n   - `bucket.arn` is a `pulumi.Output<string>`, not a normal `Promise`.\n   - You must transform it with `.apply(...)`, not `await`.\n\n2. **Wrong `pulumi.output()` usage**\n   - `pulumi.output(\"plain-text-password\")` is not appropriate for a secret password.\n   - Use `config.requireSecret(...)` so the value is encrypted in Pulumi state and not hardcoded.\n\n---\n\n## Fixed `index.ts`\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") || \"dev\";\nconst region = config.get(\"region\") || \"us-east-1\";\n\n// Secret must come from stack config, not plaintext in code.\n// Example: pulumi config set --secret dbPassword your-password\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\n// S3 Bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: {\n        enabled: true,\n    },\n    serverSideEncryptionConfiguration: {\n        rule: {\n            applyServerSideEncryptionByDefault: {\n                sseAlgorithm: \"AES256\",\n            },\n        },\n    },\n    acl: \"private\",\n    tags: {\n        Environment: env,\n        Project: \"myapp\",\n    },\n});\n\n// Proper Output handling: transform with apply()\nconst bucketUrl = bucket.arn.apply(arn => `https://s3.${region}.amazonaws.com/${arn}`);\n\n// RDS Instance\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: env === \"prod\" ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app-user\",\n    password: dbPassword,\n    publiclyAccessible: false,\n    backupRetentionPeriod: 7,\n    deletionProtection: true,\n    skipFinalSnapshot: env !== \"prod\",\n});\n\n// Outputs\nexport const bucketEndpoint = bucketUrl;\nexport const dbEndpoint = db.endpoint;\n```\n\n---\n\n## Why this works\n\n### Correct Output transformation\nThis:\n\n```ts\nconst bucketUrl = bucket.arn.apply(arn => `https://s3.${region}.amazonaws.com/${arn}`);\n```\n\nreturns a `pulumi.Output<string>`, which Pulumi can track during preview and update.\n\n### Correct secret handling\nThis:\n\n```ts\nconst dbPassword = config.requireSecret(\"dbPassword\");\n```\n\nreturns a secret `Output<string>` and keeps the password encrypted in state.\n\nSet it with:\n\n```bash\npulumi config set --secret dbPassword your-password\n```\n\n---\n\n## Notes\n\nYour original code also had a few issues relative to the scenario\u2019s acceptance criteria:\n\n- `deletionProtection` was `false` on RDS\n- `skipFinalSnapshot: true` may be undesirable for prod\n- bucket encryption was missing\n- plaintext secret was committed in code\n\nIf you want, I can also rewrite this into a more fully **canonical dev/prod Pulumi stack** matching the scenario spec, including:\n- env-based sizing\n- S3 public access blocking\n- stricter prod IAM posture\n- stack-config-driven region and environment settings",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-_sugcxx2/index.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-_sugcxx2/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-_sugcxx2/generated_2.ts"
+  ]
+}

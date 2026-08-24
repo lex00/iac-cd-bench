@@ -1,0 +1,36 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1091,
+    "output": 2008
+  },
+  "content": "# Pulumi Preview Behavior: DB Replace Scenario\n\n## 1. Which property triggered the replace?\n\nFor an `aws.rds.Instance`, a preview showing **replace** is triggered by a change to a property marked with `createBeforeReplace` / force-new semantics. Looking at the scenario spec (dev \u2192 prod differences), the common culprits are:\n\n| Property | Replace? | Why |\n|---|---|---|\n| `engineVersion` | Sometimes | Major version bumps force replace; minor are in-place |\n| `instanceClass` (e.g., `db.t3.micro` \u2192 `db.t3.medium`) | **No** \u2014 in-place | Modify, not replace |\n| `allocatedStorage` (decrease) | Yes | Cannot shrink in place |\n| **`storageEncrypted`** (false \u2192 true) | **YES** | Encryption cannot be toggled on an existing instance |\n| `kmsKeyId` | **YES** | Requires re-encryption from a fresh volume |\n| `dbName` / `name` | **YES** | Identity/immutable field |\n| `availabilityZone` | **YES** | Placement is immutable (multi-AZ toggle is *modify*, but pinning an AZ is replace) |\n\n**Most likely answer for this spec:** the dev\u2192prod jump enables `storageEncrypted: true` (and sets `kmsKeyId`). In Pulumi's diff, the replaced property is shown with a diff marker and a `[replace]` / `+-` annotation:\n\n```\n~ aws:rds/instance:Instance db\n    ~ storageEncrypted: false => true   [replace]\n```\n\nPulumi determines this from the provider's schema `replaceOnChanges` metadata, not from your code. You can confirm with:\n\n```bash\npulumi preview --diff\n```\n\nThe `+-` (replace) or `-+` (delete-before-create) glyph in the diff header identifies it, and the trailing line lists **exactly which properties** caused it.\n\n> Note: If you *don't* want a replace, avoid changing immutable fields across the same stack. Encryption differences are why prod is a **separate stack** (`prod.yaml`), not a mutation of dev \u2014 satisfying acceptance criterion #7 (environment isolation).\n\n---\n\n## 2. What does `pulumi up --target` skip?\n\n`--target <urn>` restricts the operation to the **specified resource(s) only**. Everything else is **skipped** \u2014 not refreshed, not updated, not created.\n\n```bash\npulumi up --target 'urn:pulumi:prod::app::aws:rds/instance:Instance::db'\n```\n\nSkipped:\n- **All non-targeted resources** \u2014 no diffs applied to the cluster, bucket, IAM, etc.\n- **Dependents are NOT automatically included** unless you add `--target-dependents`.\n\nImportant caveats:\n- If the targeted resource **depends on** a not-yet-created resource, the target op **fails** (you can't skip a required parent). You must include upstream deps or use `--target-dependents`.\n- `--target` does **not** skip the preview/diff computation of the whole graph \u2014 Pulumi still evaluates the program; it just limits the *apply* to targeted URNs.\n- State for skipped resources is left untouched (stale relative to code).\n- Related flag: `--replace <urn>` forces a replace on a specific resource; `--target-replace` combines both.\n\n\u26a0\ufe0f Targeted updates create drift between code and state \u2014 use for surgical fixes, not routine deploys.\n\n---\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi treats secrets as first-class, **encrypted end-to-end** in state and outputs.\n\n**Marking a secret:**\n```ts\n// From config (dev.yaml / prod.yaml via `pulumi config set --secret`)\nconst cfg = new pulumi.Config();\nconst dbPassword = cfg.requireSecret(\"dbPassword\");\n\n// Or programmatically\nconst connString = pulumi.secret(\n  pulumi.interpolate`postgres://user:${dbPassword}@${db.endpoint}/appdb`\n);\nexport const dbConnectionString = connString;\n```\n\n**Behavior:**\n\n1. **Encryption at rest** \u2014 Secret values are encrypted in the state file (checkpoint) using the stack's encryption provider (default Pulumi-managed key, or `awskms://`, `passphrase`, etc. via `secretsprovider`). They are **never plaintext in state**, satisfying acceptance criterion #3.\n\n2. **Config in Git** \u2014 `pulumi config set --secret dbPassword ...` writes a ciphertext blob into `prod.yaml`:\n   ```yaml\n   config:\n     app:dbPassword:\n       secure: AAABAN...ciphertext...\n   ```\n   Safe to commit \u2014 no plaintext secret in Git.\n\n3. **Taint propagation** \u2014 Any output *derived* from a secret is **automatically marked secret**. So `dbConnectionString` above is secret even though only the password was.\n\n4. **CLI display** \u2014 `pulumi up` / `pulumi stack output` shows `[secret]` instead of the value:\n   ```\n   Outputs:\n     dbConnectionString: [secret]\n   ```\n   To reveal explicitly:\n   ```bash\n   pulumi stack output dbConnectionString --show-secrets\n   ```\n\n5. **Diffs** \u2014 Secret values are redacted in `pulumi preview --diff` (shown as `[secret]`), so they don't leak into CI logs.\n\n---\n\n### Summary\n\n| Question | Answer |\n|---|---|\n| Replace trigger | Immutable/force-new prop \u2014 most likely `storageEncrypted` (false\u2192true) + `kmsKeyId`; shown as `[replace]` in `preview --diff` |\n| `--target` skips | All non-targeted resources (no update/create); deps must exist or use `--target-dependents` |\n| Secrets | Encrypted in state via secretsprovider; taint auto-propagates to derived outputs; displayed as `[secret]` unless `--show-secrets` |",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-a1hg1k81/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-a1hg1k81/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-a1hg1k81/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-a1hg1k81/generated_1.txt"
+  ],
+  "regraded_current_harness": true
+}

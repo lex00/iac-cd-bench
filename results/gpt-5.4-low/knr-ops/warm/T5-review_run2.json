@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 1105
+  },
+  "content": "Here\u2019s the security review for the PR diff.\n\n## Summary\n\nThe PR introduces **two clear security issues that should block merge** and **one important hardening issue**:\n\n1. **S3 bucket policy allows public read access** \u2192 **Critical**\n2. **Plaintext password committed in app env vars** \u2192 **Critical**\n3. **Containers missing resource limits** \u2192 **Warning**\n\nThe **RDS instance class change** appears benign based on the preview and is **not a security issue by itself**.\n\n---\n\n## Findings by severity\n\n### Critical 1: S3 bucket policy grants public read access\n**Issue:**  \nThe new bucket policy allows public access to bucket objects.\n\n**Why this is a problem:**  \nThis directly violates the scenario acceptance criteria:\n\n> **Bucket**: versioning enabled, server-side encryption, **no public access**\n\nPublic read on an application-assets bucket can expose:\n- private/static assets not intended for anonymous access\n- build artifacts or config files accidentally uploaded\n- future sensitive objects if application behavior changes\n\nEven if the bucket is \u201cmeant for assets,\u201d public bucket policies are generally unsafe unless intentionally fronted and tightly controlled.\n\n**Severity:** **Critical**\n\n**What should change before merge:**\n- Remove any policy statements with:\n  - `Principal: \"*\"`\n  - anonymous/public `s3:GetObject`\n- Ensure S3 Block Public Access is enforced\n- If public content delivery is needed, use:\n  - **CloudFront** with an origin access mechanism (OAI/OAC), not public bucket access\n- Keep bucket access restricted to only the identities/services that require it\n\n---\n\n### Critical 2: Plaintext password in deployment env vars\n**Issue:**  \nThe app deployment includes a password directly in manifest environment variables.\n\n**Why this is a problem:**  \nThis violates the acceptance criteria:\n\n> **Secret**: never stored in plaintext in Git\n\nPlaintext secrets in GitOps manifests are high risk because they:\n- are permanently stored in Git history\n- are exposed to anyone with repo read access\n- may appear in PRs, logs, rendered manifests, and debugging output\n- can be replicated into clusters and tooling caches\n\n**Severity:** **Critical**\n\n**What should change before merge:**\n- Remove the plaintext password from the manifest\n- Store the secret using the repo\u2019s approved secret mechanism:\n  - **SOPS-encrypted secret** in Git, or\n  - external secret/secret store integration if already used in this stack\n- Reference it from the deployment via:\n  - `envFrom.secretRef`, or\n  - `env.valueFrom.secretKeyRef`\n- Rotate the exposed password if it was real and committed anywhere in Git history\n\n**Recommended follow-up:**\n- Treat the secret as compromised\n- Rotate database/app credentials\n- Consider rewriting Git history only if required by policy, but rotation is the minimum necessary action\n\n---\n\n### Warning 3: Missing container resource limits\n**Issue:**  \nContainers have no resource limits defined.\n\n**Why this matters:**  \nThis is not typically a direct secret/data exposure issue, but it is still a security and resilience concern:\n- a runaway container can consume excessive CPU/memory\n- increases blast radius for denial-of-service or noisy-neighbor issues\n- weakens multi-tenant isolation within the cluster\n\nIt\u2019s more of a **hardening / availability** concern than a confidentiality issue.\n\n**Severity:** **Warning**\n\n**What should change before merge:**\n- Add at least:\n  - `resources.requests`\n  - `resources.limits`\n- Define sensible CPU/memory bounds for each container\n- Ideally also ensure namespace policies / LimitRanges exist, but at minimum set per-container resources in the deployment\n\nExample pattern:\n```yaml\nresources:\n  requests:\n    cpu: \"100m\"\n    memory: \"128Mi\"\n  limits:\n    cpu: \"500m\"\n    memory: \"512Mi\"\n```\n\n---\n\n## Non-issue / informational\n\n### Info: RDS instance class change\n**Issue:**  \nChanging the RDS instance class alone is not a security issue.\n\n**Severity:** **Info**\n\n**Note:**  \nOnly re-check if the PR also changes any of the following:\n- `publiclyAccessible`\n- deletion protection\n- backup retention\n- encryption\n- subnet group / security groups\n\nFrom your preview, this appears fine.\n\n---\n\n## Merge recommendation\n\n### Must fix before merge\n1. **Remove public S3 access**\n2. **Remove plaintext password from manifests and migrate to encrypted secret handling**\n3. **Rotate exposed credentials if they were real**\n\n### Should fix before merge\n4. **Add container resource requests/limits**\n\n---\n\n## Final severity ranking\n\n### Critical\n- Public S3 bucket read policy\n- Plaintext password in deployment env vars\n\n### Warning\n- Missing container resource limits\n\n### Info\n- RDS instance class change\n\nIf you want, I can also provide this in a **PR review comment format** with inline-ready wording."
+}

@@ -1,0 +1,36 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `config`\n --> generated_0.py:1:12\n  |\n1 | conn_str = config.require_secret(\"dbConnectionString\")   # marked secret\n  |            ^^^^^^\n\nFound 1 error.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1676,
+    "output": 2068
+  },
+  "content": "# Pulumi Preview: DB Replace Behavior\n\n## 1. Which property triggered the replace?\n\nWhen an RDS instance shows **`replace`** in preview, Pulumi marks specific properties with a **`[diff: ...]`** annotation and an arrow indicating the old \u2192 new value. The property is one flagged as **immutable / create-before-replace** by the AWS provider.\n\nIn this scenario, the most common triggers are:\n\n| Property | Why it forces replacement |\n|---|---|\n| `engine` / `engine_version` (major) | Major version changes can't be done in place |\n| `storage_encrypted` | Encryption can only be set at creation \u2014 enabling it (dev\u2192prod parity) forces replace |\n| `availability_zone` / `multi_az` (in some provider versions `multi_az` is updatable, but AZ pinning is not) | Placement change |\n| `db_name` (`name`) | Database identifier can't change in place |\n| `kms_key_id` | Tied to encryption at creation |\n\n**How to identify it in the preview output:** look for the resource with `~ replace` and scan for the property line showing:\n\n```\n~ aws:rds/instance:Instance (my-db):\n    [diff: ~storageEncrypted]        # <-- this property triggered it\n      storageEncrypted: false => true\n```\n\nPulumi prints `[replace]` or `+-` (replace = delete+create) precisely because one of these immutable fields diffed. **The property named in the `[diff: ...]` block that is also in the provider's `replaceOnChanges` set is the trigger.**\n\n> In the canonical spec, moving from the dev shape (`db.t3.micro`, single-AZ, **unencrypted**) to a prod shape (**encrypted**) is a classic replace \u2014 `storage_encrypted` cannot be toggled in place.\n\n\u26a0\ufe0f **Warning with acceptance criteria:** A replace on an RDS with `deletion_protection = true` will **fail the destroy half of the replace**. You must either accept downtime with a manual protection removal, or use `pulumi.ResourceOptions(delete_before_replace=False)` (create-before-replace) \u2014 but create-before-replace can collide on the DB identifier.\n\n---\n\n## 2. What does `pulumi up --target` skip?\n\n`pulumi up --target <urn>` restricts the operation to **only the targeted resource(s)**. It **skips**:\n\n- **All non-targeted resources** \u2014 no create/update/delete/replace happens on them, even if they've drifted.\n- **Dependent resources** *unless* you add `--target-dependents`. By default, resources that depend on the target are **not** updated.\n- **Diffs on siblings** \u2014 they are reported as \"unchanged\" in the scope of this run (their actual desired state is not reconciled).\n\nKey nuances:\n\n```bash\npulumi up --target 'urn:...:Instance::my-db'                 # only the DB\npulumi up --target 'urn:...:Instance::my-db' --target-dependents  # DB + things depending on it\n```\n\n- Targeting does **not** skip **provider setup** or reading existing state for dependency resolution \u2014 Pulumi still needs the dependency graph to compute inputs (e.g., the DB endpoint feeding the connection-string secret).\n- **Environment isolation** (criterion 7) is enforced at the **stack** level, not `--target`. `--target` operates within one stack; use separate stacks (`dev`/`prod`) so changing prod never touches dev state.\n\n> Use `--target` sparingly: it can leave the stack in a partially-reconciled state and Pulumi will warn you about this.\n\n---\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi tracks \"secretness\" as a **property of the value that propagates through the dependency graph**.\n\n### Creation\n```python\nconn_str = config.require_secret(\"dbConnectionString\")   # marked secret\n```\n- `require_secret()` returns an `Output[str]` flagged as secret.\n- Config values marked with `pulumi config set --secret` are encrypted in `Pulumi.<stack>.yaml` using the stack's **encryption provider** (default Pulumi service KMS, or a self-managed passphrase/cloud KMS).\n\n### Propagation\n- **Secretness is contagious.** If you `.apply()` a secret Output, or build a new Output from it (e.g., composing a connection string from a secret password + endpoint), the result is **also secret**.\n\n```python\ndb_url = pulumi.Output.all(host, password).apply(\n    lambda a: f\"postgres://user:{a[1]}@{a[0]}/db\"\n)  # secret because password is secret\n```\n\n### In state\n- Secret values are stored **encrypted** in the state file \u2014 never plaintext. This satisfies acceptance criterion 3 (no plaintext secret in Git; the `Pulumi.dev.yaml`/`Pulumi.prod.yaml` config and state hold only ciphertext).\n\n### In outputs / exports\n```python\npulumi.export(\"dbConnectionString\", db_url)\n```\n- Exported secrets show as **`[secret]`** in `pulumi stack output` and in CLI/console displays.\n- To view the plaintext you must explicitly opt in:\n  ```bash\n  pulumi stack output dbConnectionString --show-secrets\n  ```\n- In `pulumi preview`/`up` diff output, secret values are **masked** (`[secret]`), so they don't leak into logs/CI.\n\n### Common pitfall (per docs)\n- Reading a secret as a plain string (`config.require(\"...\")`) **strips the secret flag** \u2014 the value then risks appearing in plaintext in state and outputs. Always use `require_secret()` / `get_secret()`.\n\n---\n\n### TL;DR\n\n1. The replace is triggered by an **immutable RDS property in the provider's `replaceOnChanges` set** \u2014 shown in the `[diff: ~property]` block (commonly `storage_encrypted`, `engine_version` major, or `db_name`).\n2. `--target` **skips all non-targeted resources and (by default) their dependents**; add `--target-dependents` to include them.\n3. Secrets are **encrypted in state, mask-propagated through Outputs, and displayed as `[secret]`** unless you pass `--show-secrets`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-hy2glnxv/Pulumi.<stack>.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-hy2glnxv/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-hy2glnxv/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-hy2glnxv/generated_0.py"
+  ],
+  "regraded_current_harness": true
+}

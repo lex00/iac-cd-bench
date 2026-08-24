@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 991,
+    "output": 820
+  },
+  "content": "1. **Property that triggered the replace**\n   In Pulumi preview, the property marked as **requiring replacement** is the one that triggered it. For an AWS RDS instance, this is usually an **immutable field** such as `username`, `dbName`, `identifier`, or sometimes `storageEncrypted` if encryption changed.\n\n   So the answer is:\n\n   - **The specific property in the preview diff labeled as \u201creplace\u201d / \u201cforces replacement.\u201d**\n   - If you were expecting a sizing-only change like `instanceClass`, that normally updates in place and would **not** usually cause replacement.\n\n2. **What `pulumi up --target` skips**\n   `pulumi up --target <urn>` applies changes only to:\n\n   - the **targeted resource**\n   - any **dependencies required** to operate on that resource\n\n   It skips:\n\n   - **unrelated resources**\n   - **other pending changes elsewhere in the stack**\n   - often **dependents** of the target unless explicitly targeted too\n\n   So it is **not a full stack update**.\n\n3. **How Pulumi handles secrets in outputs**\n   Pulumi keeps secrets **secret-tracked** through outputs:\n\n   - If a value comes from `config.require_secret()`, it is treated as a **secret**\n   - If you export it, Pulumi stores it **encrypted in state**\n   - In CLI output / preview / stack outputs, Pulumi **redacts** it instead of showing plaintext\n   - If you combine a secret with non-secret values, the resulting `Output` is still treated as a **secret**\n\n   In short: **secret inputs propagate to outputs, stay encrypted in state, and are masked in display**.\n\nIf you want, I can also show what this would look like in a typical Pulumi Python preview diff for an `aws.rds.Instance`."
+}

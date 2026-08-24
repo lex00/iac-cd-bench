@@ -1,0 +1,30 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1058,
+    "output": 891
+  },
+  "content": "I'll review the Pulumi preview JSON for the three security issues. Please **paste the Pulumi preview JSON output** you want me to analyze.\n\nYou can generate it with:\n\n```bash\npulumi preview --json > preview.json\n```\n\n## What I'll Check For\n\nOnce you share the JSON, I'll scan for these three issues against the acceptance criteria:\n\n### 1. Secret in plaintext outputs\n- Looking in `steps[].newState.outputs` and `.inputs` for values that should be secret but appear as raw strings instead of the encrypted `{\"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", ...}` secret signature Pulumi uses.\n- Specifically the **DB connection string** (Criterion 3) \u2014 must be a `ConfigSecret`, never plaintext.\n- Also flag any RDS `password`, IAM access keys, or bucket-related credentials leaking into outputs.\n\n### 2. Replacement of a stateful resource\n- Scanning `steps[]` where `\"op\": \"replace\"` (or `\"create-replace\"` / `\"delete-replaced\"`) targets **stateful** resources:\n  - `aws:rds/instance:Instance` (RDS PostgreSQL) \u2014 replacement = data loss\n  - `aws:s3/bucket:Bucket` / `BucketV2` (application assets, versioned) \u2014 replacement = asset loss\n- I'll extract the `detailedDiff` / `replaceKeys` to tell you **which property forces replacement** (e.g., `engineVersion`, `availabilityZone`, `dbName`).\n\n### 3. Missing protect flag\n- Checking that stateful resources have `\"protect\": true` in their state.\n- Cross-referencing Criterion 2 (**RDS deletion protection**) and the versioned S3 bucket.\n- Flag any RDS/S3 resource without `protect: true`, especially in the **prod** stack.\n\n## What I'll Return\n\nA findings table like:\n\n| # | Severity | Resource (URN) | Issue | Evidence (JSON path) | Fix |\n|---|----------|----------------|-------|----------------------|-----|\n\nPlus concrete Pulumi Python remediations (e.g., `pulumi.ResourceOptions(protect=True)`, `Output.secret(...)`, `config.require_secret(...)`, and how to avoid the forced replacement).\n\n---\n\n**Please paste the preview JSON** (or the relevant `steps[]` portion if it's large). If it's very large, you can also paste just the `resourceChanges` summary plus any `steps` entries with `op` values of `replace`, `create-replace`, `delete`, or `update`.",
+  "regraded_current_harness": true
+}

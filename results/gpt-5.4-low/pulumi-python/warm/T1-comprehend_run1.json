@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 991,
+    "output": 766
+  },
+  "content": "1. **Which property triggered the replace?**  \n   The property shown in the preview as **requiring replacement** did. In Pulumi preview, look for the DB diff line marked like `replace` or \u201cforces replacement.\u201d  \n   For an RDS instance, a common trigger is an immutable field such as **storage encryption**, **identifier/name**, or another provider-defined ForceNew property.\n\n   So the answer is: **the specific DB input flagged in the preview diff as replacement-causing**.\n\n2. **What does `pulumi up --target` skip?**  \n   It applies changes only to the **targeted resource(s)** and the **dependencies required** to operate on them. It skips:\n\n   - unrelated resources\n   - non-targeted updates elsewhere in the stack\n   - dependent resources that are not explicitly targeted\n\n   In practice, it is a partial update, not a full stack reconciliation.\n\n3. **How does Pulumi handle secrets in outputs?**  \n   Pulumi preserves secret-ness automatically:\n\n   - values loaded with `config.require_secret()` are treated as **secrets**\n   - if an `Output` is derived from a secret, the resulting output is also a **secret**\n   - secrets are **encrypted in state**\n   - secrets are **redacted in CLI/display output**\n\n   So if you `pulumi.export()` a secret or a value derived from one, Pulumi keeps it protected rather than printing plaintext."
+}

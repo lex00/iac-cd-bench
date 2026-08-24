@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 714
+  },
+  "content": "1. **Property triggering the DB replacement:** The exact property cannot be determined without the preview\u2019s detailed diff or the TypeScript/config. Pulumi marks the relevant field with `replace`. In this scenario, the likely trigger is RDS `storageEncrypted` changing (for example, `false \u2192 true`), because encryption-at-rest is immutable for an existing RDS instance. Changes such as `instanceClass` or `multiAz` generally update the instance rather than replace it.\n\n2. **What `pulumi up --target` skips:** It restricts the update to the specified resource URN(s) and resources Pulumi must process for those targets. Unrelated pending changes are skipped. Dependents are not generally included unless `--target-dependents` is supplied. Consequently, targeted updates can leave the stack partially reconciled and should not be treated as a normal full-stack deployment.\n\n3. **Secrets in outputs:** Values originating from `config.requireSecret(...)`, `config.getSecret(...)`, or `pulumi.secret(...)` remain secret as they flow through `Output` transformations. Pulumi:\n   - redacts them in CLI output, usually as `[secret]`;\n   - encrypts them in stack state using the configured secrets provider;\n   - preserves the secret marking on derived outputs.\n\n   The plaintext may still be supplied to a provider/resource at deployment time, so the destination service and provider behavior must also protect it. Calling ordinary `config.require(...)` does not automatically make a value secret."
+}

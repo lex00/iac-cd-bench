@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 866
+  },
+  "content": "1. **Property that triggered the replace**  \n   In Pulumi preview, the replacement is triggered by the property marked as **\u201cforces replacement\u201d** in the diff.  \n   For an AWS RDS DB in a setup like this, that is commonly something like **`dbName` / `name`** (or another ForceNew field such as identifier-related settings).\n\n   So the practical answer is:\n\n   - Check the preview diff for the DB resource.\n   - The specific field annotated as requiring replacement is the trigger.\n   - In this kind of stack, it\u2019s often **the DB name/identifier field**, not things like backup retention or deletion protection.\n\n2. **What `pulumi up --target` skips**  \n   `pulumi up --target <urn>` updates only:\n\n   - the targeted resource(s), and\n   - any dependencies Pulumi must include to make that change possible.\n\n   It **skips unrelated resources** in the stack, even if the program changed them too.  \n   It also generally **does not update dependents** unless you target them explicitly.\n\n   In short: **targeted updates are partial updates**, not a full reconciliation of the whole stack.\n\n3. **How Pulumi handles secrets in outputs**  \n   Pulumi tracks secrets natively.\n\n   - If a value comes from `config.requireSecret(...)` or another secret source, it is marked as a **secret**.\n   - Secret outputs are:\n     - **redacted in CLI output** as `[secret]`\n     - **encrypted in Pulumi state** using the stack\u2019s secrets provider\n     - **propagated transitively**: if you combine a secret with other values, the resulting output is also secret\n\n   So Pulumi prevents secret values from being shown in plaintext in previews/outputs and stores them encrypted at rest in state.\n\nIf you want, I can also show what this looks like in an actual `pulumi preview` diff for an `aws.rds.Instance`."
+}

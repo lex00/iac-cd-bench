@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 875
+  },
+  "content": "Assuming the variable flip changes something like the RDS instance class in your Terraform config, here\u2019s what Terraform does.\n\n## 1. What does the next plan show?\n\n`terraform plan` compares:\n\n- your **configuration** (`.tf` files + variable values)\n- against the **state** (`terraform.tfstate`)\n\nSo if a variable changes from, for example:\n\n- `db.t3.micro` \u2192 `db.t3.medium`\n\nthen the next plan will usually show an in-place update if AWS allows that attribute to be modified without replacing the DB.\n\nTypical plan output style:\n\n- `~` = update in place\n- `+` = create\n- `-` = destroy\n- `-/+` = replace\n\nFor an RDS instance class change, you\u2019d usually see `~` on `instance_class`, something like:\n\n```hcl\n~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\nIf the changed variable affects something immutable, Terraform would show a replacement instead.\n\n---\n\n## 2. What happens if the state file is deleted?\n\nIf the state file is deleted, Terraform loses its record of what it already manages.\n\nThen on the next `terraform plan`, Terraform sees:\n\n- configuration says resources should exist\n- state says nothing exists\n\nSo the plan will show **everything as new**, meaning Terraform will try to create all resources again with `+`.\n\nImportant consequence:\n\n- If those resources already exist in AWS, apply may fail due to name conflicts or duplicate resources.\n- Terraform will not automatically \u201cdiscover\u201d them again.\n- To recover, you usually:\n  - restore the state from backup, or\n  - use `terraform import` to re-associate existing resources with state\n\nSo: deleting state does **not** delete real infrastructure, but it makes Terraform forget about it.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\nTerraform behavior depends on the provider schema and AWS API behavior.\n\nFor `aws_db_instance.instance_class`, Terraform typically treats it as a **modifiable attribute**, so it plans an **update in place**, not a replacement.\n\nThat means:\n\n- plan shows `~`\n- apply calls AWS to modify the RDS instance\n- AWS performs the class change, possibly immediately or during the maintenance window depending on settings like `apply_immediately`\n\nThings to know:\n\n- The DB instance keeps the same identity\n- There may be downtime/restart during modification\n- Terraform does not decide the operational impact; AWS does\n\nIf the change were to an attribute that forces recreation, then Terraform would show a replace (`-/+`).\n\n---\n\n## 4. What is the difference between state and configuration?\n\n### Configuration\nYour `.tf` files and variable files define the **desired state**.\n\nExample:\n- \u201cI want an RDS instance of class `db.t3.medium`\u201d\n- \u201cI want an encrypted S3 bucket\u201d\n- \u201cI want 4 EKS nodes in prod\u201d\n\n### State\nThe state file records Terraform\u2019s understanding of the **currently managed real objects**.\n\nIt contains things like:\n- resource IDs\n- current known attributes\n- mappings between Terraform resource addresses and real cloud resources\n\nExample:\n- `aws_db_instance.main` maps to actual DB instance `prod-db-123`\n- current known class is `db.t3.micro`\n\n### Plan\nPlan is the diff between the two:\n- config says what should be\n- state says what Terraform believes exists\n- plan shows what must change\n\n---\n\n## Short version\n\n1. **Next plan after variable flip:** Terraform shows the diff, likely `~ instance_class old -> new` for RDS.\n2. **If state is deleted:** Terraform thinks nothing exists and plans to create everything again.\n3. **RDS class change:** Usually an in-place update, not replacement, unless the attribute is ForceNew.\n4. **State vs configuration:**\n   - configuration = desired infrastructure\n   - state = Terraform\u2019s recorded knowledge of actual managed infrastructure\n\nIf you want, I can also show this using a concrete `dev.tfvars` \u2192 `prod.tfvars` example.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-nqcfdvbn/terraform.tfstate"
+  ]
+}

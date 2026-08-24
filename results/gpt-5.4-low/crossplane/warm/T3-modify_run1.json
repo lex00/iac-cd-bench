@@ -1,0 +1,35 @@
+{
+  "model": "gpt-5.4",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vcdb7ht7/generated_3.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vcdb7ht7/generated_2.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of t"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 625,
+    "output": 1832
+  },
+  "content": "Use a second `ProviderConfig` and patch it through the Composition, with defaults so old claims keep working unchanged.\n\n## 1) Add a second AWS ProviderConfig\n\n```yaml\napiVersion: aws.crossplane.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds\n      key: creds\n  region: us-west-2\n```\n\nKeep your current one, e.g. `aws-default` or `aws-us-east-1`.\n\n---\n\n## 2) Make region/providerConfig selectable in the XRD, but optional\n\nThis is the key to **not changing existing claims**: add fields with defaults matching today\u2019s behavior.\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xapps.platform.example.io\nspec:\n  group: platform.example.io\n  names:\n    kind: XApp\n    plural: xapps\n  claimNames:\n    kind: App\n    plural: apps\n  versions:\n    - name: v1alpha1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                parameters:\n                  type: object\n                  properties:\n                    region:\n                      type: string\n                      default: us-east-1\n                    providerConfigName:\n                      type: string\n                      default: aws-us-east-1\n```\n\nIf your existing provider config is named `default`, use that as the default instead.\n\n---\n\n## 3) Patch those values into every AWS managed resource in the Composition\n\nWhere you currently hardcode region/provider config, replace with patches.\n\n### Example: S3 Bucket\n\n```yaml\n- name: bucket\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: Bucket\n    spec:\n      forProvider: {}\n      providerConfigRef:\n        name: aws-us-east-1\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: \"spec.parameters.region\"\n      toFieldPath: \"spec.forProvider.region\"\n    - type: FromCompositeFieldPath\n      fromFieldPath: \"spec.parameters.providerConfigName\"\n      toFieldPath: \"spec.providerConfigRef.name\"\n```\n\n### Example: RDS Instance\n\n```yaml\n- name: db\n  base:\n    apiVersion: rds.aws.upbound.io/v1beta1\n    kind: Instance\n    spec:\n      forProvider:\n        publiclyAccessible: false\n        deletionProtection: true\n        backupRetentionPeriod: 7\n      providerConfigRef:\n        name: aws-us-east-1\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: \"spec.parameters.region\"\n      toFieldPath: \"spec.forProvider.region\"\n    - type: FromCompositeFieldPath\n      fromFieldPath: \"spec.parameters.providerConfigName\"\n      toFieldPath: \"spec.providerConfigRef.name\"\n```\n\n### Example: EKS Cluster / NodeGroup / IAM / anything regional\n\nApply the same two patches to each AWS resource.\n\n---\n\n## 4) Result\n\n- **Existing claims**: unchanged, still reconcile to `us-east-1` because of defaults.\n- **New deployments in us-west-2**: set only:\n  ```yaml\n  spec:\n    parameters:\n      region: us-west-2\n      providerConfigName: aws-us-west-2\n  ```\n\n---\n\n## 5) If you truly want zero claim changes for new region too\n\nThen the usual Crossplane pattern is:\n\n- keep claims identical\n- select region/provider config via:\n  - a different Composition, or\n  - `EnvironmentConfig`, or\n  - cluster-level defaults per control plane\n\nBut if you want a **single Composition** managing multiple regions in one control plane, some input has to tell it which provider config to use. The cleanest way is the optional `providerConfigName` + `region` parameters above.\n\n---\n\n## 6) Recommended pattern\n\nIf your claim already has an env field like `dev` / `prod`, you can avoid adding a new claim field by mapping env \u2192 provider config inside the Composition pipeline or EnvironmentConfig:\n\n- `dev` \u2192 `aws-us-east-1`\n- `prod` \u2192 `aws-us-west-2` or whatever you want\n\nThat still satisfies \u201cno claim changes\u201d.\n\n---\n\n## Minimal answer\n\nIf your Composition currently hardcodes:\n\n```yaml\nproviderConfigRef:\n  name: aws-us-east-1\nspec:\n  forProvider:\n    region: us-east-1\n```\n\nchange it to patched values from XR parameters, add defaults in the XRD, and create:\n\n```yaml\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  region: us-west-2\n```\n\nThat adds the second region without breaking existing claims.\n\nIf you want, I can generate the exact patch for your current Composition YAML.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vcdb7ht7/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vcdb7ht7/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vcdb7ht7/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vcdb7ht7/generated_3.yaml"
+  ]
+}

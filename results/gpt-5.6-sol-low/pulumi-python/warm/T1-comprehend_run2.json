@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 991,
+    "output": 691
+  },
+  "content": "1. **Property triggering replacement:** The exact property cannot be determined without the actual preview diff/program. Pulumi marks replacement-causing fields with `replace`/`[replace]`. In this scenario, the most likely RDS trigger is changing `storage_encrypted` from `false` in dev to `true` in prod, because RDS encryption cannot be enabled in place. A region/provider change can also force replacement. Changes such as instance class or `multi_az` are generally in-place modifications.\n\n2. **What `pulumi up --target` skips:** It applies changes only to the resource URN(s) named by `--target`; unrelated resources from the full preview are not updated. Dependent resources are also skipped unless `--target-dependents` is used. This can leave the stack partially updated, so a normal `pulumi up` should usually follow.\n\n3. **Secrets in outputs:** Values obtained via `config.require_secret()` are secret `Output`s. Secrecy propagates through transformations such as `.apply()` and interpolation. Pulumi encrypts those values in stack state and redacts them in CLI output, normally displaying `[secret]`. They can be intentionally revealed with options such as `--show-secrets`, and providers receive plaintext when required to create or update resources."
+}

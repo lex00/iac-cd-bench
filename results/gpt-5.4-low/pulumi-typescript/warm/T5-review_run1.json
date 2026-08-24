@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 307
+  },
+  "content": "Please paste the Pulumi preview JSON, and I\u2019ll review it for:\n\n- plaintext secrets in outputs\n- replacement of stateful resources\n- missing `protect` on critical resources\n\nIf you want, you can paste either:\n\n- full `pulumi preview --json` output, or\n- just the `steps` / `resourceChanges` / `diagnostics` sections\n\nWhat I\u2019ll check specifically for your scenario:\n\n1. Secrets in plaintext\n   - `outputDiff`, `outputs`, or config values containing DB connection strings, passwords, access keys, etc.\n   - whether values are marked as Pulumi secrets rather than plain strings\n\n2. Stateful resource replacement\n   - replacements of resources like:\n     - `aws:rds/instance:Instance`\n     - `aws:s3/bucket:Bucket`\n     - EKS cluster / node groups if disruptive\n   - whether replacement is due to immutable property changes\n\n3. Missing `protect`\n   - especially on prod-critical resources:\n     - RDS\n     - S3 bucket\n     - EKS cluster\n     - IAM identities with long-lived access\n   - whether deletion/replacement could occur without protection\n\nIf helpful, I can also give you a quick pass/fail summary against the acceptance criteria once you share the JSON."
+}
