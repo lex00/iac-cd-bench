@@ -14,7 +14,7 @@ from bench.score import compute_score, load_results
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
 
-STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
+STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant"]
 ARCHETYPES = ["comprehend", "generate", "modify", "debug", "review", "semantics"]
 ARCHETYPE_LABELS = {
     "comprehend": "Comprehend",

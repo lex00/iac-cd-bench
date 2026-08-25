@@ -513,7 +513,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     # Parse stacks
-    all_stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
+    all_stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant"]
     stacks = [args.stack] if args.stack else (all_stacks if args.stacks == "all" else args.stacks.split(","))
 
     # Build adapter

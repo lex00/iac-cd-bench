@@ -30,10 +30,13 @@ def test_runner_executes():
 
 
 def test_task_dirs_exist():
-    """All 30 task directories exist."""
-    stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
+    """All 30 task directories exist (36 once chant lands, see #3/#4)."""
+    stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant"]
     task_names = ["T1-comprehend", "T2-generate", "T3-modify", "T4-debug", "T5-review", "T6-semantics"]
     for stack in stacks:
+        if stack == "chant" and not (TASKS_DIR / stack).exists():
+            # TODO(#3/#4): tasks/chant doesn't exist yet; drop this guard once it lands.
+            continue
         for task in task_names:
             task_dir = TASKS_DIR / stack / task
             assert task_dir.exists(), f"Task dir missing: {task_dir}"
@@ -43,9 +46,12 @@ def test_task_dirs_exist():
 
 def test_semantics_tasks_have_graders():
     """T6-semantics tasks ship a seed, golden key, and 7-question grader."""
-    stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
+    stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant"]
     for stack in stacks:
         t6 = TASKS_DIR / stack / "T6-semantics"
+        if stack == "chant" and not t6.exists():
+            # TODO(#3/#4): tasks/chant/T6-semantics doesn't exist yet; drop this guard once it lands.
+            continue
         assert (t6 / "seed").is_dir(), f"seed/ missing: {t6}"
         assert (t6 / "golden" / "answer_key.md").exists(), f"golden answer key missing: {t6}"
         test_file = t6 / "tests" / "test_task.py"
@@ -72,6 +78,11 @@ def test_golden_implementations_exist():
     assert (golden_dirs / "terraform" / "infrastructure.tf").exists()
     assert (golden_dirs / "pulumi-python" / "__main__.py").exists()
     assert (golden_dirs / "pulumi-typescript" / "index.ts").exists()
+    # TODO(#3): golden-base/chant doesn't exist yet; assert its entry point
+    # unconditionally once it lands instead of this existence-gated check.
+    chant_dir = golden_dirs / "chant"
+    if chant_dir.exists():
+        assert any(chant_dir.rglob("*.ts")), f"no .ts entry point found under {chant_dir}"
 
 
 def test_stage_runners_import():
