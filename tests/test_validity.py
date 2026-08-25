@@ -212,25 +212,35 @@ def test_aggregate_scores_no_rejected_key_when_nothing_rejected():
 
 
 # ── report.py: rejected: N surfaces, never silently ─────────────────────
+#
+# bench/run-ready merged bench/report.py from bench/integrity-gates (#62)
+# wholesale — its `partition_by_validity`/`bench.validate.classify_run`-based
+# integrity gate is the richer, authoritative one (comparability refusal,
+# provenance-aware, reason histogram) — rather than #61's simpler
+# `run_validity`-based version these tests originally pinned. The assertions
+# below are updated to match that report's actual wording/shape; the thing
+# they still verify — a rejected run is surfaced with a count and a reason,
+# never silently folded in — is unchanged.
 
 def test_generate_report_surfaces_rejected_count():
     runs = [_run(GENUINE_ANSWER), _run("I'll look for the actual diff artifacts in the repo before reviewing.\n\n**Bash**\n```\nls; find . -iname '*diff*' -not -path './.git/*' | head -50\n```\n")]
     report = generate_report("m", runs)
-    assert "rejected: 1 of 2 runs" in report
-    assert "tool_invocation_markup" in report
+    assert "**rejected: 1**" in report
+    assert "scored: **1**" in report
+    assert "content_too_short" in report
 
 
 def test_generate_report_states_zero_rejected_explicitly():
     runs = [_run(GENUINE_ANSWER)]
     report = generate_report("m", runs)
-    assert "rejected: 0 of 1 runs" in report
+    assert "**rejected: 0**" in report
 
 
 def test_generate_comparison_coverage_table_has_rejected_column():
     runs = [_run(GENUINE_ANSWER), _run("I'll look for the actual diff artifacts in the repo before reviewing.\n\n**Bash**\n```\nls; find . -iname '*diff*' -not -path './.git/*' | head -50\n```\n")]
     report = generate_comparison([("set-a", runs)])
-    assert "| Result set | Runs | Rejected | Judged runs | Judge model | Judge prompt |" in report
-    assert "| set-a | 1 | 1 |" in report
+    assert "| Result set | Scored | Rejected | Judged runs | Judge model | Judge prompt |" in report
+    assert "| set-a | 1 | **1** |" in report
 
 
 # ── runner.py: run_task stamps validity on every run ─────────────────────

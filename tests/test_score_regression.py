@@ -72,10 +72,19 @@ SAMPLED_HISTORICAL_JSONS = [
 # Counts measured over results/ when the vacuous-pass guard landed. Pinned so
 # a later change to VACUOUS_LOG_MARKERS, or a stage runner quietly changing a
 # log body, shows up as a test failure rather than as a moved leaderboard.
-EXPECTED_TOTAL_RUNS = 1140
-EXPECTED_VACUOUS_RUNS = 744
-EXPECTED_FULLY_VACUOUS_RUNS = 119
-EXPECTED_CHANGED_COMPOSITES = 762
+#
+# Re-pinned on bench/run-ready when #61 (bench/cli-provider-fix) and #62
+# (bench/integrity-gates) were merged together: cli-provider-fix's #40/#59
+# probe and re-smoke work added new pre-gating-shaped JSONs under results/
+# (claude-{haiku-4-5,opus-5}-3arm, claude-{haiku-4-5,opus-5}-probe), which
+# this file's _historical_results() counts (its post-gating `skipped` runs
+# are filtered out, per that generator's own docstring). The counts below are
+# what the merged tree measures; `increased == 0` is what's actually load-
+# bearing, not the exact totals.
+EXPECTED_TOTAL_RUNS = 1218
+EXPECTED_VACUOUS_RUNS = 773
+EXPECTED_FULLY_VACUOUS_RUNS = 127
+EXPECTED_CHANGED_COMPOSITES = 791
 
 
 def _old_composite(stages: dict) -> float:
@@ -111,6 +120,17 @@ def _historical_results():
         except (json.JSONDecodeError, OSError):
             continue
         if not isinstance(result, dict) or "stages" not in result:
+            continue
+        # Result sets written after spec-driven stage gating landed (#56) -
+        # e.g. claude-*-3arm and claude-*-probe from #40/#59 - legitimately
+        # carry a `skipped` flag on stages a task's spec disables. Those are
+        # out of scope for this file: it isolates the vacuous-pass guard's
+        # own delta from stage gating's, and stage gating's own inertness
+        # over its runs is covered by tests/test_stage_gating.py instead.
+        if any(
+            isinstance(s, dict) and "skipped" in s
+            for s in result["stages"].values()
+        ):
             continue
         yield json_path, result
 
