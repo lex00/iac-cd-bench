@@ -175,6 +175,14 @@ fold: 1 file folded, 0 ran
 Summary: 38 resources found in 6 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 38
 ```
 
+No WK8505 line appears above, and that is expected rather than a gap: the
+build steps run one build root at a time, and the check needs a Flux
+Kustomization and a resolved committed-encrypted secret in the *same*
+`chant build` invocation to have anything to say — see "Secrets:
+committed-encrypted SOPS ciphertext" below for the check firing (and going
+quiet) against this golden's real content, via a combined `chant build
+src/envs/dev` that this project's own build scripts deliberately don't run.
+
 No line above says so explicitly — worth being explicit here instead: the
 `chant build src/envs/dev/infra` step also writes
 `dist/dev/infra/db-credentials.dev.sops.yaml`, a byte-for-byte copy of
@@ -434,22 +442,59 @@ demonstration; flipping both would double the ciphertext-maintenance surface
 of this README's worked example for no comprehension-task benefit distinct
 from dev's.
 
-**The delivery side is not wired, on purpose.** `spec.decryption` is already
-in the generated typed surface (`K8s::Flux::Kustomization.decryption`, pulled
-from the pinned flux2 CRD schema), but the lexicon's `FluxAppFor` composite
-(`src/envs/dev/delivery/main.ts` calls it) does not yet expose a `decryption`
-prop to set it — that pass-through is iac-cd-bench#33, landing separately and
-in parallel with this change. So `myapp-dev-infra`'s `Kustomization` reconciles
-`./dist/dev/infra` — which, as of this change, contains a SOPS-encrypted
-sidecar — with no `spec.decryption` block naming the age identity Flux would
-need to decrypt it. That is an honest gap in this golden today, not a bug in
-what shipped here: when #33's re-vendor lands, wiring
-`decryption: "sops"` (defaulting `secretRef.name` to `sops-age`, per the
-design doc) onto `infraApp` in `src/envs/dev/delivery/main.ts` is the fix, and
-a new WK8505 warning ("committed-encrypted secret with no Flux decryption
-wiring in this build") may start firing on this golden's `dev/infra` build
-until that composite prop is added there too — expected wiring surfacing a
-real gap, not a regression to chase down.
+**The delivery side is now wired.** `iac-cd-bench#33` landed: the lexicon's
+`FluxAppFor` composite (`vendor/`, `bench/flux-sops` @ `b7324024`) exposes a
+`decryption?: "sops" | { provider: "sops"; secretRef?: string }` prop, and
+`src/envs/dev/delivery/main.ts`'s `infraApp` call now sets `decryption:
+"sops"`. `myapp-dev-infra`'s `Kustomization` — the one reconciling
+`./dist/dev/infra`, which carries the SOPS-encrypted sidecar — now emits
+
+```yaml
+spec:
+  decryption:
+    provider: sops
+    secretRef:
+      name: sops-age
+```
+
+`"sops"` is shorthand for the default age Secret name; the design doc's
+`sops-age` (bootstrap-injected into `flux-system`, itself a `referenced`
+declaration — see below) is what it resolves to. `myapp-dev-clusters` (the
+other Kustomization in the same build, reconciling `./dist/dev/clusters`,
+which carries no ciphertext) is untouched — `decryption` is per-Kustomization,
+not project-wide.
+
+**WK8505 guards the pairing, with one real limitation this golden surfaces.**
+The rule warns when a build's Kustomizations set no `spec.decryption` while
+the *same build* also resolved a committed-encrypted secret. That "same
+build" scoping is deliberate upstream (`wk8505.ts`'s own doc comment: a
+project can legitimately run the workload build and the Flux build as
+separate `chant build` invocations, so the rule can't tell "wired up
+elsewhere" from "forgotten" across builds, and doesn't try). This golden's
+own three-way split — `infra`/`clusters`/`delivery` as three separate build
+roots, precisely so each `Kustomization` can reconcile a path that doesn't
+contain the object declaring it (see "Build output layout") — means no
+single `chant build` invocation in `npm run verify` ever synthesizes both
+the Kustomizations (`delivery`) and the resolved secret (`infra`) together.
+Confirmed both ways: before this wiring, `chant build src/envs/dev` (the
+whole dev tree in one invocation) fired the warning —
+
+```
+warning: [myapp-dev-db-master] declareSecret("myapp-dev-db-master") is
+committed-encrypted, but no Flux Kustomization in this build sets
+spec.decryption — Flux will apply "db-credentials.dev.sops.yaml" without
+decrypting it. Add decryption: "sops" to the FluxAppFor reconciling the path
+that carries it, or ignore if that Kustomization is declared in a different
+build. (k8s)
+```
+
+— and the same combined build is quiet after the wiring above. `npm run
+verify`'s actual `chant build src/envs/dev/delivery` /
+`chant build src/envs/dev/infra` invocations never see both halves at once,
+so neither one fires WK8505 either before or after this change — real
+evidence the check works on this golden's real content, and an honest
+demonstration of the one thing it structurally cannot catch for a
+split-build project shape like this one.
 
 Chant's four-way secret-provenance taxonomy (`referenced`, `from-provider`,
 `generated-once`, `committed-encrypted`) is what makes both of the above
@@ -476,25 +521,22 @@ toolchain cannot declare today, with what was done instead.
 
 This is now a shipped capability pending only upstream publish, not an open
 implementation gap. `declareSecret()`, all four provenance kinds including
-`committed-encrypted`, and the k8s lexicon's WK8503/WK8504 coverage for it are
-on chant's `bench/sops-impl` branch (`5ad19f9a`) and vendored here (see
+`committed-encrypted`, the k8s lexicon's WK8503/WK8504/WK8505 coverage for
+it, and `FluxAppFor`'s `decryption` pass-through (iac-cd-bench#33) are on
+chant's `bench/flux-sops` branch (`b7324024`) and vendored here (see
 `vendor/README.md`) — `src/composites/secrets.ts`'s `describeSecret()` makes
 the real `declareSecret({ provenance: "committed-encrypted" })` call for dev's
-master password (see "Secrets: committed-encrypted SOPS ciphertext" above).
-What remains open is purely upstream: none of this is in the published
-`@intentius/chant@0.46.0` / `@intentius/chant-lexicon-k8s@0.47.0`, which is why
-`vendor/` still exists at all. A golden that depends on an unpublished API in
-two packages instead of one is a worse artifact than one that keeps discipline
-structurally where it must — which is exactly why prod's master password
-stays `referenced` via the same hand-rolled-shaped `SecretRef` pointer rather
-than every ref in this repo needing the vendored primitive to type-check;
-`describeSecret()`'s new signature is the one line that changes when both
-packages publish, same as before.
-
-Also still open, and unrelated to publishing: the Flux decryption
-pass-through (iac-cd-bench#33 — `FluxAppFor`'s `decryption` prop) is not yet
-in any vendored build, chant's own or otherwise. See "Secrets:
-committed-encrypted SOPS ciphertext" above.
+master password, and `src/envs/dev/delivery/main.ts`'s `infraApp` sets
+`decryption: "sops"` (see "Secrets: committed-encrypted SOPS ciphertext"
+above). What remains open is purely upstream: none of this is in the
+published `@intentius/chant@0.46.0` / `@intentius/chant-lexicon-k8s@0.47.0`,
+which is why `vendor/` still exists at all. A golden that depends on an
+unpublished API in two packages instead of one is a worse artifact than one
+that keeps discipline structurally where it must — which is exactly why
+prod's master password stays `referenced` via the same hand-rolled-shaped
+`SecretRef` pointer rather than every ref in this repo needing the vendored
+primitive to type-check; `describeSecret()`'s new signature is the one line
+that changes when both packages publish, same as before.
 
 ### 2. The vendored lexicon does not work with the published core
 
@@ -569,8 +611,8 @@ emit — is resolved; see "Build output layout" above.
 
 | Piece | Version | Source |
 |---|---|---|
-| `@intentius/chant` | 0.46.0 (branch build, `bench/sops-impl` @ `5ad19f9a`) | `vendor/intentius-chant-0.46.0-bench.tgz` |
-| `@intentius/chant-lexicon-k8s` | 0.47.0 (branch build, `bench/sops-impl` @ `5ad19f9a`) | `vendor/intentius-chant-lexicon-k8s-0.47.0.tgz` |
+| `@intentius/chant` | 0.46.0 (branch build, `bench/flux-sops` @ `b7324024`) | `vendor/intentius-chant-0.46.0-bench.tgz` |
+| `@intentius/chant-lexicon-k8s` | 0.47.0 (branch build, `bench/flux-sops` @ `b7324024`) | `vendor/intentius-chant-lexicon-k8s-0.47.0.tgz` |
 | `sops` | 3.13.3 | system (`sops -e`/`-d` on `secrets/*.sops.yaml`; not invoked by `chant` itself) |
 | `age` | 1.3.1 | system (`age-keygen` minted `age-key.txt`) |
 | `kubeconform` | 0.7.0 | system |

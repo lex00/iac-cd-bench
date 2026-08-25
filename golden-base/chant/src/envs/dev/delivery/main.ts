@@ -28,6 +28,14 @@ export const infraApp = FluxAppFor("myapp-dev-infra", {
   path: "./dist/dev/infra",
   targetNamespace: INFRA_NAMESPACE,
   interval: "10m",
+  // dev's RDS master password is committed-encrypted SOPS ciphertext
+  // (secrets/db-credentials.dev.sops.yaml, resolved into
+  // dist/dev/infra/db-credentials.dev.sops.yaml — see
+  // src/composites/secrets.ts and README, "Secrets: committed-encrypted
+  // SOPS ciphertext"). "sops" is shorthand for the default age Secret name
+  // (sops-age, bootstrap-injected into flux-system) — Flux needs this or it
+  // applies the sidecar as raw ENC[...] bytes.
+  decryption: "sops",
 });
 
 export const clusterApp = FluxAppFor("myapp-dev-clusters", {
