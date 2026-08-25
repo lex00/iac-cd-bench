@@ -19,6 +19,7 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from bench import judge as judge_mod
 from bench.stages import lint, static, semantic, e2e
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -185,10 +186,14 @@ class ModelAdapter:
 class AnthropicAdapter(ModelAdapter):
     """Anthropic API adapter via httpx."""
 
-    def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None):
+    def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None,
+                 temperature: float | None = None):
         self.model = model
         self.api_key = api_key
         self.reasoning_effort = reasoning_effort
+        # Only set for deterministic side-calls (the rubric judge). Left None
+        # for benchmark runs: the 4.7+/5 family rejects sampling parameters.
+        self.temperature = temperature
         self._url = "https://api.anthropic.com/v1/messages"
 
     @property
@@ -219,6 +224,8 @@ class AnthropicAdapter(ModelAdapter):
             "max_tokens": 16384,
             "messages": messages,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
 
         # Opus 5.x and Opus 4.8 use adaptive thinking with output_config.effort
         # (4.8 rejects legacy budget_tokens with a 400 pointing at adaptive).
@@ -416,6 +423,7 @@ def run_task(
     k: int = 3,
     run_e2e: bool = False,
     condition: str = "warm",
+    judge: Any = None,
 ) -> list[dict[str, Any]]:
     """Run a single task k times, return results."""
     spec_path = task_dir / "spec.yaml"
@@ -489,6 +497,19 @@ def run_task(
             if run_e2e:
                 result["stages"]["e2e"] = e2e.run_e2e(workspace, stack)
 
+            # Rubric judge (flag-gated; spends API money, so default off).
+            # Only rubric tasks return a verdict; a judge failure is recorded
+            # but never fails the run — score.py falls back to idiom 0.0.
+            if judge is not None:
+                try:
+                    verdict = judge.score_task(task_dir, workspace=workspace,
+                                               content=completion["content"])
+                    if verdict is not None:
+                        result["judge"] = verdict
+                except Exception as je:  # noqa: BLE001 - judging is best-effort
+                    log.warning("Judge failed for %s: %s", task_id, je)
+                    result["judge_error"] = str(je)
+
         except Exception as e:
             result["error"] = str(e)
             result["stages"]["lint"] = {"passed": False, "logs": str(e)}
@@ -516,6 +537,17 @@ def main() -> None:
     parser.add_argument("--api-key", default=None, help="API key (defaults to env ANTHROPIC_API_KEY)")
     parser.add_argument("--reasoning-effort", default=None,
                         help="Reasoning effort for reasoning models (e.g. none, low, high, max)")
+    parser.add_argument("--judge", action="store_true",
+                        help="Score the idiom axis with the rubric LLM judge on tasks that "
+                             "have a rubric (extra API calls; off by default)")
+    parser.add_argument("--judge-model", default=None,
+                        help=f"Judge model id (default: $BENCH_JUDGE_MODEL or "
+                             f"{judge_mod.DEFAULT_JUDGE_MODEL})")
+    parser.add_argument("--judge-provider", default="anthropic",
+                        choices=["anthropic", "openai-compat"],
+                        help="Provider for the judge model (default: anthropic)")
+    parser.add_argument("--judge-base-url", default=None,
+                        help="Base URL for an OpenAI-compatible judge endpoint")
     parser.add_argument("--results-tag", default=None,
                         help="Suffix tag for the results directory (e.g. 'low' -> results/<model>-low/). "
                              "Prevents re-runs with different settings from overwriting prior runs.")
@@ -538,6 +570,17 @@ def main() -> None:
     else:
         adapter = OpenAICompatAdapter(args.model, base_url or "http://localhost:8000", api_key,
                                       reasoning_effort=args.reasoning_effort)
+
+    # Build the rubric judge (opt-in: it costs extra API calls)
+    rubric_judge = None
+    if args.judge:
+        rubric_judge = judge_mod.build_judge(
+            model=args.judge_model,
+            provider=args.judge_provider,
+            base_url=args.judge_base_url,
+        )
+        log.info("Rubric judge enabled: model=%s prompt=%s",
+                 rubric_judge.model, judge_mod.prompt_hash())
 
     # Discover tasks
     all_results: list[dict[str, Any]] = []
@@ -576,7 +619,8 @@ def main() -> None:
                 time.sleep(10)
 
             log.info("Running %s/%s (condition=%s)", stack, task_dir.name, args.condition)
-            results = run_task(task_dir, adapter, args.k, args.e2e, args.condition)
+            results = run_task(task_dir, adapter, args.k, args.e2e, args.condition,
+                               judge=rubric_judge)
             all_results.extend(results)
 
             # Write results
