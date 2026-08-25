@@ -50,6 +50,11 @@ def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -
     k8s_stacks = {"knr-ops", "crossplane"}
     # For terraform, only extract .tf files
     tf_stacks = {"terraform"}
+    # For chant, the model writes TypeScript source (not the YAML the stack
+    # emits); only extract .ts blocks so lint/static/e2e build the source and
+    # gate on the YAML chant emits, rather than misdetecting the model's
+    # commentary/example-output blocks as the artifact to validate.
+    chant_stacks = {"chant"}
 
     written: list[Path] = []
     used_blocks: set[int] = set()
@@ -75,6 +80,9 @@ def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -
             # For terraform, skip non-HCL blocks
             if stack in tf_stacks and lang not in ("hcl", "terraform", ""):
                 continue
+            # For chant, skip anything that isn't TypeScript source
+            if stack in chant_stacks and lang not in ("typescript", "ts", ""):
+                continue
             if block_pos > path_pos:
                 dest = workspace / path_str
                 dest.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +107,9 @@ def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -
                 continue
             # For terraform, don't write non-HCL files
             if stack in tf_stacks and lang not in ("hcl", "terraform", ""):
+                continue
+            # For chant, don't write non-TypeScript files
+            if stack in chant_stacks and lang not in ("typescript", "ts", ""):
                 continue
             ext = {"yaml": ".yaml", "yml": ".yaml", "json": ".json", "python": ".py",
                    "py": ".py", "typescript": ".ts", "ts": ".ts", "hcl": ".tf",
