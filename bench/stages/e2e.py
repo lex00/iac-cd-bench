@@ -44,6 +44,8 @@ def run_e2e(workspace: Path, stack: str, kind_cluster_name: str = "bench") -> di
         passed &= _e2e_pulumi(workspace, results)
     elif stack == "chant":
         passed &= _e2e_chant(workspace, results)
+    elif stack == "bare":
+        passed &= _e2e_bare(workspace, results)
     else:
         results.append(f"no e2e for stack: {stack}")
         passed = False
@@ -286,6 +288,34 @@ def _e2e_chant(workspace: Path, results: list[str]) -> bool:
     elif passed:
         results.append("chant build produced no manifest to apply")
         passed = False
+
+    return passed
+
+
+def _e2e_bare(workspace: Path, results: list[str]) -> bool:
+    """Run bare e2e: kubectl apply the plain YAML manifests directly to the
+    kind cluster, one file at a time (no build step, no GitOps controller —
+    mirrors the knr-ops apply path minus Flux)."""
+    passed = True
+
+    yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
+    if not yaml_files:
+        results.append("no YAML files in workspace")
+        return False
+
+    for yfile in yaml_files:
+        try:
+            proc = subprocess.run(
+                ["kubectl", "apply", "-f", str(yfile)],
+                capture_output=True, text=True, timeout=60,
+            )
+            results.append(f"kubectl apply -f {yfile.name}: exit={proc.returncode}")
+            if proc.returncode != 0:
+                results.append(f"ERR: {proc.stderr[:500]}")
+                passed = False
+        except Exception as e:
+            results.append(f"kubectl apply failed: {e}")
+            passed = False
 
     return passed
 
