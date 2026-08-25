@@ -11,28 +11,41 @@ import subprocess
 import logging
 from pathlib import Path
 
+from bench.stages import lint as lint_mod
+
 log = logging.getLogger(__name__)
 
 
 def run_static(workspace: Path, stack: str) -> dict:
-    """Run tool-native static validation for the stack."""
+    """Run tool-native static validation for the stack.
+
+    Each per-stack helper returns `(passed, acted)`. `acted` is False when the
+    helper found nothing to build — no kustomization, no claim, no manifest —
+    in which case the stage is recorded `inapplicable` rather than passed. See
+    bench.stages.lint.inapplicable for why: a run that produced no artifacts
+    used to collect a free static pass, which flattered exactly the runs that
+    had failed hardest.
+    """
     results: list[str] = []
-    all_passed = True
 
     if stack == "knr-ops":
-        all_passed &= _knr_ops_static(workspace, results)
+        all_passed, acted = _knr_ops_static(workspace, results)
     elif stack == "crossplane":
-        all_passed &= _crossplane_static(workspace, results)
+        all_passed, acted = _crossplane_static(workspace, results)
     elif stack == "terraform":
-        all_passed &= _terraform_static(workspace, results)
+        all_passed, acted = _terraform_static(workspace, results)
     elif stack in ("pulumi-python", "pulumi-typescript"):
-        all_passed &= _pulumi_static(workspace, results)
+        all_passed, acted = _pulumi_static(workspace, results)
     elif stack == "chant":
-        all_passed &= _chant_static(workspace, results)
+        all_passed, acted = _chant_static(workspace, results)
     elif stack == "bare":
-        all_passed &= _bare_static(workspace, results)
+        all_passed, acted = _bare_static(workspace, results)
     else:
-        results.append(f"no static commands for stack: {stack}")
+        return lint_mod.inapplicable(f"no static commands for stack: {stack}")
+
+    if not acted:
+        reason = "\n".join(results) or "nothing to build in workspace"
+        return lint_mod.inapplicable(reason)
 
     return {
         "passed": all_passed,
@@ -40,7 +53,7 @@ def run_static(workspace: Path, stack: str) -> dict:
     }
 
 
-def _knr_ops_static(workspace: Path, results: list[str]) -> bool:
+def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run kustomize build and flux build for knr-ops."""
     passed = True
 
@@ -90,10 +103,10 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> bool:
             log.warning("Command not found: flux")
             passed = False
 
-    return passed
+    return passed, bool(kustomizations or flux_kustomizations)
 
 
-def _crossplane_static(workspace: Path, results: list[str]) -> bool:
+def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run crossplane beta render for Crossplane."""
     passed = True
 
@@ -122,10 +135,17 @@ def _crossplane_static(workspace: Path, results: list[str]) -> bool:
             log.warning("Command not found: crossplane")
             passed = False
 
-    return passed
+    if not claims:
+        results.append(
+            "no crossplane claim (*claim*.yaml) in workspace: "
+            f"{len(compositions)} composition(s), {len(xrds)} xrd(s) found, "
+            "nothing to render"
+        )
+
+    return passed, bool(claims)
 
 
-def _terraform_static(workspace: Path, results: list[str]) -> bool:
+def _terraform_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run terraform validate and plan for Terraform."""
     passed = True
 
@@ -150,10 +170,10 @@ def _terraform_static(workspace: Path, results: list[str]) -> bool:
         log.warning("Command not found: terraform")
         passed = False
 
-    return passed
+    return passed, True
 
 
-def _pulumi_static(workspace: Path, results: list[str]) -> bool:
+def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run pulumi preview for Pulumi stacks."""
     passed = True
 
@@ -179,10 +199,10 @@ def _pulumi_static(workspace: Path, results: list[str]) -> bool:
         log.warning("Command not found: pulumi")
         passed = False
 
-    return passed
+    return passed, True
 
 
-def _chant_static(workspace: Path, results: list[str]) -> bool:
+def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Build the chant workspace to YAML, then validate the emitted manifests
     with kubeconform (mirrors knr-ops's kubeconform usage)."""
     passed = True
@@ -210,11 +230,11 @@ def _chant_static(workspace: Path, results: list[str]) -> bool:
     except FileNotFoundError:
         results.append("NOT FOUND: chant")
         log.warning("Command not found: chant")
-        return False
+        return False, True
 
     if not build_out.exists():
         results.append("chant build produced no manifest; skipping kubeconform")
-        return passed
+        return passed, True
 
     log.info("kubeconform %s", build_out)
     try:
@@ -237,10 +257,10 @@ def _chant_static(workspace: Path, results: list[str]) -> bool:
         log.warning("Command not found: kubeconform")
         passed = False
 
-    return passed
+    return passed, True
 
 
-def _bare_static(workspace: Path, results: list[str]) -> bool:
+def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Validate bare's plain YAML manifests with a client-side kubectl dry
     run, one file at a time. --dry-run=client (not =server) deliberately:
     static validation has no cluster dependency (unlike e2e, which applies
@@ -251,7 +271,7 @@ def _bare_static(workspace: Path, results: list[str]) -> bool:
     yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
     if not yaml_files:
         results.append("no YAML files in workspace")
-        return passed
+        return passed, False
 
     for yfile in yaml_files:
         log.info("kubectl apply --dry-run=client -f %s", yfile)
@@ -276,4 +296,4 @@ def _bare_static(workspace: Path, results: list[str]) -> bool:
             passed = False
             break
 
-    return passed
+    return passed, True
