@@ -29,6 +29,8 @@ def run_static(workspace: Path, stack: str) -> dict:
         all_passed &= _pulumi_static(workspace, results)
     elif stack == "chant":
         all_passed &= _chant_static(workspace, results)
+    elif stack == "bare":
+        all_passed &= _bare_static(workspace, results)
     else:
         results.append(f"no static commands for stack: {stack}")
 
@@ -221,5 +223,42 @@ def _chant_static(workspace: Path, results: list[str]) -> bool:
         passed = False
     except FileNotFoundError:
         results.append("NOT FOUND: kubeconform")
+
+    return passed
+
+
+def _bare_static(workspace: Path, results: list[str]) -> bool:
+    """Validate bare's plain YAML manifests with a client-side kubectl dry
+    run, one file at a time. --dry-run=client (not =server) deliberately:
+    static validation has no cluster dependency (unlike e2e, which applies
+    for real against kind), and server-side dry-run would require a live
+    API server to talk to just to check the manifests are well-formed."""
+    passed = True
+
+    yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
+    if not yaml_files:
+        results.append("no YAML files in workspace")
+        return passed
+
+    for yfile in yaml_files:
+        log.info("kubectl apply --dry-run=client -f %s", yfile)
+        try:
+            proc = subprocess.run(
+                ["kubectl", "apply", "--dry-run=client", "-f", str(yfile)],
+                capture_output=True, text=True, timeout=60,
+            )
+            results.append(f"kubectl apply --dry-run=client -f {yfile.name}: exit={proc.returncode}")
+            if proc.stdout:
+                results.append(proc.stdout[:500])
+            if proc.stderr:
+                results.append(f"ERR: {proc.stderr[:500]}")
+            if proc.returncode != 0:
+                passed = False
+        except subprocess.TimeoutExpired:
+            results.append(f"TIMEOUT: kubectl apply --dry-run=client -f {yfile}")
+            passed = False
+        except FileNotFoundError:
+            results.append("NOT FOUND: kubectl")
+            break
 
     return passed

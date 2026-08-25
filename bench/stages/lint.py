@@ -35,6 +35,10 @@ LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
         ("chant", ["lint", "."], "chant lint"),
         ("tsc", ["--noEmit", "--skipLibCheck"], "tsc check"),
     ],
+    "bare": [
+        ("yq", ["eval", ".", "--"], "parse all YAML"),
+        ("kubeconform", ["-summary", "-ignore-missing-schemas"], "validate CRDs"),
+    ],
 }
 
 
@@ -49,7 +53,7 @@ def run_lint(workspace: Path, stack: str) -> dict:
 
     # Find files for YAML stacks
     yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
-    if stack in ("knr-ops", "crossplane"):
+    if stack in ("knr-ops", "crossplane", "bare"):
         files = [str(f) for f in yaml_files]
         # If no YAML files exist, lint passes (nothing to lint)
         if not files:
@@ -63,7 +67,7 @@ def run_lint(workspace: Path, stack: str) -> dict:
         files = ["."]
 
     for cmd, args, description in commands:
-        if stack in ("knr-ops", "crossplane", "pulumi-typescript"):
+        if stack in ("knr-ops", "crossplane", "pulumi-typescript", "bare"):
             cmd_args: list[str] = [cmd] + args + files
         elif stack == "chant":
             # "chant lint ." already targets the workspace itself; only tsc
