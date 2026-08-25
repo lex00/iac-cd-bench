@@ -17,7 +17,7 @@ Every task lives in `tasks/<stack>/<task-id>/` with this contract:
 ## spec.yaml Schema
 
 ```yaml
-stack: knr-ops|crossplane|terraform|pulumi-python|pulumi-typescript
+stack: knr-ops|chant|bare|crossplane|terraform|pulumi-python|pulumi-typescript
 archetype: comprehend|generate|modify|debug|review|semantics
 id: "T1-comprehend"
 title: "Predict delivery behavior from repo slice"
