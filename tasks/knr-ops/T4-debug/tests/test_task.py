@@ -58,9 +58,17 @@ def _read_sops_config() -> str:
 
 
 def _correct_age_key() -> str:
-    key_path = Path("age-key.txt")
-    assert key_path.exists(), "age-key.txt (seeded, not part of the fix) is missing from the workspace"
-    return key_path.read_text().strip()
+    """The seeded ground-truth key. Read tolerantly: a missing or unreadable
+    age-key.txt is an assertion failure with a message, never a
+    FileNotFoundError that errors out the rest of the module (issue #72)."""
+    for key_path in sorted(Path(".").rglob("age-key.txt")):
+        try:
+            text = key_path.read_text().strip()
+        except Exception:
+            continue
+        if text:
+            return text
+    pytest.fail("age-key.txt (seeded, not part of the fix) is missing from the workspace")
 
 
 @pytest.fixture(scope="module")
@@ -111,7 +119,7 @@ def test_fix_is_scoped(sops_config):
     # a "fix" that instead rewrites it to match the wrong key would make
     # both files agree on the wrong value and still not decrypt anything
     # real.
-    assert Path("age-key.txt").read_text().strip() == (
+    assert _correct_age_key() == (
         "age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg"
     ), "age-key.txt (the ground-truth key) must not be modified -- fix .sops.yaml instead"
 
