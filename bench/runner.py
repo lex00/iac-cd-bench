@@ -47,8 +47,8 @@ def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -
 
     # Only extract YAML/JSON/Python/TypeScript/HCL blocks (skip shell, text, markdown)
     extract_langs = {"yaml", "yml", "json", "python", "py", "typescript", "ts", "hcl", "terraform"}
-    # For K8s stacks (knr-ops, crossplane), only extract manifests that look like K8s resources
-    k8s_stacks = {"knr-ops", "crossplane"}
+    # For K8s stacks (knr-ops, crossplane, bare), only extract manifests that look like K8s resources
+    k8s_stacks = {"knr-ops", "crossplane", "bare"}
     # For terraform, only extract .tf files
     tf_stacks = {"terraform"}
     # For chant, the model writes TypeScript source (not the YAML the stack
@@ -560,7 +560,7 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     # Parse stacks
-    all_stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant"]
+    all_stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant", "bare"]
     stacks = [args.stack] if args.stack else (all_stacks if args.stacks == "all" else args.stacks.split(","))
 
     # Build adapter
