@@ -23,7 +23,8 @@ Measures how well AI models understand continuous-delivery workflows across five
 - **One scenario, five stacks**: all stacks implement the same infrastructure spec so results compare tools, not problems.
 - **Four-stage validation ladder**: lint → tool-native static check → structural pytest assertions → live e2e (kind + LocalStack)
 - **knr-ops cold/warm**: tasks run without docs (cold) and with README slices (warm) to measure documentation-driven generalization vs training-data recall
-- **Deterministic**: temperature 0, k=3 runs, pass@1 and pass@3 reported
+- **k=3, variance measured rather than assumed**: `temperature=0` is sent only where the adapter's target API accepts it (the OpenAI-compatible adapter's generic and GLM code paths). Anthropic's Claude models never receive an explicit `temperature` — current Claude models reject any value other than the default once extended/adaptive thinking is enabled, so the adapter omits it entirely rather than pass a value some requests would reject. gpt-5+ and kimi/qwen models likewise reject `temperature` and use `reasoning_effort` instead. Since temperature 0 isn't achievable across the whole model matrix, each task runs k=3 times and the **consistency axis** (pass@1 vs pass@3 agreement) reports the actual output variance directly instead of assuming determinism.
+- **Reasoning effort pinned and recorded**: `--reasoning-effort` fixes one effort level per model for a full suite (e.g. `low`, `max`); every run's result JSON records the `reasoning_effort` value the adapter used, so cross-model comparisons can confirm effort was held constant within a suite rather than drifting between models or runs.
 
 ## Quick Start
 

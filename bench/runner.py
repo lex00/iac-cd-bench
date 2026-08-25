@@ -444,6 +444,10 @@ def run_task(
             "stack": stack,
             "run": run_idx,
             "condition": condition,
+            # Reasoning effort pinned for this invocation (None if the model/
+            # adapter doesn't support one). Recorded per run so cross-model
+            # comparisons can confirm effort was held constant within a suite.
+            "reasoning_effort": getattr(adapter, "reasoning_effort", None),
             "stages": {},
         }
 
