@@ -1,0 +1,10 @@
+# SOPS configuration — mirrors golden-base/knr-ops/.sops.yaml.
+#
+# One throwaway age recipient for every *.sops.yaml this project commits. The
+# matching private key is age-key.txt, committed in this directory for the
+# same reason knr-ops commits its own: this is a benchmark fixture with a
+# test key, not a real secret. See README, "Secrets: committed-encrypted
+# SOPS ciphertext".
+creation_rules:
+  - path_regex: \.sops\.ya?ml$
+    age: age1t7pujmuedmqnuy6ml4msuzamrv40ja5jyy9h2vwwrpg2xcwkc5esngtz7u
