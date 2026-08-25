@@ -1,2 +1,6 @@
 node_modules/
 dist/
+# bench/stages/static.py's chant static check (and the preflight gate that
+# reuses it against this directory) writes its build output here, distinct
+# from dist/ above (this project's own `npm run build:*` targets).
+build/
