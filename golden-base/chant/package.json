@@ -1,0 +1,23 @@
+{
+  "name": "iac-cd-bench-golden-chant",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "chant golden implementation of scenario/SPEC.md for the IaC/CD benchmark",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "chant lint src",
+    "build:dev": "chant build src/envs/dev -f yaml -o dist/dev.yaml",
+    "build:prod": "chant build src/envs/prod -f yaml -o dist/prod.yaml",
+    "kubeconform": "kubeconform -ignore-missing-schemas -summary dist/dev.yaml dist/prod.yaml",
+    "verify": "npm run typecheck && npm run lint && npm run build:dev && npm run build:prod && npm run kubeconform"
+  },
+  "dependencies": {
+    "@intentius/chant": "file:vendor/intentius-chant-0.46.0-bench.tgz",
+    "@intentius/chant-lexicon-k8s": "file:vendor/intentius-chant-lexicon-k8s-0.47.0.tgz"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3",
+    "zod": "^4.3.6"
+  }
+}
