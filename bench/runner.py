@@ -24,7 +24,6 @@ from bench import preflight as preflight_mod
 from bench import provenance as prov_mod
 from bench import validity as validity_mod
 from bench.stages import lint, static, semantic, e2e
-from bench.validity import check_run_validity
 
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "tasks"
@@ -711,13 +710,6 @@ def run_task(
             output_file = workspace / "model_output.md"
             output_file.write_text(completion["content"])
             result["content"] = completion["content"]
-
-            # Run-validity gate (#59): flag tool-narration leaks and
-            # too-short stubs on the recorded content itself, so a run the
-            # gate rejects is documented with a reason on the run JSON
-            # (score.py/report.py exclude it from every aggregate rather
-            # than scoring it as an ordinary failure - see bench/validity.py).
-            result["validity"] = check_run_validity(result)
 
             # Extract code blocks from model output and write as files in workspace
             extracted = extract_code_blocks(completion["content"], workspace, stack)
