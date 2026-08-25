@@ -2,7 +2,7 @@
 
 import pytest
 
-from bench.grounding import MCPClient
+from bench.grounding import MCPClient, discover_kinds
 
 
 class FakeResponse:
@@ -105,3 +105,51 @@ def test_client_raises_for_json_rpc_error():
 
     with pytest.raises(RuntimeError, match="MCP error"):
         MCPClient(transport=transport).grep_catalog("missing")
+
+
+def test_discover_kinds_finds_nested_yaml_documents_and_deduplicates(tmp_path):
+    (tmp_path / "overlays" / "deep").mkdir(parents=True)
+    (tmp_path / "overlays" / "deep" / "z.yaml").write_text(
+        "---\n"
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "---\n"
+        "apiVersion: apps/v1\n"
+        "kind: Deployment\n"
+        "spec:\n"
+        "  template:\n"
+        "    metadata: {}\n"
+        "    spec: {}\n"
+    )
+    (tmp_path / "a.yml").write_text(
+        "apiVersion: kustomize.toolkit.fluxcd.io/v1\n"
+        "kind: Kustomization\n"
+        "spec:\n"
+        "  healthChecks:\n"
+        "    - apiVersion: s3.services.k8s.aws/v1alpha1\n"
+        "      kind: Bucket\n"
+    )
+    (tmp_path / "not_yaml.txt").write_text("apiVersion: v1\nkind: Secret\n")
+
+    assert discover_kinds(tmp_path) == [
+        ("apps/v1", "Deployment"),
+        ("kustomize.toolkit.fluxcd.io/v1", "Kustomization"),
+        ("s3.services.k8s.aws/v1alpha1", "Bucket"),
+    ]
+
+
+def test_discover_kinds_exempts_platform_example_org_resources(tmp_path):
+    (tmp_path / "xrd.yaml").write_text(
+        "apiVersion: platform.example.org/v1alpha1\n"
+        "kind: WebService\n"
+        "spec:\n"
+        "  resources:\n"
+        "    - apiVersion: platform.example.org/v1alpha1\n"
+        "      kind: InternalResource\n"
+    )
+    (tmp_path / "real.yaml").write_text(
+        "apiVersion: v1\n"
+        "kind: Secret\n"
+    )
+
+    assert discover_kinds(tmp_path) == [("v1", "Secret")]

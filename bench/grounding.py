@@ -3,10 +3,53 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 
 MCP_URL = "https://schemas.fluxoperator.dev/mcp"
+EXEMPT_GROUPS = ("platform.example.org",)
+
+
+def discover_kinds(workspace: Path) -> list[tuple[str, str]]:
+    """Return deterministic, unique ``(apiVersion, kind)`` pairs in YAML files."""
+    pairs: set[tuple[str, str]] = set()
+    yaml_paths = sorted(
+        path
+        for path in workspace.rglob("*")
+        if path.is_file() and path.suffix in {".yaml", ".yml"}
+    )
+
+    def visit(node: Any) -> None:
+        if isinstance(node, dict):
+            api_version = node.get("apiVersion")
+            kind = node.get("kind")
+            if (
+                isinstance(api_version, str)
+                and isinstance(kind, str)
+                and api_version
+                and kind
+                and api_version.split("/", 1)[0] not in EXEMPT_GROUPS
+            ):
+                pairs.add((api_version, kind))
+            for value in node.values():
+                visit(value)
+        elif isinstance(node, list):
+            for value in node:
+                visit(value)
+
+    for path in yaml_paths:
+        try:
+            text = path.read_text(encoding="utf-8")
+            documents = list(yaml.safe_load_all(text))
+        except (OSError, UnicodeDecodeError, yaml.YAMLError):
+            continue
+        for document in documents:
+            visit(document)
+
+    return sorted(pairs)
 
 
 class MCPClient:
