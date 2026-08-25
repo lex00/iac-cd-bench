@@ -1,0 +1,54 @@
+# GOLDEN: original s3-bucket resource (us-east-1, prod-us-east-1) left
+# unchanged; a new resource entry provisions the replication destination
+# bucket in us-west-2 via the new prod-us-west-2 ProviderConfig.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: aws-web-service-composition
+  labels:
+    provider: aws
+    environment: prod
+spec:
+  compositeTypeRef:
+    apiVersion: composite.example.com/v1
+    kind: XAWSWebService
+  mode: Pipeline
+  pipeline:
+    - function: xpkg.upbound.io/crossplane/function-patch-and-transform:v0.2.0
+      input:
+        apiVersion: ptFunctions.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: s3-bucket
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: Bucket
+              spec:
+                forProvider:
+                  region: us-east-1
+                providerConfigRef:
+                  name: prod-us-east-1
+                managementPolicy: Observe
+            patches:
+              - fromFieldPath: spec.bucket.name
+                toFieldPath: spec.forProvider.bucket
+            readyCondition: True
+
+          - name: s3-replication-destination
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: Bucket
+              spec:
+                forProvider:
+                  region: us-west-2
+                providerConfigRef:
+                  name: prod-us-west-2
+                managementPolicy: Observe
+            patches:
+              - fromFieldPath: spec.bucket.name
+                toFieldPath: spec.forProvider.bucket
+                transforms:
+                  - type: string
+                    string:
+                      fmt: "%s-replica"
+            readyCondition: True

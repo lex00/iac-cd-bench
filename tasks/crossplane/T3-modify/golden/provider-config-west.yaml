@@ -1,0 +1,16 @@
+# GOLDEN: second-region ProviderConfig for us-west-2, distinct from the
+# existing prod-us-east-1 config.
+apiVersion: aws.upbound.io/v1alpha1
+kind: ProviderConfig
+metadata:
+  name: prod-us-west-2
+  labels:
+    environment: prod
+spec:
+  credentials:
+    source: Secret
+    secretRef:
+      namespace: crossplane-system
+      name: aws-prod-west-credentials
+      key: creds
+  region: us-west-2

@@ -1,0 +1,10 @@
+# SEED REPO: existing prod claim -- must not be changed by this task.
+apiVersion: app.example.com/v1alpha1
+kind: AWSWebService
+metadata:
+  name: myapp-prod
+  namespace: default
+spec:
+  environment: prod
+  bucket:
+    name: myapp-assets

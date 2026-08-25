@@ -1,7 +1,7 @@
 stack: pulumi-python
 archetype: debug
 id: "T4-debug"
-title: "Fix stack failure: secret read as plain string, .apply() misuse"
+title: "Fix stack failure: secret read as plain string, deletion protection disabled"
 answer_format: code
 
 stages:
@@ -21,4 +21,4 @@ stages:
     enabled: false
 
 defect:
-  description: "Secret read as plain string, .apply() result used where Output expected"
+  description: "Secret read as plain string (config.get instead of require_secret); RDS deletion_protection left False on the prod instance"
