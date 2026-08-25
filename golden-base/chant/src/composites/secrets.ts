@@ -3,25 +3,30 @@
  *
  * ── Why this file exists ─────────────────────────────────────────────────────
  *
- * chant's secret-provenance vocabulary has three kinds (`referenced`,
- * `from-provider`, `generated-once`) and no fourth for committed ciphertext:
- * SOPS-style encrypted YAML in the repo has no primitive yet. The knr-ops arm
- * of this benchmark commits SOPS ciphertext; this arm cannot, so it uses the
- * closest kind chant does model — `referenced`: the value exists out of band,
- * a human or an external process put it where consumers read it, and the
- * estate records only that it depends on it.
+ * chant's secret-provenance vocabulary has four kinds as of `@intentius/chant`
+ * 0.49.0 (this golden's current pin): `referenced`, `from-provider`,
+ * `generated-once`, and `committed-encrypted` for SOPS-style ciphertext
+ * committed in the repo. When this file was written, only the first three
+ * were published; the knr-ops arm of this benchmark commits SOPS ciphertext,
+ * this arm couldn't yet, so it used the closest kind chant did model —
+ * `referenced`: the value exists out of band, a human or an external process
+ * put it where consumers read it, and the estate records only that it
+ * depends on it.
  *
  * ── Why it is a hand-rolled type and not `declareSecret` ─────────────────────
  *
  * `declareSecret({ name, provenance: "referenced", scope })` is the primitive
  * that turns that dependency into a first-class Declarable — collected by
  * discovery, listed by `chant list`, readable by lint, emitted by no
- * serializer. It landed on chant's main branch after 0.46.0 and is not in the
- * published `@intentius/chant` this golden pins. So the discipline is kept
- * structurally instead: a `SecretRef` carries a name, a namespace, and a key,
- * and there is no field on it that could carry material. When the primitive
- * publishes, `describeSecret()` below becomes a `declareSecret()` call and the
- * refs keep working unchanged.
+ * serializer. It was unpublished when this file was written (chant main
+ * branch only, after 0.46.0); `@intentius/chant@0.49.0` now ships it,
+ * including the `committed-encrypted` kind. So the discipline is kept
+ * structurally here instead: a `SecretRef` carries a name, a namespace, and a
+ * key, and there is no field on it that could carry material. Swapping this
+ * file for real `declareSecret`/`describeSecret()` calls (and, separately,
+ * for `committed-encrypted` provenance on the DB secret) is a scenario change
+ * this registry re-pin deliberately leaves alone — see README, "Coverage
+ * gaps" #1.
  *
  * The constitutional line is the same either way: no value, no ciphertext, no
  * hash of a value ever appears in this repo or in the build output.

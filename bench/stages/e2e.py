@@ -322,8 +322,9 @@ def _e2e_bare(workspace: Path, results: list[str]) -> bool:
 
 def ensure_chant_node_modules(golden_dir: Path | None = None) -> Path:
     """Install golden-base/chant's node_modules once (from its committed
-    package-lock.json + vendor/*.tgz tarballs) and hand back the directory
-    to use as a shared template.
+    package-lock.json, resolving @intentius/chant and
+    @intentius/chant-lexicon-k8s from the npm registry) and hand back the
+    directory to use as a shared template.
 
     Two callers share this: preflight_chant_golden below (which lints/
     builds golden-base/chant itself, and needs its own node_modules to do

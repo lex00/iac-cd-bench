@@ -25,9 +25,11 @@
  *
  * The interim caveat: chant's `declareSecret({ provenance: "referenced" })`
  * primitive, which makes that dependency a first-class lintable declaration,
- * is not in the published `@intentius/chant` 0.46.0 this golden builds
- * against. `secretRef()` (./secrets.ts) is the structural stand-in — same
- * discipline, no primitive. See README, "Coverage gaps".
+ * was unpublished when this file was written. `@intentius/chant@0.49.0` —
+ * this golden's current pin — ships it now, but the swap to a real
+ * `declareSecret()` call hasn't been made here. `secretRef()` (./secrets.ts)
+ * remains the structural stand-in — same discipline, no primitive call yet.
+ * See README, "Coverage gaps" #1.
  */
 
 import { Composite } from "@intentius/chant";
