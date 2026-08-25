@@ -89,6 +89,13 @@ OPUS_MODEL="${OPUS_MODEL:-claude-opus-5}"
 HAIKU_MODEL="${HAIKU_MODEL:-claude-haiku-4-5}"
 JUDGE_MODEL="${JUDGE_MODEL:-claude-haiku-4-5}"
 REASONING_EFFORT="${REASONING_EFFORT:-low}"
+# Provider for the model under test and for the judge, independently
+# overridable (bench/runner.py's --model-provider / --judge-provider both
+# accept anthropic | openai-compat | claude-cli). Default anthropic matches
+# runner.py's own flag default; this environment has no ANTHROPIC_API_KEY at
+# all, so our actual runs pass claude-cli for both via env override.
+MODEL_PROVIDER="${MODEL_PROVIDER:-anthropic}"
+JUDGE_PROVIDER="${JUDGE_PROVIDER:-anthropic}"
 # Smoke defaults to the cheap model: it's validating the live judge/extraction
 # path, not scoring anything, and the owner's own framing ("the cheap model
 # is the one that matters most") makes haiku the higher-value first live call
@@ -192,7 +199,7 @@ preflight_knr_ops_ack() {
 
 smoke_commands() {
     cat <<EOF
-$PYTHON -m bench.runner --model $SMOKE_MODEL --model-provider anthropic --stack chant --task T1-comprehend -k 1 --condition warm --judge --judge-model $JUDGE_MODEL --reasoning-effort $REASONING_EFFORT --results-tag $SMOKE_TAG
+$PYTHON -m bench.runner --model $SMOKE_MODEL --model-provider $MODEL_PROVIDER --stack chant --task T1-comprehend -k 1 --condition warm --judge --judge-model $JUDGE_MODEL --judge-provider $JUDGE_PROVIDER --reasoning-effort $REASONING_EFFORT --results-tag $SMOKE_TAG
 EOF
 }
 
@@ -202,7 +209,7 @@ full_commands() {
         tag="${model}-${FULL_TAG_SUFFIX}"
         for arm in "${ARMS[@]}"; do
             for cond in "${CONDITIONS[@]}"; do
-                echo "$PYTHON -m bench.runner --model $model --model-provider anthropic --stack $arm --tasks all -k 3 --condition $cond --judge --judge-model $JUDGE_MODEL --reasoning-effort $REASONING_EFFORT --results-tag $tag"
+                echo "$PYTHON -m bench.runner --model $model --model-provider $MODEL_PROVIDER --stack $arm --tasks all -k 3 --condition $cond --judge --judge-model $JUDGE_MODEL --judge-provider $JUDGE_PROVIDER --reasoning-effort $REASONING_EFFORT --results-tag $tag"
             done
         done
     done
@@ -230,6 +237,7 @@ Usage: $0 <smoke|full> [--execute]
   --execute      actually run the API calls (requires RUN_MATRIX_ACK=yes)
 
 Env overrides: OPUS_MODEL HAIKU_MODEL JUDGE_MODEL REASONING_EFFORT
+               MODEL_PROVIDER JUDGE_PROVIDER
                SMOKE_MODEL SMOKE_TAG FULL_TAG_SUFFIX PYTHON
 EOF
     exit 1
@@ -286,11 +294,19 @@ main() {
         echo "  to confirm you mean to make live, billed API calls." >&2
         exit 1
     fi
-    if [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
+    # ANTHROPIC_API_KEY is only load-bearing for the "anthropic" provider;
+    # claude-cli shells out to the machine's existing Claude Code auth
+    # instead (see bench/runner.py's ClaudeCliAdapter) and openai-compat
+    # uses its own OPENAI_API_KEY / --api-key.
+    if [[ "$MODEL_PROVIDER" == "anthropic" || "$JUDGE_PROVIDER" == "anthropic" ]] \
+        && [[ -z "${ANTHROPIC_API_KEY:-}" ]]; then
         echo "FATAL: --execute given but ANTHROPIC_API_KEY is not set in the" >&2
-        echo "  environment. bench.runner falls back to a placeholder key" >&2
-        echo "  that will fail auth against the real API - set the key" >&2
-        echo "  explicitly rather than relying on that fallback." >&2
+        echo "  environment, and MODEL_PROVIDER=$MODEL_PROVIDER /" >&2
+        echo "  JUDGE_PROVIDER=$JUDGE_PROVIDER needs it. bench.runner falls" >&2
+        echo "  back to a placeholder key that will fail auth against the" >&2
+        echo "  real API - set the key explicitly, or pass" >&2
+        echo "  MODEL_PROVIDER=claude-cli / JUDGE_PROVIDER=claude-cli to use" >&2
+        echo "  the machine's Claude Code auth instead." >&2
         exit 1
     fi
 
