@@ -547,6 +547,15 @@ def main() -> None:
             log.warning("Stack dir not found: %s", stack_dir)
             continue
 
+        if stack == "chant":
+            preflight = e2e.preflight_chant_golden()
+            if not preflight.get("passed", False) and not preflight.get("skipped", False):
+                log.error(
+                    "Skipping chant stack: golden-base/chant preflight failed:\n%s",
+                    preflight.get("logs", ""),
+                )
+                continue
+
         task_dirs = sorted(d for d in stack_dir.iterdir() if d.is_dir())
 
         if args.task:

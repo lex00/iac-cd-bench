@@ -14,6 +14,8 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
+ROOT = Path(__file__).resolve().parents[2]
+
 LOCALSTACK_ENDPOINT = "http://localhost:4566"
 LOCALSTACK_CONTAINERS = ["s3", "rds", "iam"]
 
@@ -40,6 +42,8 @@ def run_e2e(workspace: Path, stack: str, kind_cluster_name: str = "bench") -> di
         passed &= _e2e_terraform(workspace, results)
     elif stack in ("pulumi-python", "pulumi-typescript"):
         passed &= _e2e_pulumi(workspace, results)
+    elif stack == "chant":
+        passed &= _e2e_chant(workspace, results)
     else:
         results.append(f"no e2e for stack: {stack}")
         passed = False
@@ -240,3 +244,82 @@ def _e2e_pulumi(workspace: Path, results: list[str]) -> bool:
         passed = False
 
     return passed
+
+
+def _e2e_chant(workspace: Path, results: list[str]) -> bool:
+    """Run chant e2e: build to YAML, then kubectl apply against the kind
+    cluster (mirrors the knr-ops apply path)."""
+    passed = True
+
+    build_out = workspace / "build" / "manifests.yaml"
+
+    results.append("Building chant workspace...")
+    try:
+        build_out.parent.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            ["chant", "build", ".", "-f", "yaml", "-o", str(build_out)],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(workspace),
+        )
+        results.append(f"chant build -f yaml: exit={proc.returncode}")
+        if proc.returncode != 0:
+            results.append(f"ERR: {proc.stderr[:500]}")
+            passed = False
+    except Exception as e:
+        results.append(f"chant build failed: {e}")
+        passed = False
+
+    if passed and build_out.exists():
+        results.append("Applying built manifests...")
+        try:
+            proc = subprocess.run(
+                ["kubectl", "apply", "-f", str(build_out)],
+                capture_output=True, text=True, timeout=60,
+            )
+            results.append(f"kubectl apply -f {build_out.name}: exit={proc.returncode}")
+            if proc.returncode != 0:
+                results.append(f"ERR: {proc.stderr[:500]}")
+                passed = False
+        except Exception as e:
+            results.append(f"kubectl apply failed: {e}")
+            passed = False
+    elif passed:
+        results.append("chant build produced no manifest to apply")
+        passed = False
+
+    return passed
+
+
+def preflight_chant_golden() -> dict:
+    """Fairness gate (in the spirit of chant-bench): assert golden-base/chant
+    itself passes lint + static before any model run burns tokens on chant
+    tasks.
+
+    golden-base/chant doesn't exist yet (see issue #3). Until it lands, this
+    skips gracefully with a clear message rather than hard-failing every
+    chant run — the wiring can land early behind the `--stack chant`
+    escape hatch per issue #5.
+    """
+    from bench.stages import lint, static
+
+    golden_dir = ROOT / "golden-base" / "chant"
+    if not golden_dir.exists():
+        msg = (
+            "SKIP: golden-base/chant does not exist yet (see issue #3); "
+            "the chant preflight gate will activate once it lands"
+        )
+        log.warning(msg)
+        return {"passed": True, "skipped": True, "logs": msg}
+
+    lint_result = lint.run_lint(golden_dir, "chant")
+    static_result = static.run_static(golden_dir, "chant")
+    passed = bool(lint_result.get("passed")) and bool(static_result.get("passed"))
+    logs = (
+        f"golden-base/chant preflight: lint={'PASS' if lint_result.get('passed') else 'FAIL'}, "
+        f"static={'PASS' if static_result.get('passed') else 'FAIL'}\n"
+        f"--- lint ---\n{lint_result.get('logs', '')}\n"
+        f"--- static ---\n{static_result.get('logs', '')}"
+    )
+    if not passed:
+        log.error("chant golden preflight FAILED:\n%s", logs)
+    return {"passed": passed, "skipped": False, "logs": logs}
