@@ -400,7 +400,7 @@ def build_judge(
     base_url: str | None = None,
 ) -> RubricJudge:
     """Construct a judge on the runner's existing adapter classes."""
-    from bench.runner import AnthropicAdapter, OpenAICompatAdapter
+    from bench.runner import AnthropicAdapter, ClaudeCliAdapter, OpenAICompatAdapter
 
     model = model or os.environ.get("BENCH_JUDGE_MODEL") or DEFAULT_JUDGE_MODEL
     key = (
@@ -416,6 +416,13 @@ def build_judge(
         adapter: Any = AnthropicAdapter(
             model, key, reasoning_effort="none", temperature=temperature
         )
+    elif provider == "claude-cli":
+        # No API key involved (see ClaudeCliAdapter): shells out to the
+        # locally-authenticated `claude` CLI. There is no CLI equivalent of
+        # `temperature`, so `judge_temperature()` is not consulted here;
+        # `reasoning_effort="none"` keeps the judge call effort-unpinned,
+        # same intent as the API adapters' deterministic side-call.
+        adapter = ClaudeCliAdapter(model, reasoning_effort="none")
     else:
         adapter = OpenAICompatAdapter(
             model, base_url or "http://localhost:8000", key, reasoning_effort="none"

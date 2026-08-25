@@ -197,3 +197,16 @@ def test_model_provider_flag_accepts_claude_cli():
         cwd=str(Path(__file__).resolve().parent.parent),
     )
     assert "claude-cli" in result.stdout
+
+
+def test_build_judge_accepts_claude_cli_provider():
+    """The judge's adapter-factory pathway (bench/judge.py build_judge) must
+    also be constructible with ClaudeCliAdapter - required when no
+    ANTHROPIC_API_KEY is set and both the model under test and the judge run
+    against the machine's Claude Code auth."""
+    from bench import judge as judge_mod
+
+    judge = judge_mod.build_judge(model="claude-haiku-4-5", provider="claude-cli")
+    assert isinstance(judge.adapter, ClaudeCliAdapter)
+    assert judge.adapter.model == "claude-haiku-4-5"
+    assert judge.adapter.reasoning_effort == "none"

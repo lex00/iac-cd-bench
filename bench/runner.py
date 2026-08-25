@@ -654,7 +654,7 @@ def main() -> None:
                         help=f"Judge model id (default: $BENCH_JUDGE_MODEL or "
                              f"{judge_mod.DEFAULT_JUDGE_MODEL})")
     parser.add_argument("--judge-provider", default="anthropic",
-                        choices=["anthropic", "openai-compat"],
+                        choices=["anthropic", "openai-compat", "claude-cli"],
                         help="Provider for the judge model (default: anthropic)")
     parser.add_argument("--judge-base-url", default=None,
                         help="Base URL for an OpenAI-compatible judge endpoint")
