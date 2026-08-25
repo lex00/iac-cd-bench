@@ -413,6 +413,111 @@ class OpenAICompatAdapter(ModelAdapter):
         }
 
 
+class ClaudeCliAdapter(ModelAdapter):
+    """Adapter that shells out to the `claude` CLI in non-interactive print mode.
+
+    Used when no Anthropic API key is available and the harness instead runs
+    against the machine's existing Claude Code authentication (OAuth via
+    `claude.ai` login, or `CLAUDE_CODE_OAUTH_TOKEN`) - the same mechanism
+    chant-bench uses to invoke `claude` for its own trials (chant-bench's
+    vendored aws-bench fork shells out to
+    `claude --output-format=stream-json --print`, model pinned via
+    `ANTHROPIC_MODEL`; here the model is pinned via the equivalent `--model`
+    flag and reasoning effort via `--effort`, both confirmed present in
+    `claude --help` on this machine).
+
+    One-shot only: tools are disabled (`--tools ""`) and settings/CLAUDE.md
+    discovery is disabled (`--setting-sources ""`), so this stays a pure
+    prompt -> completion call with the same result shape as AnthropicAdapter
+    / OpenAICompatAdapter, rather than an agentic loop that edits the
+    workspace or picks up unrelated project/user instructions itself.
+
+    Token usage, when reported, comes from the CLI's own `usage` block, which
+    reflects Claude Code's internal system prompt and prompt-caching
+    accounting - it is not directly comparable to the raw `input_tokens` the
+    Anthropic API adapter reports for a bare `messages.create` call.
+    """
+
+    def __init__(self, model: str, reasoning_effort: str | None = None,
+                 claude_bin: str | None = None, timeout: int = 600):
+        self.model = model
+        self.reasoning_effort = reasoning_effort
+        self.claude_bin = claude_bin or os.environ.get("BENCH_CLAUDE_BIN", "claude")
+        self.timeout = timeout
+
+    @property
+    def name(self) -> str:
+        return self.model
+
+    def _build_command(self) -> list[str]:
+        cmd = [
+            self.claude_bin,
+            "--print",
+            "--output-format", "json",
+            "--model", self.model,
+            "--permission-mode", "bypassPermissions",
+            "--no-session-persistence",
+            "--tools", "",
+            "--setting-sources", "",
+        ]
+        # `--effort` is a real, documented pin (`claude --help`): low, medium,
+        # high, xhigh, max. Recorded on self.reasoning_effort either way, so
+        # run_task can stamp the run JSON with what was actually pinned
+        # rather than defaulting silently.
+        if self.reasoning_effort and self.reasoning_effort != "none":
+            cmd += ["--effort", self.reasoning_effort]
+        return cmd
+
+    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+        file_sections: list[str] = []
+        for f in files:
+            if f.is_file() and f.stat().st_size < 50000:
+                try:
+                    file_sections.append(f"File: {f.name}\n{f.read_text()}")
+                except (UnicodeDecodeError, OSError):
+                    continue
+        full_prompt = prompt
+        if file_sections:
+            full_prompt = prompt + "\n\n### Workspace files\n\n" + "\n\n".join(file_sections)
+
+        cmd = self._build_command()
+        try:
+            proc = subprocess.run(
+                cmd, input=full_prompt, capture_output=True, text=True,
+                timeout=self.timeout,
+            )
+        except subprocess.TimeoutExpired as e:
+            raise RuntimeError(f"claude CLI timed out after {self.timeout}s") from e
+        except FileNotFoundError as e:
+            raise RuntimeError(
+                f"claude CLI binary '{self.claude_bin}' not found on PATH"
+            ) from e
+
+        if proc.returncode != 0:
+            raise RuntimeError(
+                f"claude CLI exited {proc.returncode}: {(proc.stderr or '')[-2000:]}"
+            )
+
+        try:
+            data: dict[str, Any] = json.loads(proc.stdout)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"claude CLI did not return valid JSON on stdout: {proc.stdout[-500:]!r}"
+            ) from e
+
+        if data.get("is_error"):
+            raise RuntimeError(f"claude CLI reported an error result: {data}")
+
+        usage = data.get("usage") or {}
+        return {
+            "content": data.get("result", ""),
+            "input_tokens": usage.get("input_tokens"),
+            "output_tokens": usage.get("output_tokens"),
+            "cost_usd": data.get("total_cost_usd"),
+            "session_id": data.get("session_id"),
+        }
+
+
 # ──────────────────────────────────────────────────────────────────────────
 # Runner
 # ──────────────────────────────────────────────────────────────────────────
@@ -529,7 +634,8 @@ def run_task(
 def main() -> None:
     parser = argparse.ArgumentParser(description="IaC/CD Benchmark Runner")
     parser.add_argument("--model", required=True, help="Model identifier")
-    parser.add_argument("--model-provider", default="anthropic", choices=["anthropic", "openai-compat"])
+    parser.add_argument("--model-provider", default="anthropic",
+                        choices=["anthropic", "openai-compat", "claude-cli"])
     parser.add_argument("--base-url", default=None, help="Base URL for OpenAI-compatible endpoints")
     parser.add_argument("--stacks", default="all", help="Comma-separated stacks or 'all'")
     parser.add_argument("--stack", help="Single stack shortcut")
@@ -571,6 +677,11 @@ def main() -> None:
     if args.model_provider == "anthropic":
         adapter: ModelAdapter = AnthropicAdapter(args.model, api_key,
                                                  reasoning_effort=args.reasoning_effort)
+    elif args.model_provider == "claude-cli":
+        # No API key involved: shells out to the locally-authenticated
+        # `claude` CLI (OAuth / claude.ai login) instead of calling the API
+        # directly. See ClaudeCliAdapter for what is and isn't pinnable.
+        adapter = ClaudeCliAdapter(args.model, reasoning_effort=args.reasoning_effort)
     else:
         adapter = OpenAICompatAdapter(args.model, base_url or "http://localhost:8000", api_key,
                                       reasoning_effort=args.reasoning_effort)

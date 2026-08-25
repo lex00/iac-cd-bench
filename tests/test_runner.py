@@ -222,6 +222,7 @@ def test_report_module_imports():
 
 def test_model_adapters_import():
     """Model adapters import cleanly."""
-    from bench.runner import AnthropicAdapter, OpenAICompatAdapter, ModelAdapter
+    from bench.runner import AnthropicAdapter, OpenAICompatAdapter, ClaudeCliAdapter, ModelAdapter
     assert issubclass(AnthropicAdapter, ModelAdapter)
     assert issubclass(OpenAICompatAdapter, ModelAdapter)
+    assert issubclass(ClaudeCliAdapter, ModelAdapter)
