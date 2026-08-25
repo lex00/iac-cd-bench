@@ -24,6 +24,7 @@ from bench.judge import (
     read_submission,
     weighted_score,
 )
+from bench.score import compute_score, idiom_score, judge_metadata
 
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "tasks"
@@ -308,3 +309,126 @@ def test_anthropic_adapter_payload_carries_judge_temperature(monkeypatch):
     sent.clear()
     AnthropicAdapter("claude-haiku-4-5", "sk-test").complete("hi", [])
     assert "temperature" not in sent
+
+
+# ── score.py wiring ───────────────────────────────────────────────────────
+
+def test_idiom_axis_uses_judge_verdict():
+    result = {
+        "stages": {
+            "lint": {"passed": True},
+            "static": {"passed": True},
+            "semantic": {"passed": True, "passed_count": 2, "total_count": 2,
+                         "safety_pass": True},
+        },
+        "judge": {"idiom": 0.75, "judge_model": "stub", "prompt_sha256": "abc",
+                  "criteria": []},
+    }
+    scores = compute_score(result)
+    assert scores["idiom"] == 0.75
+    # correctness 1*3 + completeness 1*2 + idiom .75*1 + safety 1*2 + consistency 0
+    assert scores["composite"] == pytest.approx((3 + 2 + 0.75 + 2) / 9)
+    assert judge_metadata(result) == {"judge_model": "stub", "prompt_sha256": "abc"}
+
+
+def test_idiom_axis_degrades_without_judge():
+    result = {"stages": {"lint": {"passed": True}}}
+    assert compute_score(result)["idiom"] == 0.0
+    assert judge_metadata(result) is None
+
+
+@pytest.mark.parametrize("verdict", [None, {}, {"idiom": "high"}, {"idiom": None}, "nope"])
+def test_idiom_score_is_defensive(verdict):
+    assert idiom_score({"judge": verdict}) == 0.0
+
+
+def test_idiom_score_clamps():
+    assert idiom_score({"judge": {"idiom": 5}}) == 1.0
+    assert idiom_score({"judge": {"idiom": -1}}) == 0.0
+
+
+def test_aggregate_surfaces_judge_metadata():
+    from bench.score import aggregate_scores
+
+    runs = []
+    for i in range(2):
+        r = {
+            "model": "m", "stack": "knr-ops", "task": "T1-comprehend", "run": i,
+            "stages": {"lint": {"passed": True}, "static": {"passed": True},
+                       "semantic": {"passed": True}},
+            "judge": {"idiom": 0.5, "judge_model": "stub-judge",
+                      "prompt_sha256": "deadbeef", "criteria": []},
+        }
+        r["score"] = compute_score(r)
+        runs.append(r)
+
+    agg = aggregate_scores(runs)["m/knr-ops/T1-comprehend"]
+    assert agg["judged_runs"] == 2
+    assert agg["avg_idiom"] == 0.5
+    assert agg["judge_models"] == ["stub-judge"]
+    assert agg["judge_prompts"] == ["deadbeef"]
+
+
+def test_aggregate_omits_judge_metadata_when_unjudged():
+    from bench.score import aggregate_scores
+
+    r = {"model": "m", "stack": "knr-ops", "task": "T1-comprehend", "run": 0,
+         "stages": {"lint": {"passed": True}}}
+    r["score"] = compute_score(r)
+    agg = aggregate_scores([r])["m/knr-ops/T1-comprehend"]
+    assert "judged_runs" not in agg
+    assert "judge_models" not in agg
+
+
+# ── runner hook ───────────────────────────────────────────────────────────
+
+def test_runner_run_task_records_judge_verdict(tmp_path, monkeypatch):
+    """run_task attaches the verdict for rubric tasks without touching the network."""
+    from bench import runner
+
+    class StubModel:
+        name = "stub-model"
+
+        def complete(self, prompt, files):
+            return {"content": "the model's answer", "input_tokens": 1, "output_tokens": 2}
+
+    stub_judge = RubricJudge(StubAdapter([verdict_json([1, 1, 1, 1, 1])]), "stub-judge")
+    results = runner.run_task(T1, StubModel(), k=1, judge=stub_judge)
+
+    assert len(results) == 1
+    assert results[0]["judge"]["idiom"] == 1.0
+    assert results[0]["judge"]["judge_model"] == "stub-judge"
+    assert compute_score(results[0])["idiom"] == 1.0
+
+
+def test_runner_judge_failure_does_not_fail_the_run():
+    from bench import runner
+
+    class StubModel:
+        name = "stub-model"
+
+        def complete(self, prompt, files):
+            return {"content": "answer", "input_tokens": 0, "output_tokens": 0}
+
+    class ExplodingJudge:
+        def score_task(self, *a, **kw):
+            raise RuntimeError("judge exploded")
+
+    results = runner.run_task(T1, StubModel(), k=1, judge=ExplodingJudge())
+    assert "judge" not in results[0]
+    assert "judge exploded" in results[0]["judge_error"]
+    assert "error" not in results[0]
+
+
+def test_runner_without_judge_flag_writes_no_verdict():
+    from bench import runner
+
+    class StubModel:
+        name = "stub-model"
+
+        def complete(self, prompt, files):
+            return {"content": "answer", "input_tokens": 0, "output_tokens": 0}
+
+    results = runner.run_task(T1, StubModel(), k=1)
+    assert "judge" not in results[0]
+    assert compute_score(results[0])["idiom"] == 0.0

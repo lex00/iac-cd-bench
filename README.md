@@ -40,6 +40,10 @@ python -m bench.runner --model anthropic/claude-sonnet-4-20250514 --stacks all -
 # Include e2e tier
 python -m bench.runner --model anthropic/claude-sonnet-4-20250514 --stacks all -k 3 --e2e
 
+# Score the idiom axis with the rubric judge (extra API calls, off by default)
+python -m bench.runner --model anthropic/claude-sonnet-4-20250514 --stacks all -k 3 \
+    --judge --judge-model claude-haiku-4-5
+
 # Generate report
 python -m bench.report --model anthropic/claude-sonnet-4-20250514
 ```
@@ -49,7 +53,7 @@ python -m bench.report --model anthropic/claude-sonnet-4-20250514
 Stack × archetype matrix, per-model:
 - **Correctness**: stage gates passed, e2e authoritative
 - **Completeness**: spec coverage %
-- **Idiom**: rubric-scored (LLM judge + human spot check)
+- **Idiom**: rubric-scored by an LLM judge on tasks with a `rubric:` block (T1, T5), run under `--judge`; the judge model id and prompt hash are pinned in each result JSON. Unjudged runs score 0.0 on this axis.
 - **Safety**: secrets handling, destructive-op detection
 - **Consistency**: pass@1 vs pass@3 (agreement across k=3)
 - **Efficiency**: tokens, wall time, cost
