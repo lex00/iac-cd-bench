@@ -375,26 +375,37 @@ the first coverage gap below.
 Findings, not excuses. Each is something the scenario needs that this
 toolchain cannot declare today, with what was done instead.
 
-### 1. `declareSecret` is not in the published core
+### 1. `declareSecret` is now published, not yet adopted here
 
 The binding directive for this arm was to use
 `declareSecret({ provenance: "referenced" })` for the DB secret. The primitive
-is on chant's main branch (`e5ca9f63`, core #1828) and is **not** in the
-published `@intentius/chant@0.46.0`, which is the newest version on the
-registry. It is in the vendored core tarball, so it is technically reachable —
-but a golden that depends on an unpublished API in *two* packages instead of
-one is a worse artifact than one that keeps the discipline structurally. So the
-provenance is enforced by construction (`SecretRef` has no material-bearing
-field) and the primitive call is a one-line change when it ships.
+was unpublished when this composite layer was written (chant's main branch
+only, `e5ca9f63`, core #1828), so the provenance was enforced by construction
+instead: `SecretRef` (`src/composites/secrets.ts`) is a hand-rolled type with
+no material-bearing field, and `declareSecret` was a one-line swap away once
+it shipped.
 
-### 2. The vendored lexicon does not work with the published core
+`@intentius/chant@0.49.0` — this golden's current registry pin — publishes
+`secret-provenance` (`referenced`, `from-provider`, `generated-once`, and a
+fourth kind, `committed-encrypted`, for SOPS-style ciphertext committed in the
+repo). The swap itself is a separate change from this registry re-pin and
+hasn't been made in this tree; `SecretRef` and `describeSecret()` still stand
+in for it. That swap is what the `chant-golden-flip` branch (commit `4e77416`)
+and `work/chant-golden` (`930b8eb`) do on top of an earlier chant-golden
+snapshot, un-merged into this one as of this pin.
 
-Not a scenario gap — a toolchain one, and the reason `vendor/` has two tarballs
-instead of the one the plan called for. `chant-lexicon-k8s@0.47.0`'s `wk8503`
-post-synth rule imports `@intentius/chant/secret-provenance`, which
-`@intentius/chant@0.46.0` does not ship. `chant lint` fails at module
-resolution before reading a single source file. Vendoring the matching core
-build is the only fix short of patching the lexicon.
+### 2. Resolved: the vendored lexicon/core version mismatch
+
+Was a toolchain gap, not a scenario one: `chant-lexicon-k8s@0.47.0`'s `wk8503`
+post-synth rule imported `@intentius/chant/secret-provenance`, which the
+then-published `@intentius/chant@0.46.0` didn't ship, so `chant lint` died at
+module resolution before reading a single source file. Vendoring a matching
+core build out of the chant branch was the workaround; see git history (this
+golden's `vendor/` used to carry two tarballs) and the now-superseded
+`vendor/README.md` account of it. `@intentius/chant@0.49.0` and
+`@intentius/chant-lexicon-k8s@0.49.0` are built and published together, so the
+mismatch this gap describes no longer exists — confirmed by `npm run verify`
+running clean against the plain registry install.
 
 ### 3. ACK RDS coverage is `DBInstance` only
 
@@ -460,10 +471,12 @@ emit — is resolved; see "Build output layout" above.
 
 | Piece | Version | Source |
 |---|---|---|
-| `@intentius/chant` | 0.46.0 (branch build) | `vendor/intentius-chant-0.46.0-bench.tgz` |
-| `@intentius/chant-lexicon-k8s` | 0.47.0 (branch build) | `vendor/intentius-chant-lexicon-k8s-0.47.0.tgz` |
+| `@intentius/chant` | ^0.49.0 | npm registry |
+| `@intentius/chant-lexicon-k8s` | ^0.49.0 | npm registry |
 | `kubeconform` | 0.7.0 | system |
 | Node | 24.x (20.x per `mise.toml` also works) | system |
 
-Both `file:` dependencies flip to registry versions once upstream publishes —
-see `vendor/README.md`.
+Both packages resolve as plain registry dependencies as of chant's v0.49.0
+release, which shipped the CAPI/CAPA/ACK typed kinds and the
+`secret-provenance` module this golden was previously vendoring tarballs to
+reach. See `vendor/README.md`.

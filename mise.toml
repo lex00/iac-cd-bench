@@ -51,7 +51,7 @@ kind = "0.26.0"
 # with "Cannot find package '@intentius/chant-lexicon-k8s'" against
 # golden-base/chant (which has its own node_modules/@intentius/chant-lexicon-k8s
 # already installed), while the *same version* installed as a normal flat
-# global npm package (`npm install -g @intentius/chant@0.46.0`) resolves it
+# global npm package (`npm install -g @intentius/chant@0.49.0`) resolves it
 # without issue. Every actual chant-stack invocation in this codebase
 # (bench/stages/lint.py, bench/stages/static.py, and the per-run node_modules
 # bootstrap in bench/runner.py/bench/stages/e2e.py) shells out to a bare
@@ -60,9 +60,10 @@ kind = "0.26.0"
 # only a flat global install (or the project-local
 # node_modules/.bin/chant golden-base/chant's own npm install produces)
 # satisfies that. Fall back to a flat global npm install instead:
-# `npm install -g @intentius/chant@0.46.0` (this worktree already has one at
-# that exact version, resolved via nvm's global npm - see the toolchain
-# verification in the #40 re-run report for the confirmed-working path).
+# `npm install -g @intentius/chant@0.49.0` (golden-base/chant itself now pins
+# @intentius/chant to the ^0.49.0 registry release - see
+# golden-base/chant/vendor/README.md; keep this global install version in
+# sync with that pin).
 
 [python.environments]
 default = { require_internet = false }

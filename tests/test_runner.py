@@ -183,18 +183,29 @@ def test_chant_golden_composites_exist():
 
 
 @chant_golden_required
-def test_chant_golden_vendors_the_lexicon():
-    """The CAPI/CAPA/ACK lexicon is vendored until upstream publishes it."""
+def test_chant_golden_pins_the_published_lexicon():
+    """The CAPI/CAPA/ACK lexicon resolves from the npm registry.
+
+    chant v0.49.0 published the CAPI/CAPA/ACK typed kinds and the
+    secret-provenance module this golden previously reached via vendored
+    tarballs (see golden-base/chant/vendor/README.md). No tarball should be
+    committed and package.json should pin registry version ranges, not
+    file: refs.
+    """
     vendor = CHANT_GOLDEN / "vendor"
     assert vendor.is_dir(), "golden-base/chant/vendor missing"
-    assert (vendor / "README.md").exists(), "vendor/README.md must explain the file: deps"
+    assert (vendor / "README.md").exists(), "vendor/README.md must explain the toolchain history"
     tarballs = sorted(vendor.glob("*.tgz"))
-    assert tarballs, "no vendored chant tarball in golden-base/chant/vendor"
+    assert not tarballs, (
+        f"golden-base/chant/vendor should carry no tarballs now the registry has the "
+        f"packages, found: {[t.name for t in tarballs]}"
+    )
     package_json = json.loads((CHANT_GOLDEN / "package.json").read_text())
     deps = package_json.get("dependencies", {})
-    assert deps.get("@intentius/chant-lexicon-k8s", "").startswith("file:vendor/"), (
-        "the k8s lexicon must resolve from vendor/ until the CAPI/CAPA/ACK kinds publish"
-    )
+    for pkg in ("@intentius/chant", "@intentius/chant-lexicon-k8s"):
+        spec = deps.get(pkg, "")
+        assert not spec.startswith("file:"), f"{pkg} must not resolve from a file: vendor ref"
+        assert spec, f"package.json is missing a dependency on {pkg}"
 
 
 def test_stage_runners_import():
