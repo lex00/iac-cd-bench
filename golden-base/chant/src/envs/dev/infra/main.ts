@@ -19,6 +19,7 @@ import {
   PostgresInstance,
   ReaderIam,
   SecureBucket,
+  describeSecret,
   infraLabels,
   type SecretRef,
 } from "../../../composites/index.js";
@@ -40,15 +41,29 @@ export const assets = SecureBucket({
 // SPEC dev: db.t3.micro, single AZ.
 
 /**
- * Referenced provenance. The Secret is created out of band — nothing in this
- * repo holds the value, and nothing in the build output does either.
+ * Committed-encrypted provenance. `masterPassword` is still the ACK-facing
+ * pointer `PostgresInstance` consumes (name/namespace/key, unchanged); the
+ * value itself is SOPS ciphertext committed at
+ * `secrets/db-credentials.dev.sops.yaml`, decrypted straight into the cluster
+ * by Flux — never by chant, never at build time. `dbMasterPassword` below is
+ * the separate declaration that makes that claim lintable: WK8504 checks the
+ * ciphertext actually resolves to this name (fails loudly if someone edits
+ * the file and forgets to re-encrypt), and WK8503 counts it as a Secret this
+ * build produces. Nothing secret-shaped is in this file, this repo, or the
+ * primary build output — see README, "Secrets: committed-encrypted SOPS
+ * ciphertext".
  */
 const masterPassword: SecretRef = {
   name: "myapp-dev-db-master",
   namespace: INFRA_NAMESPACE,
   key: "password",
-  scope: "created by the platform runbook before the DBInstance reconciles",
 };
+
+export const dbMasterPassword = describeSecret({
+  name: masterPassword.name,
+  file: "secrets/db-credentials.dev.sops.yaml",
+  keys: ["password"],
+});
 
 export const database = PostgresInstance({
   name: "myapp-dev-db",

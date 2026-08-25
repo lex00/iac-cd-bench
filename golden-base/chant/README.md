@@ -15,6 +15,10 @@ directory layout and kustomize patches, chant keeps it in composites and props.
 chant.config.ts            lexicons, environments, ownership marker, lint config
 package.json               file: deps on the two vendored chant packages
 vendor/                    the vendored tarballs + why they exist
+.sops.yaml                 SOPS age recipient for *.sops.yaml files in this repo
+age-key.txt                throwaway age identity (benchmark fixture — see
+                            golden-base/knr-ops/age-key.txt for the precedent)
+secrets/                   committed SOPS ciphertext (dev's DB master password)
 fixtures/                  recorded lifecycle snapshot + chant search/graph
                             query output for the Phase 3 comprehension tasks
                             (see fixtures/README.md); snapshot-fixtures.sh
@@ -29,7 +33,8 @@ src/
     defaults.ts              extracted constants (EVL009 keeps them out of factories)
     labels.ts                label/tag vocabulary, derived from props
     policies.ts              IAM policy documents + other prop shapes
-    secrets.ts               referenced-secret plumbing (the SOPS interim)
+    secrets.ts               consumer pointer (SecretRef) + committed-encrypted
+                              provenance declaration (describeSecret/declareSecret)
     index.ts                 the public surface of the composite layer
   envs/
     dev/
@@ -170,13 +175,25 @@ fold: 1 file folded, 0 ran
 Summary: 38 resources found in 6 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 38
 ```
 
+No line above says so explicitly — worth being explicit here instead: the
+`chant build src/envs/dev/infra` step also writes
+`dist/dev/infra/db-credentials.dev.sops.yaml`, a byte-for-byte copy of
+`secrets/db-credentials.dev.sops.yaml` (see "Secrets: committed-encrypted
+SOPS ciphertext" below). It is a sidecar file next to `manifests.yaml`, not a
+document inside it — the `apiVersion:`-count (9) and the `-ignore-missing-schemas`
+kubeconform run above are both over `manifests.yaml` alone, so the sidecar's
+absence from every count and from the kubeconform target list is the point,
+not an oversight: it is ciphertext, decrypted by Flux, never by kubeconform.
+
 Per-file document counts: `dev/delivery.yaml` 3 (GitRepository + 2
 Kustomizations), `dev/infra/manifests.yaml` 9, `dev/clusters/manifests.yaml`
 6 (18 total, dev); `prod/delivery.yaml` 3, `prod/infra/manifests.yaml` 11
 (the replica bucket and its replication role add 2 over dev),
 `prod/clusters/manifests.yaml` 6 (20 total, prod). 38 across both — unchanged
 from the single-file layout; the split moves resources between files, it
-does not add or drop any.
+does not add or drop any. Committed-encrypted secrets don't change this
+count either, by design (see below) — `dev/infra`'s sidecar is a seventh
+*file* in `dist/`, not a 39th document.
 
 Three notes on reading that output.
 
@@ -347,45 +364,137 @@ A fifth composite beyond the four epic #2 names. It earns its place on the same
 argument: without it each environment repeats three near-identical 20-line
 `HelmRelease` bodies, which is the duplication this column exists to remove.
 
-## Secrets: the SOPS interim
+## Secrets: committed-encrypted SOPS ciphertext
 
-Nothing secret-shaped is in this directory, and nothing secret-shaped is in the
-build output. The RDS master password and the application's DB connection
-string both live in Kubernetes Secrets created out of band; the `DBInstance`
-points at the first by name/namespace/key, and the application consumes the
-second the same way.
+Nothing secret-shaped is in this directory as *cleartext*, and nothing
+secret-shaped is in the primary build output. dev's RDS master password now
+mirrors what `golden-base/knr-ops` does: it is genuine SOPS ciphertext,
+committed at `secrets/db-credentials.dev.sops.yaml` and decrypted by Flux
+directly into the cluster — chant itself never sees the plaintext, at build
+time or any other time.
 
-That is chant's **referenced provenance**: the value exists out of band, a human
-or an external process put it where consumers read it, and the estate records
-only that it depends on it. It is the closest of chant's three provenance kinds
-(`referenced`, `from-provider`, `generated-once`) to what the knr-ops column
-does with SOPS — and it is not the same thing. Committed ciphertext is a fourth
-taxonomy row with no primitive yet; that gap is tracked as the SOPS-gap issue,
-and it is why this column cannot mirror `golden-base/knr-ops/.sops.yaml`.
+```
+.sops.yaml                              # age recipient, path_regex \.sops\.ya?ml$
+age-key.txt                             # throwaway age identity — a benchmark
+                                         #   fixture, mirroring knr-ops/age-key.txt
+secrets/db-credentials.dev.sops.yaml    # committed ciphertext: metadata cleartext,
+                                         #   data/stringData ENC[...]
+```
 
-`src/composites/secrets.ts` carries a `SecretRef` type with no field that could
-hold material, plus the two shapes consumers need (ACK's
-`{ name, namespace, key }` and Flux's `{ name }`). When
-`declareSecret({ provenance: "referenced" })` publishes, `describeSecret()`
-becomes a `declareSecret()` call and every ref keeps working unchanged — see
-the first coverage gap below.
+`age-key.txt`'s private key never leaves this file — it is not read by any
+`chant` code path, only by `sops -d` when a human or Flux's `sops-age` Secret
+needs to decrypt. Regenerating: `age-keygen -o age-key.txt`, then update the
+recipient in `.sops.yaml`, then `sops -e --age <recipient> --encrypted-regex
+'^(data|stringData)$' -i secrets/db-credentials.dev.sops.yaml` (after editing
+its `stringData` back to plaintext first — `sops -e` on an already-encrypted
+file is a no-op on the already-`ENC[`-shaped values).
+
+`src/composites/secrets.ts`'s `describeSecret()` — until now a hand-rolled
+string formatter, the structural stand-in this arm used while
+`declareSecret()` was unpublished — now makes the real call:
+
+```ts
+export const dbMasterPassword = describeSecret({
+  name: "myapp-dev-db-master",
+  file: "secrets/db-credentials.dev.sops.yaml",
+  keys: ["password"],
+});
+```
+
+declared in `src/envs/dev/infra/main.ts` alongside the `PostgresInstance` call
+that consumes the same name via `secretRef()`. Two chant mechanisms make the
+claim load-bearing, not decorative:
+
+- **WK8504** — the k8s lexicon's `buildRoots()` hook reads
+  `secrets/db-credentials.dev.sops.yaml` at build time and refuses the build
+  if it does not resolve: wrong `metadata.name`, no `sops` block, or a
+  `data`/`stringData` value that isn't `ENC[...]`-shaped (the "edited the file
+  and forgot to re-encrypt" failure). Verified live for this golden — see
+  "Gates verified" below.
+- **WK8503** — a resolved committed-encrypted declaration joins the set of
+  Secrets the build *produces* (namespace-matched, same as a literal `Secret`
+  manifest), not the set of provenance the check merely takes a human's word
+  for. This golden declares no application workload (coverage gap 5), so
+  WK8503 has no pod spec to check against it either way — the producer-set
+  membership is real but unexercised here; a lexicon end-to-end test exercises
+  it (`bench/sops-impl`, `lexicons/k8s/src/lint/post-synth/post-synth.test.ts`).
+
+On resolution, the ciphertext bytes are copied — not re-serialized, no key
+sorting, no `sops` binary invoked — into `SerializerResult.files`, which the
+k8s serializer routes to a sidecar next to the primary manifest:
+`dist/dev/infra/db-credentials.dev.sops.yaml`, byte-identical to the committed
+source. It is never a document inside `manifests.yaml`; chant's own appliers
+read the primary output only, so "chant pushes an undecrypted Secret into a
+cluster" is structurally impossible, not merely unlikely.
+
+**prod's master password is deliberately still `referenced`** — created out
+of band by the platform runbook, the same as both environments were before
+this change (`src/envs/prod/infra/main.ts`). Flipping one environment is the
+demonstration; flipping both would double the ciphertext-maintenance surface
+of this README's worked example for no comprehension-task benefit distinct
+from dev's.
+
+**The delivery side is not wired, on purpose.** `spec.decryption` is already
+in the generated typed surface (`K8s::Flux::Kustomization.decryption`, pulled
+from the pinned flux2 CRD schema), but the lexicon's `FluxAppFor` composite
+(`src/envs/dev/delivery/main.ts` calls it) does not yet expose a `decryption`
+prop to set it — that pass-through is iac-cd-bench#33, landing separately and
+in parallel with this change. So `myapp-dev-infra`'s `Kustomization` reconciles
+`./dist/dev/infra` — which, as of this change, contains a SOPS-encrypted
+sidecar — with no `spec.decryption` block naming the age identity Flux would
+need to decrypt it. That is an honest gap in this golden today, not a bug in
+what shipped here: when #33's re-vendor lands, wiring
+`decryption: "sops"` (defaulting `secretRef.name` to `sops-age`, per the
+design doc) onto `infraApp` in `src/envs/dev/delivery/main.ts` is the fix, and
+a new WK8505 warning ("committed-encrypted secret with no Flux decryption
+wiring in this build") may start firing on this golden's `dev/infra` build
+until that composite prop is added there too — expected wiring surfacing a
+real gap, not a regression to chase down.
+
+Chant's four-way secret-provenance taxonomy (`referenced`, `from-provider`,
+`generated-once`, `committed-encrypted`) is what makes both of the above
+precise instead of hand-waved: `referenced` is exactly what prod's master
+password still is, and the eventual `sops-age` Secret in `flux-system` that
+Flux's own decryption needs is itself a `referenced` declaration
+(`declareSecret({ name: "sops-age", provenance: "referenced", scope:
+"flux-system, injected at bootstrap" })`) — bootstrap-injected, never in git,
+the same shape as everything else this repo doesn't hold.
+
+`src/composites/secrets.ts` still carries `SecretRef` — the
+`{ name, namespace, key }` / `{ name }` pointer shapes ACK and Flux consumers
+need — unchanged, and unrelated to provenance: a consumer's pointer looks the
+same whether the Secret it names is referenced or committed-encrypted. See the
+file's own doc comment for the split between "where does a consumer point"
+and "where did the value come from."
 
 ## Coverage gaps
 
 Findings, not excuses. Each is something the scenario needs that this
 toolchain cannot declare today, with what was done instead.
 
-### 1. `declareSecret` is not in the published core
+### 1. `declareSecret` — shipped, still not in the published core
 
-The binding directive for this arm was to use
-`declareSecret({ provenance: "referenced" })` for the DB secret. The primitive
-is on chant's main branch (`e5ca9f63`, core #1828) and is **not** in the
-published `@intentius/chant@0.46.0`, which is the newest version on the
-registry. It is in the vendored core tarball, so it is technically reachable —
-but a golden that depends on an unpublished API in *two* packages instead of
-one is a worse artifact than one that keeps the discipline structurally. So the
-provenance is enforced by construction (`SecretRef` has no material-bearing
-field) and the primitive call is a one-line change when it ships.
+This is now a shipped capability pending only upstream publish, not an open
+implementation gap. `declareSecret()`, all four provenance kinds including
+`committed-encrypted`, and the k8s lexicon's WK8503/WK8504 coverage for it are
+on chant's `bench/sops-impl` branch (`5ad19f9a`) and vendored here (see
+`vendor/README.md`) — `src/composites/secrets.ts`'s `describeSecret()` makes
+the real `declareSecret({ provenance: "committed-encrypted" })` call for dev's
+master password (see "Secrets: committed-encrypted SOPS ciphertext" above).
+What remains open is purely upstream: none of this is in the published
+`@intentius/chant@0.46.0` / `@intentius/chant-lexicon-k8s@0.47.0`, which is why
+`vendor/` still exists at all. A golden that depends on an unpublished API in
+two packages instead of one is a worse artifact than one that keeps discipline
+structurally where it must — which is exactly why prod's master password
+stays `referenced` via the same hand-rolled-shaped `SecretRef` pointer rather
+than every ref in this repo needing the vendored primitive to type-check;
+`describeSecret()`'s new signature is the one line that changes when both
+packages publish, same as before.
+
+Also still open, and unrelated to publishing: the Flux decryption
+pass-through (iac-cd-bench#33 — `FluxAppFor`'s `decryption` prop) is not yet
+in any vendored build, chant's own or otherwise. See "Secrets:
+committed-encrypted SOPS ciphertext" above.
 
 ### 2. The vendored lexicon does not work with the published core
 
@@ -460,8 +569,10 @@ emit — is resolved; see "Build output layout" above.
 
 | Piece | Version | Source |
 |---|---|---|
-| `@intentius/chant` | 0.46.0 (branch build) | `vendor/intentius-chant-0.46.0-bench.tgz` |
-| `@intentius/chant-lexicon-k8s` | 0.47.0 (branch build) | `vendor/intentius-chant-lexicon-k8s-0.47.0.tgz` |
+| `@intentius/chant` | 0.46.0 (branch build, `bench/sops-impl` @ `5ad19f9a`) | `vendor/intentius-chant-0.46.0-bench.tgz` |
+| `@intentius/chant-lexicon-k8s` | 0.47.0 (branch build, `bench/sops-impl` @ `5ad19f9a`) | `vendor/intentius-chant-lexicon-k8s-0.47.0.tgz` |
+| `sops` | 3.13.3 | system (`sops -e`/`-d` on `secrets/*.sops.yaml`; not invoked by `chant` itself) |
+| `age` | 1.3.1 | system (`age-keygen` minted `age-key.txt`) |
 | `kubeconform` | 0.7.0 | system |
 | Node | 24.x (20.x per `mise.toml` also works) | system |
 

@@ -17,17 +17,15 @@
  * ── Secrets ──────────────────────────────────────────────────────────────────
  *
  * Nothing secret-shaped is in this file, this repo, or the build output. The
- * master password and the application's connection string both live in
- * Kubernetes Secrets created out of band; the DBInstance points at the first by
- * name/namespace/key (`masterUserPassword`), and the application consumes the
- * second the same way. That is the referenced-provenance pattern: the estate
- * records that it depends on a secret, never what the secret is.
- *
- * The interim caveat: chant's `declareSecret({ provenance: "referenced" })`
- * primitive, which makes that dependency a first-class lintable declaration,
- * is not in the published `@intentius/chant` 0.46.0 this golden builds
- * against. `secretRef()` (./secrets.ts) is the structural stand-in — same
- * discipline, no primitive. See README, "Coverage gaps".
+ * DBInstance points at its master password by name/namespace/key
+ * (`masterUserPassword`) via `secretRef()` (./secrets.ts) — that pointer shape
+ * is the same regardless of how the Secret it names comes to exist, which is
+ * a separate declaration this composite deliberately does not make. In this
+ * golden, dev's master password is committed-encrypted SOPS ciphertext
+ * (`declareSecret({ provenance: "committed-encrypted" })`, declared alongside
+ * the `PostgresInstance` call in `src/envs/dev/infra/main.ts`); prod's is
+ * still referenced — created out of band by the platform runbook. See
+ * README, "Secrets: committed-encrypted SOPS ciphertext".
  */
 
 import { Composite } from "@intentius/chant";

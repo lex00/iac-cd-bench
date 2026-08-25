@@ -147,9 +147,11 @@ echo "--- 9. writing fixtures ---"
   > "$FIXTURES_DIR/search-iam-by-component-prod.txt" 2>&1
 
 # chant search over the declared (offline) graph — no cluster needed, but
-# demonstrates the referenced-secret provenance the README's "Secrets"
-# section documents: nothing else in this golden's declared graph names the
-# DB secret except the DBInstance that consumes it.
+# demonstrates the committed-encrypted secret provenance the README's
+# "Secrets" section documents: two things in this golden's declared graph
+# name the DB secret — the DBInstance that consumes it, and the
+# declareSecret({ provenance: "committed-encrypted" }) declaration that
+# produces it.
 ( cd "$CHANT_DIR" && npx chant search "myapp-dev-db-master" --src src/envs/dev --explain ) \
   > "$FIXTURES_DIR/search-db-secret-reference.txt" 2>&1
 

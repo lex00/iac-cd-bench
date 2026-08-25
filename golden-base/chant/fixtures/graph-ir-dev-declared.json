@@ -239,6 +239,20 @@
       }
     },
     {
+      "id": "dbMasterPassword",
+      "kind": "Chant::SecretProvenance",
+      "lexicon": "chant",
+      "attrs": {
+        "name": "myapp-dev-db-master",
+        "provenance": "committed-encrypted",
+        "file": "secrets/db-credentials.dev.sops.yaml",
+        "encryption": "sops"
+      },
+      "sourceLoc": {
+        "file": "infra/main.ts"
+      }
+    },
+    {
       "id": "iamControllerRelease",
       "kind": "K8s::Flux::HelmRelease",
       "lexicon": "k8s",
@@ -407,6 +421,18 @@
       }
     },
     {
+      "id": "sops:myapp-dev-db-master",
+      "kind": "K8s::Sops::EncryptedSecretFile",
+      "lexicon": "k8s",
+      "attrs": {
+        "filename": "db-credentials.dev.sops.yaml",
+        "text": "apiVersion: v1\nkind: Secret\nmetadata:\n    name: myapp-dev-db-master\n    namespace: infra\ntype: Opaque\nstringData:\n    password: ENC[AES256_GCM,data:Gkqd12pN90wycgdNiVYs8bIbByqnuMCrbtLozdT/928itGMZ7UGWEg==,iv:qcklVCwm6lDYKO7mBFVvQqbpYtV8ye/uzqmhIo8NBy0=,tag:wWoGaxRfckYpCoEB4sl8rA==,type:str]\nsops:\n    age:\n        - enc: |\n            -----BEGIN AGE ENCRYPTED FILE-----\n            YWdlLWVuY3J5cHRpb24ub3JnL3YxCi0+IFgyNTUxOSA0cy8yZ2FtZWUwemMzbUpE\n            UHI1NFZJVkM5WFpLL2FTSm9KNmZBcms1UkNVCmtlbTBKRGVWbllQK05kalE2SHRx\n            VlBkTDFwd3l0dHNmZklvY0ZncXBpRDgKLS0tIE9tK29odHhuOG83UVl5SVNkWEdY\n            UmxoNGZnSUhaYlNzZE53M25GWFBUOHMKZkdekFE1kkB7dTIQB3UC1iNCPnydbieJ\n            czHKJFciW/k1VlmM+KuIwSwK8zQ+VV9kipvFL0gXdcDg6ATslChK+Q==\n            -----END AGE ENCRYPTED FILE-----\n          recipient: age1t7pujmuedmqnuy6ml4msuzamrv40ja5jyy9h2vwwrpg2xcwkc5esngtz7u\n    encrypted_regex: ^(data|stringData)$\n    lastmodified: \"2026-08-25T16:04:08Z\"\n    mac: ENC[AES256_GCM,data:/2hyS7TCiWd/NpylmyxEqKDw3pGQ0Pl5iFkM8mFCz6ro5fvbq9/+68A6R1vZ2nyrY527h6J0JrvYgpDbyq7yRy7xJgdhNNfAYeLuBFHRkXVUmKaR1CHBtW0kHUTUyFfE7TUwRYMM1rXMRJDiEOj/D2EVv1I8htag+c07rnvMPLI=,iv:rr2ozjkBJlEskgoAKm6rThYaUP5buVXZMZHhI9JRGTA=,tag:cMTl8ywJ9EGXldNbtiiDiw==,type:str]\n    version: 3.13.3\n",
+        "secretName": "myapp-dev-db-master",
+        "namespace": "infra",
+        "sourcePath": "secrets/db-credentials.dev.sops.yaml"
+      }
+    },
+    {
       "id": "sourceGitRepository",
       "kind": "K8s::Flux::GitRepository",
       "lexicon": "k8s",
@@ -453,6 +479,9 @@
   ],
   "groups": {
     "byLexicon": {
+      "chant": [
+        "dbMasterPassword"
+      ],
       "k8s": [
         "ackCharts",
         "assetsBucket",
@@ -471,6 +500,7 @@
         "readerRole",
         "readerUser",
         "s3ControllerRelease",
+        "sops:myapp-dev-db-master",
         "sourceGitRepository"
       ]
     },
@@ -510,6 +540,9 @@
       ]
     },
     "byStack": {
+      "chant": [
+        "dbMasterPassword"
+      ],
       "k8s": [
         "ackCharts",
         "assetsBucket",
@@ -528,6 +561,7 @@
         "readerRole",
         "readerUser",
         "s3ControllerRelease",
+        "sops:myapp-dev-db-master",
         "sourceGitRepository"
       ]
     }

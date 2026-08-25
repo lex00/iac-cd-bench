@@ -26,7 +26,7 @@ export { assumeRolePolicy, readerPolicyDocument } from "./policies.js";
 export type { AccountTrust, OidcTrust, RoleTrust, TrustMode } from "./policies.js";
 
 export { describeSecret, fluxSecretRef, secretRef } from "./secrets.js";
-export type { SecretRef } from "./secrets.js";
+export type { CommittedSecretRef, SecretRef } from "./secrets.js";
 
 export * from "./labels.js";
 export * from "./defaults.js";

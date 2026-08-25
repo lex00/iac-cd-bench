@@ -163,11 +163,17 @@ notes asked for exactly this kind of delta.
   contrived one.
 - `search-db-secret-reference.txt` — "what references the DB secret": a
   plain substring search for the secret name over the **declared** (source)
-  graph. One match — the `DBInstance` itself. This is the honest answer for
-  this golden: per the README's "Secrets: the SOPS interim" section, nothing
-  else in this column declares a consumer of that secret (the SPEC
-  explicitly excludes application code), so a task asking "what reads the
-  DB secret" should expect exactly this, not a longer chain.
+  graph. Two matches — the `DBInstance` (`K8s::Rds::DBInstance`) that
+  consumes it via `masterUserPassword`, and `dbMasterPassword`
+  (`Chant::SecretProvenance`), the `declareSecret({ provenance:
+  "committed-encrypted" })` declaration that names the same secret's
+  ciphertext (`secrets/db-credentials.dev.sops.yaml`). Regenerated after the
+  SOPS flip (README, "Secrets: committed-encrypted SOPS ciphertext") — it was
+  one match (the `DBInstance` alone) back when the secret's provenance was a
+  `SecretRef` with no chant-native declaration to also match. The SPEC still
+  excludes application code, so this is the honest ceiling for this golden: a
+  task asking "what reads the DB secret" should expect exactly a producer and
+  a consumer, not a longer chain.
 - `graph-ir-{dev,prod}.json` — the snapshot-backed (`--at latest`) infra
   graph: real nodes, zero edges (finding #1 above).
 - `graph-ir-{dev,prod}-declared.json` — supplementary: the same graph built

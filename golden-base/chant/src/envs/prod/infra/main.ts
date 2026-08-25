@@ -54,7 +54,13 @@ export const assets = SecureBucket({
 // ── Database ─────────────────────────────────────────────────────────────────
 // SPEC prod: db.t3.medium, multi-AZ, encrypted.
 
-/** Referenced provenance — see src/composites/secrets.ts. */
+/**
+ * Referenced provenance — deliberately not flipped to committed-encrypted.
+ * Only dev demonstrates the SOPS path (see
+ * src/envs/dev/infra/main.ts and README, "Secrets: committed-encrypted SOPS
+ * ciphertext"); prod's master password stays out of band, rotated by the
+ * platform runbook. See src/composites/secrets.ts.
+ */
 const masterPassword: SecretRef = {
   name: "myapp-prod-db-master",
   namespace: INFRA_NAMESPACE,
