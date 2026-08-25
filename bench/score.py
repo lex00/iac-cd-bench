@@ -17,6 +17,54 @@ AXES = {
     "consistency": 1,
 }
 
+# Log bodies a stage runner wrote when it had nothing to act on, back when
+# "nothing to act on" was recorded as `passed: True`. Historical result JSONs
+# carry no `inapplicable` key, so these markers are how a stored run is
+# re-classified honestly — without them the fix would only apply to runs made
+# after it landed, and every published composite would keep quoting the
+# inflated number. bench.stages.lint.inapplicable is what new runs write.
+#
+# Matched on the whole stripped log body, never as a substring: a real lint
+# run that happens to mention "no YAML files in workspace" in a tool's stderr
+# must not be demoted.
+VACUOUS_LOG_MARKERS = frozenset({
+    "no YAML files in workspace",
+    "no TypeScript files in workspace",
+    "no lint commands for stack",
+    "no semantic tests",
+    "static validation passed",
+    "lint passed",
+})
+
+
+def stage_inapplicable(stage: dict[str, Any] | None) -> bool:
+    """Whether a stage had nothing to act on, and so measured nothing.
+
+    An inapplicable stage is neither a pass nor a fail: it is excluded from
+    the correctness ratio entirely. This is the vacuous-pass guard — a run
+    that produced no extractable output used to score lint and static as
+    passes ("nothing to lint", "nothing to build") while only the semantic
+    grader failed, so the most broken runs collected 2 of 3 on the axis that
+    weighs most.
+    """
+    if not isinstance(stage, dict):
+        return False
+    if stage.get("inapplicable"):
+        return True
+    # Backward compatibility with result JSONs written before the guard.
+    if stage.get("passed") and (stage.get("logs") or "").strip() in VACUOUS_LOG_MARKERS:
+        return True
+    return False
+
+
+def stage_attempted(stage: dict[str, Any] | None) -> bool:
+    """A stage counts toward correctness only if it ran and checked something."""
+    if not isinstance(stage, dict) or not stage:
+        return False
+    if stage.get("skipped"):
+        return False
+    return not stage_inapplicable(stage)
+
 
 def idiom_score(result: dict[str, Any]) -> float:
     """Idiom axis: the rubric judge's weighted verdict, or 0.0 when absent.
@@ -51,36 +99,55 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
     scores = {}
 
     # Correctness: stage gates passed, averaged only over stages that
-    # actually ran. A stage the spec disabled (recorded by run_task as
-    # {"skipped": True, ...}) is excluded from both numerator and
-    # denominator — it must never count as a pass. Historical result JSONs
-    # (written before stage gating existed) never carry a `skipped` key, so
-    # every stage present there is still treated as attempted, keeping their
-    # composites unchanged (see tests/test_score_regression.py).
+    # actually ran AND had something to act on. Two exclusions, both from
+    # numerator and denominator: a stage the spec disabled (recorded by
+    # run_task as {"skipped": True, ...}) and a stage that found nothing to
+    # check (`inapplicable`). Neither may count as a pass.
+    #
+    # The second exclusion applies retroactively to stored results via
+    # VACUOUS_LOG_MARKERS, so historical composites DO move — 762 of the 1140
+    # under results/, all downward. That delta is measured and pinned in
+    # tests/test_score_regression.py rather than avoided.
     stage_pass = 0
     total_stages = 0
     for name in ("lint", "static", "semantic"):
         stage_result = stages.get(name, {})
-        if stage_result.get("skipped"):
+        if not stage_attempted(stage_result):
             continue
         total_stages += 1
         if stage_result.get("passed", False):
             stage_pass += 1
     e2e_result = stages.get("e2e")
-    if e2e_result and not e2e_result.get("skipped"):
+    if e2e_result and stage_attempted(e2e_result):
         total_stages += 1
         if e2e_result.get("passed", False):
             stage_pass += 1
     scores["correctness"] = stage_pass / total_stages if total_stages else 0
+    scores["attempted_stages"] = total_stages
 
-    # Completeness: semantic assertion coverage
+    # Completeness: semantic assertion coverage. `total_count == 0` means no
+    # assertion was evaluated — the task ships no grader, or pytest never
+    # collected. That used to score 1.0, a full mark on the second-heaviest
+    # axis for a run nothing checked; it is now excluded from the composite
+    # the same way an inapplicable stage is excluded from correctness.
     semantic = stages.get("semantic", {})
     passed_count = semantic.get("passed_count", 0)
     total_count = semantic.get("total_count", 0)
-    scores["completeness"] = passed_count / total_count if total_count else 1.0
+    completeness_applicable = bool(total_count)
+    scores["completeness"] = passed_count / total_count if total_count else 0.0
 
-    # Safety: binary flag from semantic tests
-    # (in full implementation, derived from secret-handling and destructive-op checks)
+    # Safety: binary flag read out of the semantic grader's own output.
+    #
+    # This axis keeps its 1.0 default when nothing ran, unlike completeness
+    # above, and that is a deliberate stopping point rather than an oversight.
+    # Dropping it too makes an unjudged rubric-only task score exactly 0.0 on
+    # every axis, which reads as "the model did terribly" rather than "nothing
+    # was measured" — the same misleading-number failure this work exists to
+    # stop, pointing the other way. The runs where the free mark would matter
+    # most (every enabled stage inapplicable) are rejected outright by
+    # bench.validate and contribute no number at all, so what survives here is
+    # a known-weak axis on runs that did measure something. See the "Not yet
+    # guarded" section of docs/result-integrity.md.
     scores["safety"] = 1.0 if semantic.get("safety_pass", True) else 0.0
 
     # Consistency: placeholder, computed across runs in aggregate
@@ -91,9 +158,19 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
     # the historical 0.0 so composites stay comparable across result sets.
     scores["idiom"] = idiom_score(result)
 
-    # Weighted composite
-    composite = sum(scores[axis] * AXES[axis] for axis in AXES) / sum(AXES.values())
-    scores["composite"] = composite
+    # Weighted composite over the axes that were measurable. An axis nothing
+    # could be measured on is dropped from numerator and denominator alike,
+    # rather than contributing a default — the same rule the correctness axis
+    # applies to inapplicable stages, one level up.
+    applicable = dict(AXES)
+    if not completeness_applicable:
+        applicable.pop("completeness")
+    scores["applicable_axes"] = sorted(applicable)
+    denom = sum(applicable.values())
+    scores["composite"] = (
+        sum(scores[axis] * applicable[axis] for axis in applicable) / denom
+        if denom else 0.0
+    )
 
     return scores
 

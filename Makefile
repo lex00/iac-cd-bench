@@ -5,13 +5,25 @@ SHELL := bash
 PYTHON := .venv/bin/python3
 RESULTS := results
 
-.PHONY: deps test run report run-e2e run-cold compare
+.PHONY: deps test run report run-e2e run-cold compare preflight validate
 
 deps:
 	($(PYTHON) -m pip install -e . -e ".[dev]")
 
 test:
 	($(PYTHON) -m pytest tests/ -v)
+
+# Tooling health: does this machine have every binary the stacks' stages
+# invoke? The runner does this itself before spending a token; this target is
+# for checking a machine before committing to a matrix.
+# make preflight STACKS=knr-ops,chant
+preflight:
+	($(PYTHON) -m bench.preflight --stacks $(or $(STACKS),all) $(if $(E2E),--e2e))
+
+# Classify every run in a result set valid/partial/rejected before quoting it.
+# make validate DIRS="results/claude-opus-5" VERBOSE=1
+validate:
+	($(PYTHON) -m bench.validate $(or $(DIRS),$(RESULTS)/*) $(if $(VERBOSE),--verbose))
 
 # Run benchmark for a single model
 # Make run MODEL=claude-sonnet-4-5-20250929 STACK=knr-ops

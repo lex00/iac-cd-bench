@@ -55,14 +55,22 @@ def test_disabled_stages_are_skipped_not_run():
 
 def test_enabled_stages_still_run():
     """T2-generate enables lint/static/semantic; run_task must still execute
-    them (not skip), i.e. gating is stage-by-stage per spec, not blanket."""
+    them (not skip), i.e. gating is stage-by-stage per spec, not blanket.
+
+    The stub model answers in prose with no code block, so the stages find
+    nothing to act on and record `inapplicable` — which is the point: they
+    were reached and reported honestly, rather than being skipped by the spec
+    or (as before the vacuous-pass guard) recording a free pass.
+    """
     results = runner.run_task(T2_GENERATE, StubModel(), k=1)
     assert len(results) == 1
     stages = results[0]["stages"]
 
     for name in ("lint", "static", "semantic"):
         assert "skipped" not in stages[name]
-        assert "passed" in stages[name]
+        assert "passed" in stages[name] or stages[name].get("inapplicable")
+        # Whatever else it says, an unexercised stage never claims a pass.
+        assert not (stages[name].get("inapplicable") and stages[name].get("passed"))
 
 
 def test_stage_enabled_defaults_true_when_spec_omits_stages_block():
