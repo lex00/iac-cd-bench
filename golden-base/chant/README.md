@@ -28,19 +28,34 @@ src/
     secrets.ts               referenced-secret plumbing (the SOPS interim)
     index.ts                 the public surface of the composite layer
   envs/
-    dev/main.ts              dev build root
-    prod/main.ts             prod build root
+    dev/
+      infra/main.ts          dev infra build root (bucket, DB, IAM, ACK controllers)
+      clusters/main.ts       dev clusters build root (RegionCluster)
+      delivery/main.ts       dev delivery build root (Flux source + Kustomizations)
+    prod/
+      infra/main.ts          prod infra build root
+      clusters/main.ts       prod clusters build root
+      delivery/main.ts       prod delivery build root
 ```
+
+Each environment is three build roots, not one, because `chant build <path>`
+emits one output file per invocation and the delivery layer needs three
+distinct targets: the Flux `Kustomization`s that reconcile `infra/` and
+`clusters/` name those paths explicitly (`FluxAppFor(..., { path:
+"./dist/dev/infra" })`), and a `Kustomization` cannot reconcile a path that
+contains the object declaring it. See "Build output layout" below.
 
 ## Environment isolation
 
 **Convention: two entrypoint directories, one build root each, invoking shared
 composites with per-environment props.**
 
-`src/envs/dev` and `src/envs/prod` are separate build roots. `chant build
-src/envs/dev` sees `src/envs/dev/main.ts` and the composites it imports, and
-never sees anything under `src/envs/prod`. The two environments share every
-factory and share no build artifact, no state, and no reconciliation path.
+`src/envs/dev` and `src/envs/prod` are separate build-root trees. Each has
+three sub-roots — `infra/`, `clusters/`, `delivery/` — and `chant build
+src/envs/dev/infra` sees only `src/envs/dev/infra/main.ts` and the composites
+it imports, never anything under `src/envs/prod` or even under
+`src/envs/dev/clusters`. The two environments share every factory and share
+no build artifact, no state, and no reconciliation path.
 
 Why this and not the alternative: chant supports build-time parameters
 (`buildParams` in `chant.config.ts`, bound with `chant build --param env=prod`),
@@ -59,14 +74,15 @@ choice here, for three reasons.
    Expressing that through a parameter means conditionals in the entrypoint —
    which is where the knr-ops column's kustomize patches already live, and
    reproducing them in TypeScript would measure the wrong thing.
-3. **Two files that read alike are the demonstration.** `src/envs/dev/main.ts`
-   and `src/envs/prod/main.ts` are the same shape end to end and differ only
-   where the SPEC matrix says they differ. That is legible in a way a patch
-   file is not, and it is what the benchmark's comprehension tasks read.
+3. **Two trees that read alike are the demonstration.**
+   `src/envs/dev/{infra,clusters,delivery}/main.ts` and their prod
+   counterparts are the same shape end to end and differ only where the SPEC
+   matrix says they differ. That is legible in a way a patch file is not, and
+   it is what the benchmark's comprehension tasks read.
 
-The cost is honest and worth stating: the two entrypoints repeat the call
-structure. What they do not repeat is the resource bodies — those live in the
-composites, once.
+The cost is honest and worth stating: the two entrypoint trees repeat the
+call structure. What they do not repeat is the resource bodies — those live
+in the composites, once.
 
 `chant.config.ts` also declares `environments: ["dev", "prod"]`. That is a
 separate thing: the identities chant threads through its operational layer
@@ -74,6 +90,45 @@ separate thing: the identities chant threads through its operational layer
 the build; the directories do.
 
 The matching row is in `scenario/SPEC.md` under "Environments".
+
+## Build output layout
+
+`chant build <path>` writes one file per invocation — there is no flag that
+splits a single build into several output files. The delivery layer needs
+three, one per `FluxAppFor`/reconciliation concern, so the source tree has
+three build roots per environment and `npm run build:dev`/`build:prod` invoke
+`chant build` three times each:
+
+```
+dist/
+  dev/
+    delivery.yaml            GitRepository + both Kustomizations (bootstrap-applied directly)
+    infra/manifests.yaml     bucket(s), DBInstance, IAM, ACK HelmReleases — path "./dist/dev/infra"
+    clusters/manifests.yaml  RegionCluster (CAPI/CAPA + flux2 addon)  — path "./dist/dev/clusters"
+  prod/
+    delivery.yaml
+    infra/manifests.yaml
+    clusters/manifests.yaml
+```
+
+`dist/dev/infra/manifests.yaml` and `dist/dev/clusters/manifests.yaml` are
+what the two `Kustomization`s declared in `src/envs/dev/delivery/main.ts`
+reconcile — their `path` props (`"./dist/dev/infra"`, `"./dist/dev/clusters"`)
+name exactly these locations, so `chant lint`'s `FLUX002`/`FLUX003` checks and
+the files this project actually emits now agree. `dist/dev/delivery.yaml`
+holds the `GitRepository` and both `Kustomization` objects themselves — the
+bootstrap edge, applied directly to the management cluster the same way
+flux-system's own sync manifest is, not something a `Kustomization`
+reconciles (a `Kustomization` cannot reconcile the path containing the object
+that declares it).
+
+This was `golden-base/chant`'s coverage gap #8 as scaffolded in #18: the
+`FluxAppFor` paths named a layout the build did not yet emit. It is resolved
+here by giving each Flux path its own build root instead of changing the
+paths to match a single combined file — the three-way split is what keeps
+`infra` and `clusters` independently reconcilable (and independently
+`dependsOn`-orderable) once this project's `dist/` is synced into the
+`myapp-infra` repository `FluxGitSource` names.
 
 ## Verifying
 
@@ -94,14 +149,30 @@ src/composites/secure-bucket.ts
                   "replication" — consider using a lexicon property type instead  COR018
 ✓ No problems found
 
-> chant build src/envs/dev  -f yaml -o dist/dev.yaml
+> chant build src/envs/dev/delivery -f yaml -o dist/dev/delivery.yaml
 fold: 0 files folded, 1 ran
-> chant build src/envs/prod -f yaml -o dist/prod.yaml
+> chant build src/envs/dev/infra -f yaml -o dist/dev/infra/manifests.yaml
 fold: 0 files folded, 1 ran
+> chant build src/envs/dev/clusters -f yaml -o dist/dev/clusters/manifests.yaml
+fold: 1 file folded, 0 ran
+> chant build src/envs/prod/delivery -f yaml -o dist/prod/delivery.yaml
+fold: 0 files folded, 1 ran
+> chant build src/envs/prod/infra -f yaml -o dist/prod/infra/manifests.yaml
+fold: 0 files folded, 1 ran
+> chant build src/envs/prod/clusters -f yaml -o dist/prod/clusters/manifests.yaml
+fold: 1 file folded, 0 ran
 
-> kubeconform -ignore-missing-schemas -summary dist/dev.yaml dist/prod.yaml
-Summary: 38 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 38
+> kubeconform -ignore-missing-schemas -summary dist/dev/delivery.yaml dist/dev/infra/manifests.yaml dist/dev/clusters/manifests.yaml dist/prod/delivery.yaml dist/prod/infra/manifests.yaml dist/prod/clusters/manifests.yaml
+Summary: 38 resources found in 6 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 38
 ```
+
+Per-file document counts: `dev/delivery.yaml` 3 (GitRepository + 2
+Kustomizations), `dev/infra/manifests.yaml` 9, `dev/clusters/manifests.yaml`
+6 (18 total, dev); `prod/delivery.yaml` 3, `prod/infra/manifests.yaml` 11
+(the replica bucket and its replication role add 2 over dev),
+`prod/clusters/manifests.yaml` 6 (20 total, prod). 38 across both — unchanged
+from the single-file layout; the split moves resources between files, it
+does not add or drop any.
 
 Three notes on reading that output.
 
@@ -323,11 +394,25 @@ miss.
 
 SPEC row 5 (internal ALB or CloudFront in dev, CloudFront + ACM in prod) and
 acceptance criterion 6 (443 listener, valid cert reference) have no typed kind
-in this lexicon: no ACK `acm`, no ACK `cloudfront`, no ACK `elbv2`. The
-in-cluster half is declarable (an `Ingress` with ALB controller annotations, or
-a Gateway API `Gateway` + `HTTPRoute`, both typed); the certificate and the CDN
-are not. This is the largest single gap and it lands squarely on the full SPEC
-implementation, not on the composites.
+in this lexicon for the cloud half: no ACK `acm`, no ACK `cloudfront`, no ACK
+`elbv2`. The certificate and the CDN are not declarable here, full stop.
+
+The in-cluster half *is* declarable — the lexicon ships a native `Ingress`
+type and a pre-built `AlbIngress` composite (`certificateArn`, `scheme:
+"internal" | "internet-facing"`, `sslRedirect`) that would type an ALB-backed
+Ingress cleanly. It is deliberately not called here. `golden-base/knr-ops`
+was checked (`infra/app/deployment.yaml`) as the directive for this arm
+requires: its application `Service` is `type: ClusterIP` with no `Ingress`,
+no ALB, no CloudFront, and no ACM object anywhere in that column. This arm
+mirrors that scope rather than reaching past it — a golden that types more
+of the HTTPS row than its comparison column declares would be measuring
+lexicon coverage, not scenario parity, and the two columns exist to be
+compared. Both stop at the same place: the in-cluster Service (knr-ops
+declares one; this arm declares no application workload at all, since
+SPEC's "Not in Scope" list excludes application code and neither the SPEC
+row nor epic #2's composite list asks for one). The certificate, the load
+balancer, and the CDN are the finding — on both columns — not a chant-only
+gap.
 
 ### 6. Networking is referenced, never declared
 
@@ -347,14 +432,8 @@ at lint time rather than in the editor. The composite prop surfaces above are
 where the compile-time typing actually lives, which is an argument for the
 composite layer rather than against it.
 
-### 8. Delivery paths point at an output layout that does not exist yet
-
-`FluxAppFor(..., { path: "./dist/dev/infra" })` names a directory the build
-does not currently emit — `chant build -o` writes one file per invocation, so
-today's output is `dist/dev.yaml` and `dist/prod.yaml`. The path split is the
-shape the full SPEC implementation should emit into; wiring it is that issue's
-work, not the scaffold's. `FLUX002`/`FLUX003` still validate the `sourceRef`
-and `dependsOn` edges, and both are clean.
+Former gap 8 — delivery paths naming an output layout the build did not
+emit — is resolved; see "Build output layout" above.
 
 ## Toolchain
 
