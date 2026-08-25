@@ -8,7 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
-from bench.validity import run_validity
+from bench import validity
+from bench.validity import HARNESS_INVALID, MODEL_FAILURE, run_validity
 
 # Score axes and their weights
 AXES = {
@@ -177,16 +178,139 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
     return scores
 
 
+# ──────────────────────────────────────────────────────────────────────────
+# The failure taxonomy applied to scoring (#69)
+# ──────────────────────────────────────────────────────────────────────────
+
+def run_category(
+    result: dict[str, Any], classification: dict[str, Any] | None = None
+) -> str | None:
+    """HARNESS_INVALID, MODEL_FAILURE, or None for a run that measured something.
+
+    `compute_score` is deliberately left a pure function of a run's `stages`;
+    this is where a run's completion is allowed to affect its number.
+
+    `bench.validate.classify_run` is the single source of truth downstream — it
+    reconciles both of bench.validity's classifiers and loads the task spec —
+    so callers that have already run it pass its result in as `classification`
+    and it is used verbatim.
+
+    Without one, both of bench.validity's classifiers are run and merged here.
+    Consulting only the first was a real bug: a 120-character stub clears
+    `check_validity`'s ABSOLUTE_FLOOR of 50 but trips `check_content`'s
+    MIN_CONTENT_CHARS of 200, so `qwen 3.8 - local`'s stubs looked valid to one
+    classifier and were never zeroed. Two exclusions cannot be seen from here
+    at all — `no_extractable_output` and `all_stages_inapplicable` both need
+    the task spec — which is why `classification` is preferred when available;
+    this path under-detects model failures rather than over-detecting them.
+    """
+    if classification is not None:
+        verdict = classification.get("verdict")
+        if verdict == "invalid":
+            return HARNESS_INVALID
+        if verdict == "model-failure":
+            return MODEL_FAILURE
+        return None
+
+    # Grandfathered: a run with no `content` key at all predates content being
+    # recorded, or is a synthetic fixture. It cannot be judged by either
+    # classifier, so it is neither kind of failure — the same rule
+    # `run_validity` applies, restated here because `check_result` would read
+    # the missing content as an empty completion.
+    if "content" not in result and not isinstance(result.get("validity"), dict):
+        return None
+
+    simple = run_validity(result)
+    rich = validity.check_result(result)
+    category = validity.merge_categories(
+        None if simple.get("valid") else (simple.get("category") or HARNESS_INVALID),
+        rich.get("category"),
+    )
+    return category
+
+
+def apply_validity(
+    result: dict[str, Any],
+    scores: dict[str, Any],
+    classification: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Zero the score of a run whose model produced nothing usable (#69).
+
+    A model-failure run scores 0 on every axis and stays in the denominator.
+    Zeroing the whole composite rather than only `correctness` is deliberate:
+    the `safety` axis defaults to 1.0 when nothing ran, so an empty completion
+    would otherwise collect 2 of 9 weight for having done nothing — a smaller
+    version of the same free credit this taxonomy exists to remove.
+
+    The stage-derived numbers are not thrown away; they move to
+    `composite_measured` / `correctness_measured` so the zeroing is auditable
+    rather than a value that silently appeared.
+
+    A harness-invalid run is untouched here. Its score is meaningless either
+    way, and it is excluded from every aggregate downstream — writing a 0 onto
+    it would invite someone to average it in.
+    """
+    if run_category(result, classification) != MODEL_FAILURE:
+        return scores
+    zeroed = dict(scores)
+    zeroed["model_failure"] = True
+    zeroed["composite_measured"] = scores.get("composite", 0.0)
+    zeroed["correctness_measured"] = scores.get("correctness", 0.0)
+    for axis in AXES:
+        zeroed[axis] = 0.0
+    zeroed["composite"] = 0.0
+    return zeroed
+
+
+def score_run(result: dict[str, Any]) -> dict[str, Any]:
+    """`compute_score` plus the validity taxonomy. The scoring entry point."""
+    return apply_validity(result, compute_score(result))
+
+
+def partition_by_category(
+    results: list[dict[str, Any]],
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """Split runs into (measured, model_failures, harness_invalid).
+
+    `measured + model_failures` is the denominator every average uses;
+    `harness_invalid` contributes nothing anywhere but is always counted.
+    """
+    measured: list[dict] = []
+    model_failures: list[dict] = []
+    harness_invalid: list[dict] = []
+    for r in results:
+        category = run_category(r)
+        if category == HARNESS_INVALID:
+            harness_invalid.append(r)
+        elif category == MODEL_FAILURE:
+            model_failures.append(r)
+        else:
+            measured.append(r)
+    return measured, model_failures, harness_invalid
+
+
 def aggregate_scores(results: list[dict[str, Any]]) -> dict[str, Any]:
     """Aggregate scores across runs, stacks, tasks.
 
-    #59: a run the validity gate rejects (tool-narration leak, or a stub too
-    short to be a real answer — see bench/validity.py) is excluded from
-    every metric here rather than scored as a failure. It is never silently
-    dropped, though: `rejected_runs` (and `rejected_reasons`, broken down by
-    cause) are always recorded on the aggregate entry, so a report built
-    from this can surface "rejected: N" instead of a composite score that
-    quietly folded contaminated runs in as ordinary failures.
+    #69 splits what #59 lumped together. A run that produced no number has two
+    possible causes and they are averaged differently:
+
+    - HARNESS-INVALID (tool markup or a host path leaked into the completion,
+      the adapter errored, a stage's binary was missing): the harness captured
+      no completion, so there is no measurement of the model. Excluded from
+      every metric here, and counted in `harness_rejected_runs` /
+      `harness_rejected_reasons` so a report can surface it rather than let a
+      composite quietly stand on a shrunken sample.
+    - MODEL-FAILURE (empty completion, stub, prose where a file was needed):
+      the harness worked and the model produced nothing usable. This is a
+      measurement — the worst one — so it scores 0 and STAYS in every
+      denominator, counted in `model_failure_runs` / `model_failure_reasons`.
+
+    Scoring model failures as exclusions is what let a model raise its own
+    average by answering nothing: its worst runs left its own denominator.
+    `num_runs` is therefore the count of runs that were actually measured,
+    model failures included, and it is the denominator of `avg_composite` and
+    `pass_at_1`.
 
     Runs with no `content` key at all predate content being recorded (or are
     synthetic test fixtures) and can't be judged by the gate — they are
@@ -202,14 +326,26 @@ def aggregate_scores(results: list[dict[str, Any]]) -> dict[str, Any]:
     for key, runs in groups.items():
         model, stack, task = key
 
-        valid_runs = [r for r in runs if run_validity(r)["valid"]]
-        invalid_runs = [r for r in runs if not run_validity(r)["valid"]]
+        valid_runs, failure_runs, invalid_runs = partition_by_category(runs)
+        # Every run that measured something, a failed answer included.
+        scored_runs = valid_runs + failure_runs
 
-        # Compute consistency: fraction of (valid) runs producing the same
-        # outcome. A rejected run's stage results are gate noise (a run that
+        # A model failure's own score is zeroed here as well as at load time,
+        # so an aggregate is correct even when the caller scored the runs with
+        # bare `compute_score`. This is the invariant that must not be
+        # bypassable: emitting nothing can never raise an average.
+        for run in failure_runs:
+            run["score"] = apply_validity(run, run.get("score") or compute_score(run))
+
+        # Consistency: fraction of measured runs producing the same outcome.
+        # A harness-rejected run's stage results are gate noise (a run that
         # narrated tool use instead of answering emits no code, so lint/
         # static/semantic trivially fail on nothing) — folding it in would
         # confound consistency with contamination, exactly what #59 flagged.
+        # A model failure, by contrast, has a real and perfectly consistent
+        # outcome: it failed. Its outcome is recorded as an explicit failure
+        # tuple rather than read off stage flags, which for an empty answer
+        # can still carry a vacuous lint pass.
         outcomes = set()
         for run in valid_runs:
             stages = run.get("stages", {})
@@ -217,37 +353,38 @@ def aggregate_scores(results: list[dict[str, Any]]) -> dict[str, Any]:
                 stages.get(s, {}).get("passed", False) for s in ("lint", "static", "semantic")
             )
             outcomes.add(outcome)
+        if failure_runs:
+            outcomes.add((False, False, False))
         consistency = (
-            (1.0 if len(outcomes) <= 1 else 1.0 - (len(outcomes) - 1) / len(valid_runs))
-            if valid_runs else 0.0
+            (1.0 if len(outcomes) <= 1 else 1.0 - (len(outcomes) - 1) / len(scored_runs))
+            if scored_runs else 0.0
         )
 
-        # Update consistency scores in each valid run
-        for run in valid_runs:
+        # Update consistency scores in each measured run
+        for run in scored_runs:
             score = run.setdefault("score", {})
             score["consistency"] = consistency
 
-        # Pass@1: fraction of single (valid) runs passing all stages
-        pass_at_1 = (
-            sum(
-                1 for run in valid_runs
-                if all(run.get("stages", {}).get(s, {}).get("passed", False) for s in ("lint", "static"))
-            ) / len(valid_runs)
-            if valid_runs else 0.0
-        )
-
-        # Pass@k: at least one valid run passing
-        pass_at_k = (
-            1
-            if any(
-                all(run.get("stages", {}).get(s, {}).get("passed", False) for s in ("lint", "static"))
-                for run in valid_runs
+        def _passed(run: dict[str, Any]) -> bool:
+            # A model failure never passes, whatever its vacuous stage flags say.
+            if run in failure_runs:
+                return False
+            return all(
+                run.get("stages", {}).get(s, {}).get("passed", False)
+                for s in ("lint", "static")
             )
-            else 0
+
+        # Pass@1: fraction of measured runs passing all stages
+        pass_at_1 = (
+            sum(1 for run in scored_runs if _passed(run)) / len(scored_runs)
+            if scored_runs else 0.0
         )
 
-        # Average composite
-        composites = [run.get("score", {}).get("composite", 0) for run in valid_runs]
+        # Pass@k: at least one measured run passing
+        pass_at_k = 1 if any(_passed(run) for run in scored_runs) else 0
+
+        # Average composite over every measured run — model failures at 0.0.
+        composites = [run.get("score", {}).get("composite", 0) for run in scored_runs]
         avg_composite = sum(composites) / len(composites) if composites else 0
 
         # Idiom coverage: which runs carried a judge verdict, and under which
@@ -257,19 +394,34 @@ def aggregate_scores(results: list[dict[str, Any]]) -> dict[str, Any]:
 
         rejected_reasons: dict[str, int] = {}
         for r in invalid_runs:
-            reason = run_validity(r)["reason"] or "unknown"
+            reason = run_validity(r).get("reason") or "unknown"
             rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
+        failure_reasons: dict[str, int] = {}
+        for r in failure_runs:
+            reason = run_validity(r).get("reason") or "unknown"
+            failure_reasons[reason] = failure_reasons.get(reason, 0) + 1
 
         entry = {
             "pass_at_1": pass_at_1,
             "pass_at_k": pass_at_k,
             "consistency": consistency,
             "avg_composite": avg_composite,
-            "num_runs": len(valid_runs),
+            # Denominator of every average above: measured runs, model
+            # failures included.
+            "num_runs": len(scored_runs),
+            "num_measured_runs": len(valid_runs),
+            # The two failure counts, never summed into one.
+            "model_failure_runs": len(failure_runs),
+            "harness_rejected_runs": len(invalid_runs),
+            # Back-compat: `rejected_runs` has always meant "excluded from the
+            # numbers above", and after the split only harness-invalid runs are.
             "rejected_runs": len(invalid_runs),
         }
         if rejected_reasons:
             entry["rejected_reasons"] = rejected_reasons
+            entry["harness_rejected_reasons"] = rejected_reasons
+        if failure_reasons:
+            entry["model_failure_reasons"] = failure_reasons
         if judged:
             entry["judged_runs"] = len(judged)
             entry["avg_idiom"] = sum(idioms) / len(idioms)
@@ -285,7 +437,12 @@ def aggregate_scores(results: list[dict[str, Any]]) -> dict[str, Any]:
 
 
 def load_result_set(model_dir: Path) -> list[dict[str, Any]]:
-    """Load and score every run JSON under one result-set directory."""
+    """Load and score every run JSON under one result-set directory.
+
+    Scoring goes through `score_run`, not bare `compute_score`, so a run whose
+    model produced nothing usable arrives at every downstream consumer already
+    carrying a 0.0 composite (#69).
+    """
     if not model_dir.is_dir():
         return []
 
@@ -294,8 +451,7 @@ def load_result_set(model_dir: Path) -> list[dict[str, Any]]:
         if "run" in f.stem:
             with open(f) as fp:
                 result = json.load(fp)
-                # Compute scores
-                result["score"] = compute_score(result)
+                result["score"] = score_run(result)
                 results.append(result)
 
     return results

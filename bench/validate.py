@@ -41,13 +41,30 @@ TASKS_DIR = ROOT / "tasks"
 # reasoning: at 1 in 24 the denominator barely moves, at 1 in 6 a rate over
 # the survivors is not a rate over the run. One constant, not two — aws-bench
 # carries this number twice and the copies can drift.
+#
+# This counts `runner_error` only — an adapter/API failure, which is the
+# harness dying. It deliberately does NOT count a model that answered nothing:
+# see MODEL_FAILURE_LIMIT below.
 CRASH_LIMIT = 0.10
 
-# Share of a set's runs the validity gates may reject before the set as a
-# whole is unpublishable. Deliberately the same 10%: a couple of empty
-# completions in a 90-run suite is noise, a third of them is a broken
-# provider wearing a score.
+# Share of a set's runs the HARNESS-invalidity gates may reject before the set
+# as a whole is unpublishable. Deliberately the same 10%: a couple of
+# uncapturable completions in a 90-run suite is noise, a third of them is a
+# broken harness wearing a score.
+#
+# Scoped to harness-invalid runs only since #69. Model failures — empty
+# answers, stubs, prose where a file was needed — are a measurement, not a
+# malfunction, and a set full of them is a publishable result about a weak
+# model. Refusing such a set would mean the benchmark could only report on
+# models good enough to answer, which is the survivorship bias #69 exists to
+# remove, applied to whole result sets instead of individual runs.
 REJECT_LIMIT = 0.10
+
+# There is deliberately no upper limit on model failures. A set where the
+# model answered nothing 90 times out of 90 scores 0.000 and publishes; that
+# is the correct report of what happened. This constant exists to be found by
+# anyone looking for the limit that is not here.
+MODEL_FAILURE_LIMIT = None
 
 STAGE_NAMES = ("lint", "static", "semantic", "e2e")
 
@@ -76,19 +93,43 @@ def _spec_for(result: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def classify_run(result: dict[str, Any], spec: dict[str, Any] | None = None) -> dict[str, Any]:
-    """Classify one run as valid / partial / invalid, with reasons.
+    """Classify one run as valid / partial / model-failure / invalid.
 
-    `invalid` means rejected: the run did not measure the model and must not
-    contribute a number anywhere. `partial` means the run is usable but its
-    provenance is incomplete, so it cannot be compared against another set.
+    Four states, because "the run produced no number" has two causes that must
+    not be averaged the same way (#69):
+
+    - `invalid` — HARNESS-rejected. The harness failed to capture a completion
+      (tool markup leaked into the answer, the adapter errored, a stage's
+      binary was missing), so no measurement of the model exists. The run must
+      not contribute a number anywhere, and a set full of these is broken.
+    - `model-failure` — the harness worked and the model produced nothing
+      usable. This IS a measurement: the run scores 0 and stays in the
+      denominator. A set full of these is a real result about the model.
+    - `partial` — usable, but its provenance is incomplete, so it cannot be
+      compared against another set.
+    - `valid`.
+
+    Both failure lists are returned separately (`invalid_reasons`,
+    `model_failure_reasons`) rather than merged, because collapsing them is
+    exactly the bug this split fixes. `invalid_reasons` keeps its original
+    meaning — "reasons this run is excluded" — so callers that only knew about
+    exclusion stay correct.
     """
     invalid: list[str] = []
+    model_failure: list[str] = []
     partial: list[str] = []
+
+    def _file(reason: str) -> None:
+        (
+            model_failure
+            if validity.categorize_reason(reason) == validity.MODEL_FAILURE
+            else invalid
+        ).append(reason)
 
     stages = result.get("stages") or {}
 
-    # 1. The harness itself failed. Kept in the denominator (it is a run that
-    #    was asked for and produced no answer), never in the numerator.
+    # 1. The harness itself failed: the adapter raised, the API errored, the
+    #    request timed out. Nothing about the model was captured.
     if result.get("error"):
         invalid.append(f"runner_error: {str(result['error'])[:160]}")
 
@@ -103,7 +144,8 @@ def classify_run(result: dict[str, Any], spec: dict[str, Any] | None = None) -> 
             spec = _spec_for(result)
         verdict = validity.check_result(result, spec)
     if verdict.get("verdict") == "invalid":
-        invalid.extend(verdict.get("reasons", []))
+        for reason in verdict.get("reasons", []):
+            _file(reason)
 
     # 3. A stage that recorded a pass while saying its binary was absent is
     #    the #56 lie in stored form. Fixed at run time; still on disk in every
@@ -130,7 +172,7 @@ def classify_run(result: dict[str, Any], spec: dict[str, Any] | None = None) -> 
     present = [stages.get(n) for n in STAGE_NAMES if isinstance(stages.get(n), dict)]
     enabled = [s for s in present if not s.get("skipped")]
     if enabled and all(stage_inapplicable(s) for s in enabled):
-        invalid.append(
+        _file(
             "all_stages_inapplicable: every enabled stage had nothing to act "
             "on — the run produced no output any gate could check"
         )
@@ -166,8 +208,13 @@ def classify_run(result: dict[str, Any], spec: dict[str, Any] | None = None) -> 
         if not (prov.get("task") or {}).get("prompt_sha256"):
             partial.append("no_prompt_hash: the task prompt was not fingerprinted")
 
+    # Harness invalidity outranks model failure: if the harness failed to
+    # capture the completion, whatever the completion looks like is not
+    # evidence about the model.
     if invalid:
         state = "invalid"
+    elif model_failure:
+        state = "model-failure"
     elif partial:
         state = "partial"
     else:
@@ -176,6 +223,7 @@ def classify_run(result: dict[str, Any], spec: dict[str, Any] | None = None) -> 
     return {
         "verdict": state,
         "invalid_reasons": invalid,
+        "model_failure_reasons": model_failure,
         "partial_reasons": partial,
         "attempted_stages": sum(1 for s in present if stage_attempted(s)),
     }
@@ -210,6 +258,7 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
         "runs": [],
         "counts": Counter(),
         "reasons": Counter(),
+        "model_failure_reasons": Counter(),
         "problems": [],
     }
 
@@ -229,6 +278,7 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
             entry = {
                 "file": str(path), "verdict": "invalid",
                 "invalid_reasons": [f"unreadable_json: {data['_unreadable']}"],
+                "model_failure_reasons": [],
                 "partial_reasons": [],
             }
         else:
@@ -253,13 +303,18 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
         report["counts"][entry["verdict"]] += 1
         for reason in entry["invalid_reasons"] + entry["partial_reasons"]:
             report["reasons"][reason.split(":", 1)[0]] += 1
+        for reason in entry.get("model_failure_reasons") or []:
+            report["model_failure_reasons"][reason.split(":", 1)[0]] += 1
 
     total = len(runs)
     rejected = report["counts"]["invalid"]
+    model_failures = report["counts"]["model-failure"]
     errored = report["reasons"].get("runner_error", 0)
 
     report["rejected"] = rejected
     report["reject_share"] = rejected / total
+    report["model_failures"] = model_failures
+    report["model_failure_share"] = model_failures / total
     report["errored"] = errored
     report["error_share"] = errored / total
     report["harness_commits"] = sorted(harness_commits)
@@ -275,10 +330,19 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
         )
     if report["reject_share"] > REJECT_LIMIT:
         report["problems"].append(
-            f"{rejected} of {total} runs were rejected by the validity gates "
-            f"({report['reject_share']:.0%} > {REJECT_LIMIT:.0%}) — re-run this "
-            "set, do not publish it"
+            f"{rejected} of {total} runs were harness-rejected "
+            f"({report['reject_share']:.0%} > {REJECT_LIMIT:.0%}) — the harness "
+            "failed to capture a completion this often, so the set describes "
+            "the harness, not the model; re-run it, do not publish it"
         )
+    # Model failures are never a problem entry. They are the result.
+    if model_failures:
+        report["notes"] = report.get("notes", []) + [
+            f"{model_failures} of {total} runs are model failures "
+            f"({report['model_failure_share']:.0%}) — the model produced nothing "
+            "usable. These score 0 and stay in the denominator; they do not "
+            "make the set unpublishable (#69)."
+        ]
 
     # Run-count homogeneity, ported from chant-bench's trial-count check: a
     # task run 1 time sitting beside tasks run 3 times is not the same
@@ -308,6 +372,9 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
             f"mixed providers within one set: {', '.join(sorted(providers))}"
         )
 
+    # A set full of model failures is publishable — it is a real result about
+    # a weak model — so `model-failure` runs never push the set verdict past
+    # `partial`. Only harness problems refuse a set.
     report["verdict"] = (
         "refused" if report["problems"]
         else "partial" if report["counts"]["partial"]
@@ -317,23 +384,41 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
 
 
 def format_set_report(report: dict[str, Any], verbose: bool = False) -> str:
+    """Render one set's classification.
+
+    The two failure counts get their own lines and are never summed into one
+    (#69): `harness-rejected` runs left the set entirely, `empty answers`
+    scored 0 inside it. A single "rejected: N" line cannot say which happened,
+    and the difference is the whole point.
+    """
     label = report["label"]
     counts = report["counts"]
     lines = [
         f"{label}: {report['total']} run(s) — "
-        f"{counts.get('valid', 0)} valid, {counts.get('partial', 0)} partial, "
-        f"rejected: {counts.get('invalid', 0)}",
+        f"{counts.get('valid', 0)} valid, {counts.get('partial', 0)} partial",
+        f"    harness-rejected: {counts.get('invalid', 0)}  "
+        "(excluded — the harness captured no completion)",
+        f"    empty answers:    {counts.get('model-failure', 0)}  "
+        "(scored 0, kept in the denominator)",
     ]
     for reason, n in sorted(report["reasons"].items(), key=lambda kv: -kv[1]):
         lines.append(f"    {n:>4}  {reason}")
+    for reason, n in sorted(report.get("model_failure_reasons", {}).items(), key=lambda kv: -kv[1]):
+        lines.append(f"    {n:>4}  {reason}  [model failure]")
     for problem in report["problems"]:
         lines.append(f"  REFUSED: {problem}")
+    for note in report.get("notes", []):
+        lines.append(f"  NOTE: {note}")
     if verbose:
         for entry in report["runs"]:
             if entry["verdict"] == "valid":
                 continue
             lines.append(f"  [{entry['verdict']}] {entry['file']}")
-            for reason in entry["invalid_reasons"] + entry["partial_reasons"]:
+            for reason in (
+                entry["invalid_reasons"]
+                + (entry.get("model_failure_reasons") or [])
+                + entry["partial_reasons"]
+            ):
                 lines.append(f"      {reason}")
     lines.append(f"  -> {report['verdict'].upper()}")
     return "\n".join(lines)

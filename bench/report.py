@@ -12,7 +12,13 @@ from collections import Counter
 from pathlib import Path
 
 from bench import validate as validate_mod
-from bench.score import compute_score, judge_metadata, load_result_set, load_results
+from bench.score import (
+    apply_validity,
+    compute_score,
+    judge_metadata,
+    load_result_set,
+    load_results,
+)
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
@@ -32,13 +38,19 @@ ARCHETYPE_LABELS = {
 def partition_by_validity(
     results: list[dict], spec_lookup: bool = True,
 ) -> tuple[list[dict], list[dict]]:
-    """Split runs into (scored, rejected).
+    """Split runs into (scored, harness_rejected).
 
-    A rejected run gets no number at all — not a low one, not a caveated one.
-    That is chant-bench's hardest-won rule: terraform-m1 published 1.000 next
-    to an `invalid` badge after losing 22 of 24 trials, and the badge lost to
-    the number. Averaging a rejected run in, even flagged, reproduces exactly
-    that.
+    A HARNESS-rejected run gets no number at all — not a low one, not a
+    caveated one. That is chant-bench's hardest-won rule: terraform-m1
+    published 1.000 next to an `invalid` badge after losing 22 of 24 trials,
+    and the badge lost to the number. Averaging such a run in, even flagged,
+    reproduces exactly that.
+
+    A model-failure run is NOT rejected (#69). It stays in `scored`, carrying
+    the 0.0 composite `bench.score.score_run` gave it, because a model that
+    answered nothing was measured — excluding it would let a model shrink its
+    own denominator to the runs it happened to answer. Callers separate the
+    two with `model_failures()`.
     """
     scored: list[dict] = []
     rejected: list[dict] = []
@@ -49,31 +61,85 @@ def partition_by_validity(
     return scored, rejected
 
 
+def model_failures(scored: list[dict]) -> list[dict]:
+    """The runs inside `scored` where the model produced nothing usable."""
+    return [r for r in scored if (r.get("_integrity") or {}).get("verdict") == "model-failure"]
+
+
+def _zero_model_failures(scored: list[dict]) -> None:
+    """Force every model-failure run in `scored` to a 0.0 composite.
+
+    `load_result_set` already does this, but a caller that scored its runs with
+    bare `compute_score` (tests, ad-hoc tooling) would otherwise average a
+    vacuous stage pass into a cell. Applied here so no path through this module
+    can report a model failure as anything but a failure.
+    """
+    for r in model_failures(scored):
+        # `_integrity` is classify_run's verdict, the downstream source of
+        # truth — pass it rather than let apply_validity re-derive from the
+        # completion alone, which cannot see the task spec.
+        r["score"] = apply_validity(r, r.get("score") or compute_score(r), r["_integrity"])
+        r["_model_failure"] = True
+
+
+def _reason_table(runs: list[dict], key: str, header: str) -> list[str]:
+    reasons: Counter[str] = Counter()
+    for r in runs:
+        for reason in r["_integrity"].get(key) or []:
+            reasons[reason.split(":", 1)[0]] += 1
+    if not reasons:
+        return []
+    return (
+        ["", f"| {header} | Runs |", "| --- | --- |"]
+        + [f"| `{k}` | {v} |" for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])]
+    )
+
+
 def integrity_section(label: str, scored: list[dict], rejected: list[dict]) -> list[str]:
-    """The rejected-run block every report opens with."""
+    """The failure block every report opens with.
+
+    `harness-rejected` and `empty answers` are separate lines with separate
+    reason tables and are never added together (#69). One means the harness
+    lost the completion and the run left the denominator; the other means the
+    model produced nothing and scored 0 inside it. Collapsing them into a
+    single "rejected: N" is the bug — it makes a model that answers nothing
+    look like a model with a flaky harness, and hands it a smaller denominator
+    as a reward.
+    """
+    failures = model_failures(scored)
     total = len(scored) + len(rejected)
     lines = [
         "## Result Integrity",
         "",
         f"- runs: **{total}**",
-        f"- scored: **{len(scored)}**",
-        f"- **rejected: {len(rejected)}**"
-        + ("" if not rejected else "  — excluded from every number below"),
+        f"- scored: **{len(scored)}**  — the denominator of every number below",
+        f"- **harness-rejected: {len(rejected)}**"
+        + ("" if not rejected else "  — excluded from every number below; the "
+                                   "harness captured no completion, so nothing "
+                                   "about the model was measured"),
+        f"- **empty answers: {len(failures)}**"
+        + ("" if not failures else "  — scored 0 and KEPT in the denominator; "
+                                   "the harness worked and the model produced "
+                                   "nothing usable"),
     ]
+    lines += _reason_table(rejected, "invalid_reasons", "Harness-rejection reason")
     if rejected:
-        reasons: Counter[str] = Counter()
-        for r in rejected:
-            for reason in r["_integrity"]["invalid_reasons"]:
-                reasons[reason.split(":", 1)[0]] += 1
-        lines += ["", "| Rejection reason | Runs |", "| --- | --- |"]
-        lines += [f"| `{k}` | {v} |" for k, v in sorted(reasons.items(), key=lambda kv: -kv[1])]
         lines += [
             "",
-            "> A rejected run did not measure the model: the provider returned "
-            "no usable completion, a stage's binary was absent while the stage "
-            "recorded a pass, or every enabled stage had nothing to act on. "
-            "Such a run is re-run, not reported. "
+            "> A harness-rejected run did not measure the model: tool-call "
+            "markup leaked into the completion, the adapter errored, or a "
+            "stage's binary was absent while the stage recorded a pass. Such a "
+            "run is re-run, not reported. "
             f"`python3 -m bench.validate results/{label} --verbose` lists them.",
+        ]
+    lines += _reason_table(failures, "model_failure_reasons", "Empty-answer reason")
+    if failures:
+        lines += [
+            "",
+            "> An empty answer IS a measurement, and the worst one: the harness "
+            "delivered the prompt and captured the reply, and the reply was "
+            "unusable. These score 0 on every axis and stay in the denominator, "
+            "so a model cannot raise its average by answering nothing.",
         ]
     partial = [r for r in scored if r["_integrity"]["verdict"] == "partial"]
     if partial:
@@ -90,10 +156,12 @@ def integrity_section(label: str, scored: list[dict], rejected: list[dict]) -> l
 def generate_report(model: str, results: list[dict]) -> str:
     """Generate markdown report from results.
 
-    Rejected runs are partitioned out before anything is averaged, and the
-    count is stated above the matrix rather than in a footnote.
+    Harness-rejected runs are partitioned out before anything is averaged;
+    model-failure runs stay in at 0.0. Both counts are stated above the matrix
+    rather than in a footnote.
     """
     results, rejected = partition_by_validity(results)
+    _zero_model_failures(results)
     lines = [
         f"# Benchmark Report: {model}",
         "",
@@ -117,7 +185,9 @@ def generate_report(model: str, results: list[dict]) -> str:
         task = result.get("task", "")
         score = result.get("score", {})
         composite = score.get("composite", 0)
-        passed = all(
+        # A model failure never passes, whatever its stage flags recorded — an
+        # empty completion routinely collects a vacuous "no YAML to lint" pass.
+        passed = not result.get("_model_failure") and all(
             result.get("stages", {}).get(s, {}).get("passed", False)
             for s in ("lint", "static")
         )
@@ -191,7 +261,10 @@ def generate_report(model: str, results: list[dict]) -> str:
     lines.append(f"- Input tokens: {total_input:,}")
     lines.append(f"- Output tokens: {total_output:,}")
     lines.append(f"- Total: {total_input + total_output:,}")
-    lines.append(f"- Runs scored: {len(results)} (rejected: {len(rejected)})")
+    lines.append(
+        f"- Runs scored: {len(results)} "
+        f"(harness-rejected: {len(rejected)}; empty answers: {len(model_failures(results))})"
+    )
 
     return "\n".join(lines)
 
@@ -255,10 +328,13 @@ def generate_comparison(
     has no runs there. Rejected runs never reach a cell.
     """
     rejected_counts: dict[str, int] = {}
+    failure_counts: dict[str, int] = {}
     cleaned: list[tuple[str, list[dict]]] = []
     for label, results in result_sets:
         scored, rejected = partition_by_validity(results)
+        _zero_model_failures(scored)
         rejected_counts[label] = len(rejected)
+        failure_counts[label] = len(model_failures(scored))
         cleaned.append((label, scored))
     result_sets = cleaned
 
@@ -333,21 +409,29 @@ def generate_comparison(
     # averaging 39 surviving runs of 90 is a different claim from one
     # averaging 90.
     lines += ["", "## Coverage", "",
-              "| Result set | Scored | Rejected | Judged runs | Judge model | Judge prompt |",
-              "| --- | --- | --- | --- | --- | --- |"]
+              "| Result set | Scored | Harness-rejected | Empty answers | Judged runs "
+              "| Judge model | Judge prompt |",
+              "| --- | --- | --- | --- | --- | --- | --- |"]
     for label, results in result_sets:
         judged = [m for r in results if (m := judge_metadata(r))]
         models = sorted({m["judge_model"] for m in judged if m["judge_model"]}) or ["—"]
         prompts = sorted({m["prompt_sha256"] for m in judged if m["prompt_sha256"]}) or ["—"]
         lines.append(
             f"| {label} | {len(results)} | **{rejected_counts.get(label, 0)}** | "
+            f"**{failure_counts.get(label, 0)}** | "
             f"{len(judged)} | {', '.join(models)} | {', '.join(prompts)} |"
         )
 
     lines += [
         "",
-        "> Rejected runs contribute to no cell above. A run the gates rejected did",
-        "> not measure the model, so it has to happen again rather than be averaged in.",
+        "> Harness-rejected runs contribute to no cell above. A run the harness could",
+        "> not capture a completion for did not measure the model, so it has to happen",
+        "> again rather than be averaged in.",
+        "",
+        "> Empty answers DO contribute, at 0.0, and are inside the Scored column. The",
+        "> harness worked and the model produced nothing usable, which is a result about",
+        "> the model — excluding it would let a model raise its average by answering",
+        "> nothing (#69).",
         "",
         "> Runs without a judge verdict score 0.0 on the idiom axis (weight 1 of 9),",
         "> so composites are only strictly comparable between equally judged sets.",

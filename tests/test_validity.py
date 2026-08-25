@@ -233,24 +233,44 @@ TRANSCRIPT_LEAK_ANSWER = GENUINE_ANSWER + (
 )
 
 
-def test_generate_report_surfaces_rejected_count():
+def test_generate_report_surfaces_harness_rejected_count():
     runs = [_run(GENUINE_ANSWER), _run(TRANSCRIPT_LEAK_ANSWER)]
     report = generate_report("m", runs)
-    assert "- **rejected: 1**" in report
+    assert "- **harness-rejected: 1**" in report
     assert "agent_transcript" in report
 
 
-def test_generate_report_states_zero_rejected_explicitly():
+def test_generate_report_states_zero_for_both_failure_kinds_explicitly():
     runs = [_run(GENUINE_ANSWER)]
     report = generate_report("m", runs)
-    assert "- **rejected: 0**" in report
+    assert "- **harness-rejected: 0**" in report
+    assert "- **empty answers: 0**" in report
 
 
-def test_generate_comparison_coverage_table_has_rejected_column():
-    runs = [_run(GENUINE_ANSWER), _run(TRANSCRIPT_LEAK_ANSWER)]
+def test_generate_report_never_collapses_the_two_failure_kinds():
+    """#69: one line each, and the empty answer is inside `scored`.
+
+    A single "rejected: N" line cannot say whether the harness lost the
+    completion or the model never produced one, and those are averaged
+    differently — so the report must never offer one.
+    """
+    runs = [_run(GENUINE_ANSWER), _run(TRANSCRIPT_LEAK_ANSWER), _run("")]
+    report = generate_report("m", runs)
+    assert "- **harness-rejected: 1**" in report
+    assert "- **empty answers: 1**" in report
+    assert "- **rejected: 2**" not in report
+    # The empty answer is in the denominator; the harness rejection is not.
+    assert "- scored: **2**" in report
+
+
+def test_generate_comparison_coverage_table_separates_the_two_counts():
+    runs = [_run(GENUINE_ANSWER), _run(TRANSCRIPT_LEAK_ANSWER), _run("")]
     report = generate_comparison([("set-a", runs)])
-    assert "| Result set | Scored | Rejected | Judged runs | Judge model | Judge prompt |" in report
-    assert "| set-a | 1 | **1** |" in report
+    assert (
+        "| Result set | Scored | Harness-rejected | Empty answers | Judged runs "
+        "| Judge model | Judge prompt |"
+    ) in report
+    assert "| set-a | 2 | **1** | **1** |" in report
 
 
 # ── runner.py: run_task stamps validity on every run ─────────────────────

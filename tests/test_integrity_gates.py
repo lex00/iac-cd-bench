@@ -244,7 +244,14 @@ def test_completeness_is_not_a_free_full_mark_when_no_assertion_ran():
     assert scores["composite"] < 0.5
 
 
-def test_run_is_invalid_when_every_enabled_stage_was_inapplicable():
+def test_run_is_a_model_failure_when_every_enabled_stage_was_inapplicable():
+    """#69: this used to be `invalid` and therefore excluded.
+
+    Every enabled stage having nothing to act on means the model produced no
+    artifact — the harness delivered the prompt and captured the reply fine.
+    That is a model failure, so the run scores 0 and stays in the denominator
+    rather than leaving the model's own average.
+    """
     run = {
         "model": "m", "stack": "knr-ops", "task": "T2-generate",
         "content": "x" * 500 + "\n```yaml\napiVersion: v1\n```\n",
@@ -255,8 +262,11 @@ def test_run_is_invalid_when_every_enabled_stage_was_inapplicable():
         },
     }
     classification = validate.classify_run(run, spec={})
-    assert classification["verdict"] == "invalid"
-    assert any("all_stages_inapplicable" in r for r in classification["invalid_reasons"])
+    assert classification["verdict"] == "model-failure"
+    assert classification["invalid_reasons"] == []
+    assert any(
+        "all_stages_inapplicable" in r for r in classification["model_failure_reasons"]
+    )
 
 
 def test_historical_vacuous_passes_are_recognised_from_their_log_bodies():
@@ -647,19 +657,68 @@ def test_a_clean_set_validates(tmp_path):
     assert report["counts"]["valid"] == 3
 
 
-def test_validator_cli_exits_nonzero_on_a_refused_set(tmp_path):
+def test_validator_cli_exits_nonzero_on_a_harness_refused_set(tmp_path):
     import sys
 
     d = tmp_path / "set"
-    _write_run(d, "T2-generate", 0, content="")
+    # A harness failure: Claude Code's own tool-call markup in the completion.
+    _write_run(d, "T2-generate", 0, content=(
+        "x" * 400 + '\n<invoke name="Bash">\n<parameter name="command">ls</parameter>\n</invoke>\n'
+    ))
 
     proc = subprocess.run(
         [sys.executable, "-m", "bench.validate", str(d)],
         capture_output=True, text=True, cwd=str(ROOT),
     )
     assert proc.returncode == 1
-    assert "rejected: 1" in proc.stdout
+    assert "harness-rejected: 1" in proc.stdout
     assert "REFUSED" in proc.stdout
+
+
+def test_validator_cli_publishes_a_set_the_model_simply_failed(tmp_path):
+    """#69, item 4: a weak model is a result, not a broken harness.
+
+    A set of nothing but empty completions used to be REFUSED — 100% over the
+    rejection limit. That made the benchmark able to report only on models good
+    enough to answer, which is the same survivorship bias applied to whole sets
+    instead of individual runs. Now it publishes, scoring 0.
+    """
+    import sys
+
+    d = tmp_path / "set"
+    for r in range(5):
+        _write_run(d, "T2-generate", r, content="")
+
+    proc = subprocess.run(
+        [sys.executable, "-m", "bench.validate", str(d)],
+        capture_output=True, text=True, cwd=str(ROOT),
+    )
+    assert proc.returncode == 0, proc.stdout
+    assert "REFUSED" not in proc.stdout
+    # The two counts appear as separate lines and are never summed.
+    assert "harness-rejected: 0" in proc.stdout
+    assert "empty answers:    5" in proc.stdout
+    assert "1/1 result set(s) publishable" in proc.stdout
+
+
+def test_crash_limit_does_not_fire_on_model_failures(tmp_path):
+    """The crash limit counts adapter/API deaths only.
+
+    An empty answer is not the harness dying, so a set that is 100% empty
+    answers trips neither CRASH_LIMIT nor REJECT_LIMIT.
+    """
+    d = tmp_path / "set"
+    for r in range(10):
+        _write_run(d, "T2-generate", r, content="")
+
+    report = validate.validate_result_set(d)
+    assert report["errored"] == 0
+    assert report["error_share"] == 0.0
+    assert report["rejected"] == 0
+    assert report["model_failures"] == 10
+    assert report["model_failure_share"] == 1.0
+    assert report["problems"] == []
+    assert report["verdict"] != "refused"
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -679,14 +738,22 @@ def test_report_excludes_rejected_runs_and_states_the_count(tmp_path):
                    "semantic": {"passed": True, "passed_count": 2, "total_count": 2,
                                 "safety_pass": True}},
     }
-    bad = {**good, "run": 1, "content": ""}
-    for r in (good, bad):
+    # A harness failure (leaked tool-call markup) — this one leaves the set.
+    leaked = {**good, "run": 1, "content": (
+        "x" * 400 + '\n<invoke name="Bash">\n<parameter name="command">ls</parameter>\n</invoke>\n'
+    )}
+    # A model failure (empty completion) — this one stays, at 0.0.
+    empty = {**good, "run": 2, "content": ""}
+    for r in (good, leaked, empty):
         r["score"] = _score(r)
 
-    scored, rejected = partition_by_validity([dict(good), dict(bad)])
-    assert len(scored) == 1 and len(rejected) == 1
+    scored, rejected = partition_by_validity([dict(good), dict(leaked), dict(empty)])
+    assert len(scored) == 2 and len(rejected) == 1
 
-    report = generate_report("m", [dict(good), dict(bad)])
-    assert "**rejected: 1**" in report
+    report = generate_report("m", [dict(good), dict(leaked), dict(empty)])
+    # The two counts are separate lines, never collapsed (#69).
+    assert "**harness-rejected: 1**" in report
+    assert "**empty answers: 1**" in report
+    assert "agent_transcript" in report
     assert "empty_completion" in report
-    assert "Runs scored: 1 (rejected: 1)" in report
+    assert "Runs scored: 2 (harness-rejected: 1; empty answers: 1)" in report
