@@ -100,9 +100,47 @@ def test_chant_golden_scaffold_exists():
 
 @chant_golden_required
 def test_chant_golden_entrypoints_exist():
-    """dev and prod are separate build roots, not one parameterized entrypoint."""
-    assert (CHANT_GOLDEN / "src" / "envs" / "dev" / "main.ts").exists()
-    assert (CHANT_GOLDEN / "src" / "envs" / "prod" / "main.ts").exists()
+    """dev and prod are separate build roots, not one parameterized entrypoint.
+
+    Each environment is further split into infra/clusters/delivery build
+    roots (#19) so the FluxAppFor paths and the actual `chant build` output
+    agree — see golden-base/chant/README.md, "Build output layout".
+    """
+    for env in ("dev", "prod"):
+        for sub_root in ("infra", "clusters", "delivery"):
+            assert (CHANT_GOLDEN / "src" / "envs" / env / sub_root / "main.ts").exists(), (
+                f"missing: golden-base/chant/src/envs/{env}/{sub_root}/main.ts"
+            )
+
+
+@chant_golden_required
+def test_chant_golden_build_output_layout_declared():
+    """package.json builds each Flux-reconciled path into its own file.
+
+    The delivery Kustomizations name "./dist/<env>/infra" and
+    "./dist/<env>/clusters" as reconciliation paths; the build scripts must
+    emit into those exact locations for FLUX002/FLUX003 and reality to agree.
+    """
+    package_json = json.loads((CHANT_GOLDEN / "package.json").read_text())
+    scripts = package_json.get("scripts", {})
+    for env in ("dev", "prod"):
+        for sub_root, out in (
+            ("infra", f"dist/{env}/infra/manifests.yaml"),
+            ("clusters", f"dist/{env}/clusters/manifests.yaml"),
+            ("delivery", f"dist/{env}/delivery.yaml"),
+        ):
+            key = f"build:{env}:{sub_root}"
+            assert key in scripts, f"package.json scripts missing {key}"
+            assert out in scripts[key], f"{key} does not build to {out}"
+
+    for env in ("dev", "prod"):
+        source = (CHANT_GOLDEN / "src" / "envs" / env / "delivery" / "main.ts").read_text()
+        assert f'"./dist/{env}/infra"' in source, (
+            f"src/envs/{env}/delivery/main.ts must declare the infra FluxAppFor path"
+        )
+        assert f'"./dist/{env}/clusters"' in source, (
+            f"src/envs/{env}/delivery/main.ts must declare the clusters FluxAppFor path"
+        )
 
 
 @chant_golden_required
