@@ -97,6 +97,106 @@ def test_golden_implementations_exist():
             f"no YAML manifests found under {bare_dir}"
 
 
+# The chant golden lands on its own branch, so these assertions are guarded on
+# the directory existing: whichever of bench/chant-golden and bench/chant-wiring
+# merges first, the suite stays green. Once both are on main the guard is a
+# no-op — golden-base/chant is always there.
+CHANT_GOLDEN = ROOT / "golden-base" / "chant"
+
+chant_golden_required = pytest.mark.skipif(
+    not CHANT_GOLDEN.is_dir(),
+    reason="golden-base/chant not present yet (bench/chant-golden not merged)",
+)
+
+
+@chant_golden_required
+def test_chant_golden_scaffold_exists():
+    """The chant golden ships a buildable chant project."""
+    for relative in (
+        "chant.config.ts",
+        "package.json",
+        "tsconfig.json",
+        "README.md",
+    ):
+        assert (CHANT_GOLDEN / relative).exists(), f"missing: golden-base/chant/{relative}"
+
+
+@chant_golden_required
+def test_chant_golden_entrypoints_exist():
+    """dev and prod are separate build roots, not one parameterized entrypoint.
+
+    Each environment is further split into infra/clusters/delivery build
+    roots (#19) so the FluxAppFor paths and the actual `chant build` output
+    agree — see golden-base/chant/README.md, "Build output layout".
+    """
+    for env in ("dev", "prod"):
+        for sub_root in ("infra", "clusters", "delivery"):
+            assert (CHANT_GOLDEN / "src" / "envs" / env / sub_root / "main.ts").exists(), (
+                f"missing: golden-base/chant/src/envs/{env}/{sub_root}/main.ts"
+            )
+
+
+@chant_golden_required
+def test_chant_golden_build_output_layout_declared():
+    """package.json builds each Flux-reconciled path into its own file.
+
+    The delivery Kustomizations name "./dist/<env>/infra" and
+    "./dist/<env>/clusters" as reconciliation paths; the build scripts must
+    emit into those exact locations for FLUX002/FLUX003 and reality to agree.
+    """
+    package_json = json.loads((CHANT_GOLDEN / "package.json").read_text())
+    scripts = package_json.get("scripts", {})
+    for env in ("dev", "prod"):
+        for sub_root, out in (
+            ("infra", f"dist/{env}/infra/manifests.yaml"),
+            ("clusters", f"dist/{env}/clusters/manifests.yaml"),
+            ("delivery", f"dist/{env}/delivery.yaml"),
+        ):
+            key = f"build:{env}:{sub_root}"
+            assert key in scripts, f"package.json scripts missing {key}"
+            assert out in scripts[key], f"{key} does not build to {out}"
+
+    for env in ("dev", "prod"):
+        source = (CHANT_GOLDEN / "src" / "envs" / env / "delivery" / "main.ts").read_text()
+        assert f'"./dist/{env}/infra"' in source, (
+            f"src/envs/{env}/delivery/main.ts must declare the infra FluxAppFor path"
+        )
+        assert f'"./dist/{env}/clusters"' in source, (
+            f"src/envs/{env}/delivery/main.ts must declare the clusters FluxAppFor path"
+        )
+
+
+@chant_golden_required
+def test_chant_golden_composites_exist():
+    """The scenario-local Composite() factories the golden is written over."""
+    composites = CHANT_GOLDEN / "src" / "composites"
+    for module, factory in (
+        ("region-cluster.ts", "RegionCluster"),
+        ("secure-bucket.ts", "SecureBucket"),
+        ("postgres-instance.ts", "PostgresInstance"),
+        ("reader-iam.ts", "ReaderIam"),
+    ):
+        path = composites / module
+        assert path.exists(), f"missing composite module: {path}"
+        source = path.read_text()
+        assert f'"{factory}"' in source, f"{module} does not name the {factory} composite"
+
+
+@chant_golden_required
+def test_chant_golden_vendors_the_lexicon():
+    """The CAPI/CAPA/ACK lexicon is vendored until upstream publishes it."""
+    vendor = CHANT_GOLDEN / "vendor"
+    assert vendor.is_dir(), "golden-base/chant/vendor missing"
+    assert (vendor / "README.md").exists(), "vendor/README.md must explain the file: deps"
+    tarballs = sorted(vendor.glob("*.tgz"))
+    assert tarballs, "no vendored chant tarball in golden-base/chant/vendor"
+    package_json = json.loads((CHANT_GOLDEN / "package.json").read_text())
+    deps = package_json.get("dependencies", {})
+    assert deps.get("@intentius/chant-lexicon-k8s", "").startswith("file:vendor/"), (
+        "the k8s lexicon must resolve from vendor/ until the CAPI/CAPA/ACK kinds publish"
+    )
+
+
 def test_stage_runners_import():
     """Stage runners import cleanly."""
     from bench.stages import lint, static, semantic, e2e
