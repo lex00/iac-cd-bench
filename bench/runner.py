@@ -19,13 +19,29 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from bench.grounding import MCPClient, SchemaCache, build_grounding_section, discover_kinds
 from bench.stages import lint, static, semantic, e2e
 
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "tasks"
 RESULTS_DIR = ROOT / "results"
+ALL_STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
+GROUNDING_STACKS = frozenset({"knr-ops", "crossplane"})
 
 log = logging.getLogger(__name__)
+
+
+def validate_grounding_stacks(stacks: list[str], grounding: bool = False) -> None:
+    """Reject grounding runs that include stacks without Kubernetes schemas."""
+    if not grounding:
+        return
+    unsupported = sorted(set(stacks) - GROUNDING_STACKS)
+    if unsupported:
+        names = ", ".join(unsupported)
+        raise ValueError(
+            "--grounding supports knr-ops and crossplane only; "
+            f"unsupported stack(s): {names}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -405,6 +421,10 @@ def run_task(
     k: int = 3,
     run_e2e: bool = False,
     condition: str = "warm",
+    grounding: bool = False,
+    *,
+    grounding_client: MCPClient | None = None,
+    grounding_cache: SchemaCache | None = None,
 ) -> list[dict[str, Any]]:
     """Run a single task k times, return results."""
     spec_path = task_dir / "spec.yaml"
@@ -418,6 +438,17 @@ def run_task(
     results: list[dict[str, Any]] = []
 
     import time
+
+    # Reuse one client and cache for every run in this invocation.  ``main``
+    # passes these objects across tasks as well, so a benchmark matrix shares
+    # both the HTTP connection and on-disk schema results.
+    if grounding:
+        if grounding_client is None:
+            grounding_client = MCPClient()
+        if grounding_cache is None:
+            grounding_cache = SchemaCache(ROOT / ".cache" / "schemas")
+        assert grounding_client is not None
+        assert grounding_cache is not None
 
     for run_idx in range(k):
         # Delay between runs to avoid rate limiting
@@ -446,9 +477,28 @@ def run_task(
             "condition": condition,
             "stages": {},
         }
+        if grounding:
+            result["grounding"] = {"kinds": [], "section_chars": 0}
 
         # Invoke model
+        grounding_complete = not grounding
         try:
+            if grounding:
+                pairs = discover_kinds(workspace)
+                schemas = {
+                    (api_version, kind): grounding_cache.get(
+                        kind, api_version, grounding_client.get_schema
+                    )
+                    for api_version, kind in pairs
+                }
+                section = build_grounding_section(schemas)
+                prompt = prompt + "\n\n" + section
+                result["grounding"] = {
+                    "kinds": [f"{api_version}/{kind}" for api_version, kind in pairs],
+                    "section_chars": len(section),
+                }
+                grounding_complete = True
+
             completion = adapter.complete(prompt, workspace_files)
             result["tokens"] = {
                 "input": completion["input_tokens"],
@@ -479,7 +529,7 @@ def run_task(
                 result["stages"]["e2e"] = e2e.run_e2e(workspace, stack)
 
         except Exception as e:
-            result["error"] = str(e)
+            result["error"] = str(e) if grounding_complete else f"grounding failed: {e}"
             result["stages"]["lint"] = {"passed": False, "logs": str(e)}
 
         results.append(result)
@@ -501,6 +551,8 @@ def main() -> None:
     parser.add_argument("--task", help="Single task shortcut")
     parser.add_argument("-k", type=int, default=3, help="Runs per task")
     parser.add_argument("--e2e", action="store_true", help="Include e2e validation tier")
+    parser.add_argument("--grounding", action="store_true",
+                        help="Append upstream schemas to prompts (knr-ops and crossplane only)")
     parser.add_argument("--condition", default="warm", choices=["warm", "cold"])
     parser.add_argument("--api-key", default=None, help="API key (defaults to env ANTHROPIC_API_KEY)")
     parser.add_argument("--reasoning-effort", default=None,
@@ -513,8 +565,11 @@ def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     # Parse stacks
-    all_stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
-    stacks = [args.stack] if args.stack else (all_stacks if args.stacks == "all" else args.stacks.split(","))
+    stacks = [args.stack] if args.stack else (ALL_STACKS if args.stacks == "all" else args.stacks.split(","))
+    try:
+        validate_grounding_stacks(stacks, args.grounding)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Build adapter
     base_url: str | None = args.base_url
@@ -527,6 +582,9 @@ def main() -> None:
     else:
         adapter = OpenAICompatAdapter(args.model, base_url or "http://localhost:8000", api_key,
                                       reasoning_effort=args.reasoning_effort)
+
+    grounding_client = MCPClient() if args.grounding else None
+    grounding_cache = SchemaCache(ROOT / ".cache" / "schemas") if args.grounding else None
 
     # Discover tasks
     all_results: list[dict[str, Any]] = []
@@ -556,7 +614,16 @@ def main() -> None:
                 time.sleep(10)
 
             log.info("Running %s/%s (condition=%s)", stack, task_dir.name, args.condition)
-            results = run_task(task_dir, adapter, args.k, args.e2e, args.condition)
+            results = run_task(
+                task_dir,
+                adapter,
+                args.k,
+                args.e2e,
+                args.condition,
+                grounding=args.grounding,
+                grounding_client=grounding_client,
+                grounding_cache=grounding_cache,
+            )
             all_results.extend(results)
 
             # Write results
