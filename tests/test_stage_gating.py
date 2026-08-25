@@ -157,3 +157,56 @@ def test_static_chant_missing_binary_sets_passed_false(tmp_path, monkeypatch):
     monkeypatch.setattr(subprocess, "run", _raise_not_found)
     result = static.run_static(tmp_path, "chant")
     assert result["passed"] is False
+
+
+# ── chant tsc invocation honors a real tsconfig.json ────────────────────
+
+def _fake_completed(cmd_args):
+    class _Proc:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+    return _Proc()
+
+
+def test_chant_tsc_uses_tsconfig_when_present(tmp_path, monkeypatch):
+    """golden-base/chant carries a real tsconfig.json pinning
+    moduleResolution: NodeNext, required to resolve @intentius/chant's
+    conditional package exports. Invoking tsc on a bare file list instead
+    (tsc's classic-resolution default) cannot resolve that import and looks
+    like a real type-check failure rather than the invocation bug it is."""
+    (tmp_path / "tsconfig.json").write_text("{}")
+    (tmp_path / "a.ts").write_text("export const x = 1;\n")
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd_args, **kwargs):
+        seen.append(cmd_args)
+        return _fake_completed(cmd_args)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    lint.run_lint(tmp_path, "chant")
+
+    tsc_calls = [c for c in seen if c[0] == "tsc"]
+    assert tsc_calls, "expected a tsc invocation"
+    assert tsc_calls[0] == ["tsc", "-p", "tsconfig.json", "--noEmit"]
+
+
+def test_chant_tsc_falls_back_to_file_list_without_tsconfig(tmp_path, monkeypatch):
+    """Ephemeral task workspaces (tasks/chant/*/seed/ ships no tsconfig.json)
+    keep the pre-existing explicit-file-list invocation unchanged."""
+    (tmp_path / "a.ts").write_text("export const x = 1;\n")
+
+    seen: list[list[str]] = []
+
+    def fake_run(cmd_args, **kwargs):
+        seen.append(cmd_args)
+        return _fake_completed(cmd_args)
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    lint.run_lint(tmp_path, "chant")
+
+    tsc_calls = [c for c in seen if c[0] == "tsc"]
+    assert tsc_calls, "expected a tsc invocation"
+    assert tsc_calls[0][:3] == ["tsc", "--noEmit", "--skipLibCheck"]
+    assert str(tmp_path / "a.ts") in tsc_calls[0]

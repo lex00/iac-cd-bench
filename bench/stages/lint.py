@@ -66,9 +66,22 @@ def run_lint(workspace: Path, stack: str) -> dict:
     else:
         files = ["."]
 
+    has_tsconfig = (workspace / "tsconfig.json").exists()
+
     for cmd, args, description in commands:
-        if stack in ("knr-ops", "crossplane", "pulumi-typescript", "bare"):
-            cmd_args: list[str] = [cmd] + args + files
+        if cmd == "tsc" and has_tsconfig:
+            # A real tsconfig.json (e.g. golden-base/chant, which carries
+            # "moduleResolution": "NodeNext" for @intentius/chant's
+            # conditional-exports package.json) must be honored via -p;
+            # invoking tsc on a bare file list uses tsc's classic-resolution
+            # default and cannot resolve those imports, which would silently
+            # look like a real type-check failure instead of an invocation
+            # bug. Ephemeral task workspaces (no tsconfig.json copied into
+            # seed/) fall through to the explicit-file-list invocation below,
+            # unchanged.
+            cmd_args: list[str] = [cmd, "-p", "tsconfig.json", "--noEmit"]
+        elif stack in ("knr-ops", "crossplane", "pulumi-typescript", "bare"):
+            cmd_args = [cmd] + args + files
         elif stack == "chant":
             # "chant lint ." already targets the workspace itself; only tsc
             # (which needs explicit inputs) gets the discovered .ts files.
