@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 
 from bench.score import compute_score, judge_metadata, load_result_set, load_results
+from bench.validity import run_validity
 
 ROOT = Path(__file__).resolve().parent.parent
 RESULTS_DIR = ROOT / "results"
@@ -27,9 +28,37 @@ ARCHETYPE_LABELS = {
 
 
 def generate_report(model: str, results: list[dict]) -> str:
-    """Generate markdown report from results."""
+    """Generate markdown report from results.
+
+    #59: results rejected by the validity gate (bench/validity.py — tool-
+    narration leak or a stub too short to be a real answer) are excluded
+    from the matrix, the cold/warm delta, and the token summary below, same
+    as bench.score.aggregate_scores. They are never silently dropped: the
+    "## Run Validity" section always states how many runs were rejected and
+    why, even when that count is zero.
+    """
+    rejected = [r for r in results if not run_validity(r)["valid"]]
+    valid_results = [r for r in results if run_validity(r)["valid"]]
+
     lines = [
         f"# Benchmark Report: {model}",
+        "",
+        "## Run Validity",
+        "",
+    ]
+    if rejected:
+        reasons: dict[str, int] = {}
+        for r in rejected:
+            reason = run_validity(r)["reason"] or "unknown"
+            reasons[reason] = reasons.get(reason, 0) + 1
+        reason_str = ", ".join(f"{reason}: {count}" for reason, count in sorted(reasons.items()))
+        lines.append(
+            f"rejected: {len(rejected)} of {len(results)} runs failed the validity gate "
+            f"({reason_str}) and are excluded from every table below."
+        )
+    else:
+        lines.append(f"rejected: 0 of {len(results)} runs — all runs passed the validity gate.")
+    lines += [
         "",
         "## Stack × Archetype Matrix",
         "",
@@ -44,8 +73,8 @@ def generate_report(model: str, results: list[dict]) -> str:
         for arch in ARCHETYPES:
             matrix[(stack, arch)] = {"runs": [], "tasks": []}
 
-    # Populate matrix
-    for result in results:
+    # Populate matrix (valid runs only — see docstring)
+    for result in valid_results:
         stack = result.get("stack", "")
         task = result.get("task", "")
         score = result.get("score", {})
@@ -87,8 +116,8 @@ def generate_report(model: str, results: list[dict]) -> str:
     lines.append("")
 
     # knr-ops cold vs warm delta (if cold runs exist)
-    cold_results = [r for r in results if r.get("condition") == "cold"]
-    warm_results = [r for r in results if r.get("condition") == "warm"]
+    cold_results = [r for r in valid_results if r.get("condition") == "cold"]
+    warm_results = [r for r in valid_results if r.get("condition") == "warm"]
     if cold_results and warm_results:
         lines.append("## knr-ops Cold vs Warm Delta")
         lines.append("")
@@ -115,16 +144,16 @@ def generate_report(model: str, results: list[dict]) -> str:
         lines.append("")
         lines.append("> **Cold/warm delta measures how much in-context documentation** knr-ops needs to match training-data-driven stacks.")
 
-    # Token usage summary
+    # Token usage summary (valid runs only, same rationale as the matrix)
     lines.append("")
     lines.append("## Token Usage")
     lines.append("")
-    total_input = sum(r.get("tokens", {}).get("input", 0) for r in results)
-    total_output = sum(r.get("tokens", {}).get("output", 0) for r in results)
+    total_input = sum(r.get("tokens", {}).get("input", 0) for r in valid_results)
+    total_output = sum(r.get("tokens", {}).get("output", 0) for r in valid_results)
     lines.append(f"- Input tokens: {total_input:,}")
     lines.append(f"- Output tokens: {total_output:,}")
     lines.append(f"- Total: {total_input + total_output:,}")
-    lines.append(f"- Runs: {len(results)}")
+    lines.append(f"- Runs: {len(valid_results)} (rejected: {len(rejected)})")
 
     return "\n".join(lines)
 
@@ -148,16 +177,23 @@ def generate_comparison(result_sets: list[tuple[str, list[dict]]]) -> str:
     One column per result set; rows are stacks, then stack × archetype. Cells
     are the mean composite score of the runs in that bucket, or — when the set
     has no runs there.
+
+    #59: runs the validity gate rejects (bench/validity.py) are excluded
+    from every score bucket here — never scored as a failure — and surfaced
+    instead as a "Rejected" column in Coverage, so a contaminated result set
+    can't silently inflate or deflate a comparison.
     """
     labels = [label for label, _ in result_sets]
     header = "| " + " | ".join(["Stack", *labels]) + " |"
     divider = "| " + " | ".join(["---"] * (len(labels) + 1)) + " |"
 
-    # bucket[label][(stack, archetype)] -> [composite, ...]
+    # bucket[label][(stack, archetype)] -> [composite, ...]  (valid runs only)
     buckets: dict[str, dict[tuple[str, str], list[float]]] = {}
     for label, results in result_sets:
         bucket: dict[tuple[str, str], list[float]] = {}
         for r in results:
+            if not run_validity(r)["valid"]:
+                continue
             arch = archetype_of(r.get("task", ""))
             if arch is None:
                 continue
@@ -209,15 +245,20 @@ def generate_comparison(result_sets: list[tuple[str, list[dict]]]) -> str:
                 "| " + " | ".join([f"{stack} / {ARCHETYPE_LABELS[arch]}", *cells]) + " |"
             )
 
-    # Coverage: run counts and the judge pinning behind any idiom scores
-    lines += ["", "## Coverage", "", "| Result set | Runs | Judged runs | Judge model | Judge prompt |",
-              "| --- | --- | --- | --- | --- |"]
+    # Coverage: run counts (valid vs rejected) and the judge pinning behind
+    # any idiom scores. "Rejected" is never folded into "Runs" silently —
+    # see the module docstring.
+    lines += ["", "## Coverage", "",
+              "| Result set | Runs | Rejected | Judged runs | Judge model | Judge prompt |",
+              "| --- | --- | --- | --- | --- | --- |"]
     for label, results in result_sets:
-        judged = [m for r in results if (m := judge_metadata(r))]
+        valid = [r for r in results if run_validity(r)["valid"]]
+        rejected = [r for r in results if not run_validity(r)["valid"]]
+        judged = [m for r in valid if (m := judge_metadata(r))]
         models = sorted({m["judge_model"] for m in judged if m["judge_model"]}) or ["—"]
         prompts = sorted({m["prompt_sha256"] for m in judged if m["prompt_sha256"]}) or ["—"]
         lines.append(
-            f"| {label} | {len(results)} | {len(judged)} | "
+            f"| {label} | {len(valid)} | {len(rejected)} | {len(judged)} | "
             f"{', '.join(models)} | {', '.join(prompts)} |"
         )
 
@@ -225,6 +266,9 @@ def generate_comparison(result_sets: list[tuple[str, list[dict]]]) -> str:
         "",
         "> Runs without a judge verdict score 0.0 on the idiom axis (weight 1 of 9),",
         "> so composites are only strictly comparable between equally judged sets.",
+        "> \"Rejected\" runs failed the validity gate (tool-narration leak or a",
+        "> stub too short to be a real answer, bench/validity.py) and are excluded",
+        "> from every score in this report, not scored as failures.",
     ]
 
     return "\n".join(lines)

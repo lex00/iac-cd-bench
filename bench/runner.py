@@ -21,6 +21,7 @@ from typing import Any
 
 from bench import judge as judge_mod
 from bench.stages import lint, static, semantic, e2e
+from bench.validity import check_run_validity
 
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "tasks"
@@ -473,11 +474,48 @@ class ClaudeCliAdapter(ModelAdapter):
     / OpenAICompatAdapter, rather than an agentic loop that edits the
     workspace or picks up unrelated project/user instructions itself.
 
+    #59: `--tools ""` alone does NOT stop the model from behaving like an
+    agent. The *default* Claude Code system prompt still frames the session
+    as an agentic coding tool, so even with zero tools wired up, models
+    reliably reach for that framing - narrating an intent to explore the
+    workspace ("I'll look for the actual diff artifacts...", followed by a
+    rendered fenced **Bash** block that is never executed) or stalling out
+    asking for files/tool access instead of answering from the prompt they
+    were given. Since `--print` returns only the first assistant turn as
+    `result`, that preamble (or clarifying question) *is* the run's entire
+    recorded output - typically under the ~600-1500 char range real answers
+    fall in. This was measured directly: on knr-ops T5-review (opus/haiku,
+    the rubric shape that triggered it most), the stock command produced a
+    short stub or tool-narration preamble in 2 of 3 live probes; every trial
+    was a substantive full-length answer once `--system-prompt` fully
+    replaced the default agentic framing (see PR body / issue #59 for the
+    probe transcripts). `--append-system-prompt` (which layers on top of,
+    rather than replacing, the default prompt) also improved things in a
+    single trial but was not the one taken to 5-for-5 - `--system-prompt` is
+    the one actually shipped here, both for that stronger empirical run and
+    because it removes the agentic framing at the root instead of trying to
+    talk the model out of it.
+
     Token usage, when reported, comes from the CLI's own `usage` block, which
     reflects Claude Code's internal system prompt and prompt-caching
     accounting - it is not directly comparable to the raw `input_tokens` the
     Anthropic API adapter reports for a bare `messages.create` call.
     """
+
+    # Replaces Claude Code's default (agentic-coding-tool) system prompt
+    # outright. `--append-system-prompt` layers new text on *top of* that
+    # default framing and left the model reaching for tool-shaped narration
+    # in live probes; a full `--system-prompt` override removed the framing
+    # that causes the reach in the first place. See class docstring (#59).
+    SINGLE_TURN_SYSTEM_PROMPT = (
+        "You are being invoked as a one-shot text completion API, not as an "
+        "interactive coding agent. You have no tools, no filesystem access, "
+        "and no ability to run commands - none are attached to this "
+        "session. Never describe, narrate, or propose using a tool (Bash, "
+        "Read, grep, find, ls, etc.); there are none, and doing so wastes "
+        "the turn. Answer the request directly and completely in prose, "
+        "using only the information contained in this message."
+    )
 
     def __init__(self, model: str, reasoning_effort: str | None = None,
                  claude_bin: str | None = None, timeout: int = 600):
@@ -500,6 +538,7 @@ class ClaudeCliAdapter(ModelAdapter):
             "--no-session-persistence",
             "--tools", "",
             "--setting-sources", "",
+            "--system-prompt", self.SINGLE_TURN_SYSTEM_PROMPT,
         ]
         # `--effort` is a real, documented pin (`claude --help`): low, medium,
         # high, xhigh, max. Recorded on self.reasoning_effort either way, so
@@ -649,6 +688,13 @@ def run_task(
             output_file = workspace / "model_output.md"
             output_file.write_text(completion["content"])
             result["content"] = completion["content"]
+
+            # Run-validity gate (#59): flag tool-narration leaks and
+            # too-short stubs on the recorded content itself, so a run the
+            # gate rejects is documented with a reason on the run JSON
+            # (score.py/report.py exclude it from every aggregate rather
+            # than scoring it as an ordinary failure - see bench/validity.py).
+            result["validity"] = check_run_validity(result)
 
             # Extract code blocks from model output and write as files in workspace
             extracted = extract_code_blocks(completion["content"], workspace, stack)

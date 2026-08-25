@@ -8,6 +8,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from bench.validity import run_validity
+
 # Score axes and their weights
 AXES = {
     "correctness": 3,
@@ -99,7 +101,20 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
 
 
 def aggregate_scores(results: list[dict[str, Any]]) -> dict[str, Any]:
-    """Aggregate scores across runs, stacks, tasks."""
+    """Aggregate scores across runs, stacks, tasks.
+
+    #59: a run the validity gate rejects (tool-narration leak, or a stub too
+    short to be a real answer — see bench/validity.py) is excluded from
+    every metric here rather than scored as a failure. It is never silently
+    dropped, though: `rejected_runs` (and `rejected_reasons`, broken down by
+    cause) are always recorded on the aggregate entry, so a report built
+    from this can surface "rejected: N" instead of a composite score that
+    quietly folded contaminated runs in as ordinary failures.
+
+    Runs with no `content` key at all predate content being recorded (or are
+    synthetic test fixtures) and can't be judged by the gate — they are
+    treated as valid, unaffected by this change.
+    """
     # Group by model × stack × task
     groups: dict[tuple[str, ...], list[dict]] = {}
     for r in results:
@@ -110,53 +125,74 @@ def aggregate_scores(results: list[dict[str, Any]]) -> dict[str, Any]:
     for key, runs in groups.items():
         model, stack, task = key
 
-        # Compute consistency: fraction of runs producing same outcome
+        valid_runs = [r for r in runs if run_validity(r)["valid"]]
+        invalid_runs = [r for r in runs if not run_validity(r)["valid"]]
+
+        # Compute consistency: fraction of (valid) runs producing the same
+        # outcome. A rejected run's stage results are gate noise (a run that
+        # narrated tool use instead of answering emits no code, so lint/
+        # static/semantic trivially fail on nothing) — folding it in would
+        # confound consistency with contamination, exactly what #59 flagged.
         outcomes = set()
-        for run in runs:
+        for run in valid_runs:
             stages = run.get("stages", {})
             outcome = tuple(
                 stages.get(s, {}).get("passed", False) for s in ("lint", "static", "semantic")
             )
             outcomes.add(outcome)
-        consistency = 1.0 if len(outcomes) == 1 else 1.0 - (len(outcomes) - 1) / len(runs)
+        consistency = (
+            (1.0 if len(outcomes) <= 1 else 1.0 - (len(outcomes) - 1) / len(valid_runs))
+            if valid_runs else 0.0
+        )
 
-        # Update consistency scores in each run
-        for run in runs:
+        # Update consistency scores in each valid run
+        for run in valid_runs:
             score = run.setdefault("score", {})
             score["consistency"] = consistency
 
-        # Pass@1: fraction of single runs passing all stages
-        pass_at_1 = sum(
-            1 for run in runs
-            if all(run.get("stages", {}).get(s, {}).get("passed", False) for s in ("lint", "static"))
-        ) / len(runs)
+        # Pass@1: fraction of single (valid) runs passing all stages
+        pass_at_1 = (
+            sum(
+                1 for run in valid_runs
+                if all(run.get("stages", {}).get(s, {}).get("passed", False) for s in ("lint", "static"))
+            ) / len(valid_runs)
+            if valid_runs else 0.0
+        )
 
-        # Pass@k: at least one run passing
+        # Pass@k: at least one valid run passing
         pass_at_k = (
             1
             if any(
                 all(run.get("stages", {}).get(s, {}).get("passed", False) for s in ("lint", "static"))
-                for run in runs
+                for run in valid_runs
             )
             else 0
         )
 
         # Average composite
-        composites = [run.get("score", {}).get("composite", 0) for run in runs]
+        composites = [run.get("score", {}).get("composite", 0) for run in valid_runs]
         avg_composite = sum(composites) / len(composites) if composites else 0
 
         # Idiom coverage: which runs carried a judge verdict, and under which
         # judge model / prompt version (pinned for reproducibility).
-        judged = [r for r in runs if judge_metadata(r)]
+        judged = [r for r in valid_runs if judge_metadata(r)]
         idioms = [r.get("score", {}).get("idiom", 0.0) for r in judged]
+
+        rejected_reasons: dict[str, int] = {}
+        for r in invalid_runs:
+            reason = run_validity(r)["reason"] or "unknown"
+            rejected_reasons[reason] = rejected_reasons.get(reason, 0) + 1
 
         entry = {
             "pass_at_1": pass_at_1,
             "pass_at_k": pass_at_k,
             "consistency": consistency,
             "avg_composite": avg_composite,
-            "num_runs": len(runs),
+            "num_runs": len(valid_runs),
+            "rejected_runs": len(invalid_runs),
         }
+        if rejected_reasons:
+            entry["rejected_reasons"] = rejected_reasons
         if judged:
             entry["judged_runs"] = len(judged)
             entry["avg_idiom"] = sum(idioms) / len(idioms)

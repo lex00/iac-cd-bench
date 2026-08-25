@@ -68,10 +68,14 @@ def test_historical_composites_unchanged_by_stage_gating():
 
 
 def test_all_historical_result_jsons_unaffected():
-    """Broader sweep: every JSON under results/ with a `stages` key must
-    score identically to the pre-gating formula (correctness = passed-stage
-    count over a fixed denominator of 3, +1 if `e2e` is present at all),
-    since none of them carry a `skipped` flag."""
+    """Broader sweep: every *pre-gating* JSON under results/ (no `skipped`
+    flag on any stage) must score identically to the pre-gating formula
+    (correctness = passed-stage count over a fixed denominator of 3, +1 if
+    `e2e` is present at all). Result sets written after stage gating landed
+    (e.g. the claude-*-3arm sets, #40/#59) legitimately carry `skipped`
+    stages for tasks whose spec disables them - those are out of scope for
+    this regression test by design, not evidence of a scoring drift, so they
+    are filtered out rather than asserted against the pre-gating formula."""
 
     def old_correctness(stages: dict) -> float:
         stage_pass = sum(
@@ -91,6 +95,8 @@ def test_all_historical_result_jsons_unaffected():
         except (json.JSONDecodeError, OSError):
             continue
         if not isinstance(result, dict) or "stages" not in result:
+            continue
+        if any("skipped" in stage_result for stage_result in result["stages"].values()):
             continue
         checked += 1
         expected = old_correctness(result["stages"])

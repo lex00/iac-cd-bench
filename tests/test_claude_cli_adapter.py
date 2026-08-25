@@ -63,6 +63,22 @@ def test_build_command_pins_model_and_disables_tools_and_settings():
     assert cmd[cmd.index("--setting-sources") + 1] == ""
 
 
+def test_build_command_replaces_default_system_prompt():
+    # #59: `--tools ""` alone did not stop the model from behaving like an
+    # agent (narrating tool use it can't perform, or stalling out asking for
+    # tool/file access) - the default Claude Code system prompt still frames
+    # the session as an agentic coding tool. A full `--system-prompt`
+    # override removed that framing in live probes; `--append-system-prompt`
+    # (layered on top, not a replacement) did not get the same validation.
+    adapter = ClaudeCliAdapter("claude-haiku-4-5")
+    cmd = adapter._build_command()
+    assert "--append-system-prompt" not in cmd
+    assert "--system-prompt" in cmd
+    prompt = cmd[cmd.index("--system-prompt") + 1]
+    assert "no tools" in prompt
+    assert "one-shot" in prompt or "single" in prompt.lower()
+
+
 def test_build_command_pins_effort_when_given():
     adapter = ClaudeCliAdapter("claude-haiku-4-5", reasoning_effort="low")
     cmd = adapter._build_command()
