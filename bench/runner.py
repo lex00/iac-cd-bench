@@ -127,6 +127,37 @@ def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -
 # Task materializer
 # ──────────────────────────────────────────────────────────────────────────
 
+def _bootstrap_chant_workspace(workspace: Path) -> None:
+    """Symlink the shared golden-base/chant node_modules template into a
+    materialized chant workspace, and copy tsconfig.json + package.json
+    from the same template.
+
+    tsc/chant need node_modules to resolve @intentius/chant's conditional
+    package exports (see lint.py), and tsc's NodeNext resolution needs a
+    tsconfig.json (-p tsconfig.json, per lint.py) plus a package.json
+    declaring "type": "module" (the nearest package.json is how Node/tsc
+    decide whether the workspace's `.js`-suffixed relative imports of `.ts`
+    sources are ESM). Symlinking node_modules (rather than copying it)
+    is what makes a 36+-run chant matrix share one install instead of
+    npm-installing per run; see bench.stages.e2e.ensure_chant_node_modules
+    for where that one shared install happens.
+
+    Every file this writes is skipped if the workspace already has one
+    (e.g. a future task seed shipping its own), so this never clobbers
+    seed content.
+    """
+    golden_dir = e2e.ensure_chant_node_modules()
+
+    node_modules_link = workspace / "node_modules"
+    if not node_modules_link.exists():
+        node_modules_link.symlink_to(golden_dir / "node_modules", target_is_directory=True)
+
+    for name in ("tsconfig.json", "package.json"):
+        dest = workspace / name
+        if not dest.exists():
+            shutil.copy2(golden_dir / name, dest)
+
+
 def materialize_task(task_dir: Path, workspace: Path, condition: str = "warm") -> dict[str, Any]:
     """Copy seed into workspace, optionally inject docs for warm condition."""
     import yaml
@@ -154,6 +185,16 @@ def materialize_task(task_dir: Path, workspace: Path, condition: str = "warm") -
     spec_path = task_dir / "spec.yaml"
     with open(spec_path) as f:
         spec = yaml.safe_load(f)
+
+    # chant tasks whose spec actually runs a toolchain stage (lint/static/
+    # e2e) need node_modules + tsconfig.json bootstrapped into the
+    # workspace (issue #58); pure rubric/prediction chant tasks (all three
+    # disabled) skip this so their workspace and grader never see a
+    # node_modules tree at all.
+    if spec.get("stack") == "chant" and any(
+        _stage_enabled(spec, name) for name in ("lint", "static", "e2e")
+    ):
+        _bootstrap_chant_workspace(workspace)
 
     # Load prompt
     prompt_path = task_dir / "prompt.md"
@@ -565,16 +606,6 @@ def run_task(
         workspace = Path(tempfile.mkdtemp(prefix=f"bench-{stack}-"))
         log.info("Run %d: workspace %s", run_idx, workspace)
 
-        # Materialize task
-        task_info = materialize_task(task_dir, workspace, condition)
-        prompt = task_info["prompt"]
-
-        # Discover files in workspace
-        workspace_files: list[Path] = []
-        for f in sorted(workspace.rglob("*")):
-            if f.is_file() and not f.name.startswith("."):
-                workspace_files.append(f)
-
         result: dict[str, Any] = {
             "model": adapter.name,
             "task": task_id,
@@ -588,8 +619,26 @@ def run_task(
             "stages": {},
         }
 
-        # Invoke model
+        # Materialize task, invoke model, run validation stages. Wrapped in
+        # one try/except so a materialization failure (e.g. the chant
+        # node_modules bootstrap's npm install) is recorded on this run's
+        # result instead of crashing the whole matrix.
         try:
+            task_info = materialize_task(task_dir, workspace, condition)
+            prompt = task_info["prompt"]
+
+            # Discover files in workspace (excluding node_modules -- a chant
+            # workspace's symlinked node_modules is thousands of files the
+            # model has no business seeing as "workspace files", and adapters
+            # read+inline every file under 50KB into the prompt).
+            workspace_files: list[Path] = []
+            for f in sorted(workspace.rglob("*")):
+                if not f.is_file() or f.name.startswith("."):
+                    continue
+                if "node_modules" in f.relative_to(workspace).parts:
+                    continue
+                workspace_files.append(f)
+
             completion = adapter.complete(prompt, workspace_files)
             result["tokens"] = {
                 "input": completion["input_tokens"],

@@ -17,7 +17,12 @@ import pytest
 
 
 def _all_ts_files() -> list[Path]:
-    return sorted(Path(".").rglob("*.ts"))
+    # Excludes node_modules -- a materialized chant workspace symlinks in
+    # @intentius/chant + typescript's own .ts/.d.ts files (issue #58), which
+    # would otherwise flood these greps with unrelated package internals.
+    return sorted(
+        p for p in Path(".").rglob("*.ts") if "node_modules" not in p.parts
+    )
 
 
 def _all_ts_text() -> str:

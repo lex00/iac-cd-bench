@@ -320,6 +320,43 @@ def _e2e_bare(workspace: Path, results: list[str]) -> bool:
     return passed
 
 
+def ensure_chant_node_modules(golden_dir: Path | None = None) -> Path:
+    """Install golden-base/chant's node_modules once (from its committed
+    package-lock.json + vendor/*.tgz tarballs) and hand back the directory
+    to use as a shared template.
+
+    Two callers share this: preflight_chant_golden below (which lints/
+    builds golden-base/chant itself, and needs its own node_modules to do
+    that honestly) and bench.runner.materialize_task (which symlinks this
+    same node_modules into every materialized chant task workspace so
+    tsc/chant can resolve `@intentius/chant`'s conditional package exports
+    without a per-run npm install — a full matrix's 36+ chant runs share
+    one install instead of each installing cold).
+
+    Idempotent: checks for both vendored packages actually present under
+    node_modules rather than just the directory existing, so a partial or
+    stale install re-runs `npm install` instead of silently reusing it.
+    """
+    golden_dir = golden_dir or (ROOT / "golden-base" / "chant")
+    node_modules = golden_dir / "node_modules"
+    chant_pkg = node_modules / "@intentius" / "chant"
+    lexicon_pkg = node_modules / "@intentius" / "chant-lexicon-k8s"
+    if chant_pkg.is_dir() and lexicon_pkg.is_dir():
+        return golden_dir
+
+    log.info("Installing golden-base/chant node_modules (one-time, cached "
+              "for the rest of this process)")
+    subprocess.run(
+        ["npm", "install", "--no-audit", "--no-fund"],
+        cwd=str(golden_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    return golden_dir
+
+
 def preflight_chant_golden() -> dict:
     """Fairness gate (in the spirit of chant-bench): assert golden-base/chant
     itself passes lint + static before any model run burns tokens on chant
@@ -340,6 +377,13 @@ def preflight_chant_golden() -> dict:
         )
         log.warning(msg)
         return {"passed": True, "skipped": True, "logs": msg}
+
+    try:
+        ensure_chant_node_modules(golden_dir)
+    except Exception as e:  # noqa: BLE001 - surfaced as a failed preflight, not a crash
+        msg = f"golden-base/chant node_modules install failed: {e}"
+        log.error(msg)
+        return {"passed": False, "skipped": False, "logs": msg}
 
     lint_result = lint.run_lint(golden_dir, "chant")
     static_result = static.run_static(golden_dir, "chant")
