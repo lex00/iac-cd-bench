@@ -522,6 +522,19 @@ class ClaudeCliAdapter(ModelAdapter):
 # Runner
 # ──────────────────────────────────────────────────────────────────────────
 
+def _stage_enabled(spec: dict[str, Any], name: str) -> bool:
+    """Whether spec.yaml enables a validation stage (stages.<name>.enabled).
+
+    Defaults to True when the spec has no `stages:` block, or omits a given
+    stage's `enabled` key — matching pre-gating behavior, where every task
+    ran every stage unconditionally. Every task's spec.yaml in this repo
+    declares `stages:` explicitly, so the default only matters for specs
+    that don't (future tasks, or malformed ones)."""
+    stages_spec = spec.get("stages") or {}
+    stage_spec = stages_spec.get(name) or {}
+    return bool(stage_spec.get("enabled", True))
+
+
 def run_task(
     task_dir: Path,
     adapter: ModelAdapter,
@@ -594,17 +607,29 @@ def run_task(
                 result["extracted_files"] = [str(p) for p in extracted]
 
             # Stage 1: lint
-            result["stages"]["lint"] = lint.run_lint(workspace, stack)
+            if _stage_enabled(spec, "lint"):
+                result["stages"]["lint"] = lint.run_lint(workspace, stack)
+            else:
+                result["stages"]["lint"] = {"skipped": True, "reason": "disabled by spec"}
 
             # Stage 2: static
-            result["stages"]["static"] = static.run_static(workspace, stack)
+            if _stage_enabled(spec, "static"):
+                result["stages"]["static"] = static.run_static(workspace, stack)
+            else:
+                result["stages"]["static"] = {"skipped": True, "reason": "disabled by spec"}
 
             # Stage 3: semantic (runs in the model's workspace)
-            result["stages"]["semantic"] = semantic.run_semantic(task_dir, workspace)
+            if _stage_enabled(spec, "semantic"):
+                result["stages"]["semantic"] = semantic.run_semantic(task_dir, workspace)
+            else:
+                result["stages"]["semantic"] = {"skipped": True, "reason": "disabled by spec"}
 
-            # Stage 4: e2e (gated)
+            # Stage 4: e2e (gated on both the --e2e flag and the spec)
             if run_e2e:
-                result["stages"]["e2e"] = e2e.run_e2e(workspace, stack)
+                if _stage_enabled(spec, "e2e"):
+                    result["stages"]["e2e"] = e2e.run_e2e(workspace, stack)
+                else:
+                    result["stages"]["e2e"] = {"skipped": True, "reason": "disabled by spec"}
 
             # Rubric judge (flag-gated; spends API money, so default off).
             # Only rubric tasks return a verdict; a judge failure is recorded

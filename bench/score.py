@@ -50,15 +50,27 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
     stages = result.get("stages", {})
     scores = {}
 
-    # Correctness: stage gates passed
-    stage_pass = sum(
-        1 for name in ("lint", "static", "semantic")
-        if stages.get(name, {}).get("passed", False)
-    )
-    total_stages = 3
-    if stages.get("e2e"):
-        total_stages = 4
-        stage_pass += 1 if stages["e2e"].get("passed", False) else 0
+    # Correctness: stage gates passed, averaged only over stages that
+    # actually ran. A stage the spec disabled (recorded by run_task as
+    # {"skipped": True, ...}) is excluded from both numerator and
+    # denominator — it must never count as a pass. Historical result JSONs
+    # (written before stage gating existed) never carry a `skipped` key, so
+    # every stage present there is still treated as attempted, keeping their
+    # composites unchanged (see tests/test_score_regression.py).
+    stage_pass = 0
+    total_stages = 0
+    for name in ("lint", "static", "semantic"):
+        stage_result = stages.get(name, {})
+        if stage_result.get("skipped"):
+            continue
+        total_stages += 1
+        if stage_result.get("passed", False):
+            stage_pass += 1
+    e2e_result = stages.get("e2e")
+    if e2e_result and not e2e_result.get("skipped"):
+        total_stages += 1
+        if e2e_result.get("passed", False):
+            stage_pass += 1
     scores["correctness"] = stage_pass / total_stages if total_stages else 0
 
     # Completeness: semantic assertion coverage
