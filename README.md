@@ -50,7 +50,24 @@ python -m bench.report --model anthropic/claude-sonnet-4-20250514
 
 # Compare result sets side by side
 python -m bench.report --compare results/claude-opus-5 results/gpt-5.4
+
+# Check this machine has every binary the stacks need (the runner does this
+# itself and refuses to start without them)
+python -m bench.preflight --stacks all
+
+# Classify a result set valid / partial / rejected before quoting a number
+python -m bench.validate results/claude-opus-5 --verbose
 ```
+
+## Result integrity
+
+Runs that did not measure the model are rejected rather than scored, and a
+rejected run gets no number anywhere. The rules, and which chant-bench /
+aws-bench mechanism each was ported from, are in
+[docs/result-integrity.md](docs/result-integrity.md).
+
+Every result set under `results/` predates these gates and fails validation
+today. Their numbers should be re-run rather than quoted.
 
 ## Results
 

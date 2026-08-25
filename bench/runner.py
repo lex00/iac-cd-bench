@@ -20,6 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from bench import judge as judge_mod
+from bench import preflight as preflight_mod
+from bench import provenance as prov_mod
+from bench import validity as validity_mod
 from bench.stages import lint, static, semantic, e2e
 from bench.validity import check_run_validity
 
@@ -622,8 +625,16 @@ def run_task(
     run_e2e: bool = False,
     condition: str = "warm",
     judge: Any = None,
+    provenance: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
-    """Run a single task k times, return results."""
+    """Run a single task k times, return results.
+
+    `provenance` is the run-set-wide block built by main() (harness commit,
+    provider/model/effort, toolchain versions from the preflight). It is
+    stamped onto every result together with this task's own prompt/spec
+    fingerprint, so a re-run after any change to the harness or the task text
+    is visibly a different experiment rather than a silently different one.
+    """
     spec_path = task_dir / "spec.yaml"
     import yaml
     with open(spec_path) as f:
@@ -631,6 +642,17 @@ def run_task(
 
     stack = spec["stack"]
     task_id = spec.get("id", task_dir.name)
+
+    run_provenance: dict[str, Any] = {
+        **(provenance or prov_mod.build_provenance(
+            provider="unknown", model=getattr(adapter, "name", "unknown"),
+            reasoning_effort=getattr(adapter, "reasoning_effort", None),
+        )),
+        "task": prov_mod.task_fingerprint(task_dir),
+        "condition": condition,
+        "k": k,
+    }
+    expects_artifacts = validity_mod.expects_artifacts(spec)
 
     results: list[dict[str, Any]] = []
 
@@ -655,6 +677,7 @@ def run_task(
             # adapter doesn't support one). Recorded per run so cross-model
             # comparisons can confirm effort was held constant within a suite.
             "reasoning_effort": getattr(adapter, "reasoning_effort", None),
+            "provenance": run_provenance,
             "stages": {},
         }
 
@@ -689,17 +712,33 @@ def run_task(
             output_file.write_text(completion["content"])
             result["content"] = completion["content"]
 
-            # Run-validity gate (#59): flag tool-narration leaks and
-            # too-short stubs on the recorded content itself, so a run the
-            # gate rejects is documented with a reason on the run JSON
-            # (score.py/report.py exclude it from every aggregate rather
-            # than scoring it as an ordinary failure - see bench/validity.py).
-            result["validity"] = check_run_validity(result)
-
             # Extract code blocks from model output and write as files in workspace
             extracted = extract_code_blocks(completion["content"], workspace, stack)
             if extracted:
                 result["extracted_files"] = [str(p) for p in extracted]
+
+            # Run-validity gate (#59): two independent classifiers, ported in
+            # parallel PRs and both kept (see bench/validity.py's module
+            # docstring): the simple valid/reason shape score.py's
+            # aggregate_scores reads, and the richer verdict/reasons shape
+            # bench.validate and bench.report's integrity gates read. Stamped
+            # together (disjoint key sets) so every consumer finds the field
+            # it expects, and a run the gate rejects is documented with a
+            # reason on the run JSON rather than scored as an ordinary
+            # failure. Evaluated before the stages so the log line lands next
+            # to the completion that caused it.
+            simple_validity = check_run_validity(result)
+            rich_validity = validity_mod.check_content(
+                completion["content"],
+                expects_artifacts=expects_artifacts,
+                extracted_files=result.get("extracted_files"),
+            )
+            result["validity"] = {**simple_validity, **rich_validity}
+            if result["validity"]["verdict"] != "valid":
+                log.error(
+                    "Run %s/%s#%d REJECTED by the validity gate: %s",
+                    stack, task_id, run_idx, "; ".join(result["validity"]["reasons"]),
+                )
 
             # Stage 1: lint
             if _stage_enabled(spec, "lint"):
@@ -742,6 +781,14 @@ def run_task(
         except Exception as e:
             result["error"] = str(e)
             result["stages"]["lint"] = {"passed": False, "logs": str(e)}
+            result.setdefault("validity", {
+                "valid": False,
+                "reason": "runner_error",
+                "content_length": None,
+                "verdict": "invalid",
+                "reasons": [f"runner_error: {e}"],
+                "checks": {},
+            })
 
         results.append(result)
 
@@ -778,6 +825,10 @@ def main() -> None:
                         help="Provider for the judge model (default: anthropic)")
     parser.add_argument("--judge-base-url", default=None,
                         help="Base URL for an OpenAI-compatible judge endpoint")
+    parser.add_argument("--allow-missing-tools", action="store_true",
+                        help="Start the run set even though a required binary for a "
+                             "selected stack is missing. The whole result set is then "
+                             "stamped partial and bench.validate refuses to publish it.")
     parser.add_argument("--results-tag", default=None,
                         help="Suffix tag for the results directory (e.g. 'low' -> results/<model>-low/). "
                              "Prevents re-runs with different settings from overwriting prior runs.")
@@ -788,6 +839,20 @@ def main() -> None:
     # Parse stacks
     all_stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant", "bare"]
     stacks = [args.stack] if args.stack else (all_stacks if args.stacks == "all" else args.stacks.split(","))
+
+    # Tooling-health preflight, before a single token is spent. A stage whose
+    # binary is absent cannot tell a correct answer from an unchecked one, and
+    # finding that out after a 90-run matrix has already been paid for is what
+    # issue #56 cost. Refuses unless --allow-missing-tools.
+    try:
+        preflight_report = preflight_mod.check(
+            stacks, include_e2e=args.e2e, allow_missing=args.allow_missing_tools,
+        )
+    except preflight_mod.PreflightError as e:
+        print(preflight_mod.format_report(e.report), file=sys.stderr)
+        print(f"\n{e}", file=sys.stderr)
+        raise SystemExit(2) from e
+    log.info("\n%s", preflight_mod.format_report(preflight_report))
 
     # Build adapter
     base_url: str | None = args.base_url
@@ -816,6 +881,25 @@ def main() -> None:
         )
         log.info("Rubric judge enabled: model=%s prompt=%s",
                  rubric_judge.model, judge_mod.prompt_hash())
+
+    # Provenance stamped onto every run in this set.
+    run_set_provenance = prov_mod.build_provenance(
+        provider=args.model_provider,
+        model=adapter.name,
+        reasoning_effort=args.reasoning_effort,
+        toolchain=preflight_report["toolchain"],
+        partial=preflight_report["partial"],
+        extra={
+            "judge_model": getattr(rubric_judge, "model", None) if rubric_judge else None,
+            "judge_prompt_sha256": judge_mod.prompt_hash() if rubric_judge else None,
+        },
+    )
+    log.info(
+        "Provenance: harness=%s%s toolchain=%s",
+        run_set_provenance["harness"].get("commit"),
+        " (dirty)" if run_set_provenance["harness"].get("dirty") else "",
+        prov_mod.toolchain_fingerprint(preflight_report["toolchain"]),
+    )
 
     # Discover tasks
     all_results: list[dict[str, Any]] = []
@@ -855,14 +939,23 @@ def main() -> None:
 
             log.info("Running %s/%s (condition=%s)", stack, task_dir.name, args.condition)
             results = run_task(task_dir, adapter, args.k, args.e2e, args.condition,
-                               judge=rubric_judge)
+                               judge=rubric_judge, provenance=run_set_provenance)
             all_results.extend(results)
 
             # Write results
             model_name = adapter.name.replace("/", "-")
             if args.results_tag:
                 model_name = f"{model_name}-{args.results_tag}"
-            result_dir = RESULTS_DIR / model_name / stack / args.condition
+            set_dir = RESULTS_DIR / model_name
+            set_dir.mkdir(parents=True, exist_ok=True)
+            # Set-level manifest: the preflight that authorised this run set.
+            # Named with a leading underscore so score.load_result_set's
+            # `"run" in stem` glob can never mistake it for a run.
+            (set_dir / "_provenance.json").write_text(json.dumps({
+                "provenance": run_set_provenance,
+                "preflight": preflight_report,
+            }, indent=2, default=str))
+            result_dir = set_dir / stack / args.condition
             result_dir.mkdir(parents=True, exist_ok=True)
             for r in results:
                 out_path = result_dir / f"{task_dir.name}_run{r['run']}.json"
@@ -870,10 +963,27 @@ def main() -> None:
                     json.dump(r, f, indent=2, default=str)
                 log.info("Wrote %s", out_path)
 
-    # Summary
+    # Summary. Rejected runs are named here rather than buried: a run the
+    # gates rejected did not measure the model, and the count belongs next to
+    # the pass count, not underneath it.
     total = len(all_results)
     passed = sum(1 for r in all_results if r["stages"].get("lint", {}).get("passed"))
-    log.info("Summary: %d runs, %d passed lint", total, passed)
+    rejected = sum(
+        1 for r in all_results
+        if (r.get("validity") or {}).get("verdict", "valid") != "valid"
+    )
+    log.info("Summary: %d runs, %d passed lint, rejected: %d", total, passed, rejected)
+    if rejected:
+        log.warning(
+            "%d of %d runs were rejected by the validity gate and must not be "
+            "quoted as scores. Run `python3 -m bench.validate %s` for the reasons.",
+            rejected, total, RESULTS_DIR / adapter.name.replace("/", "-"),
+        )
+    if preflight_report["partial"]:
+        log.warning(
+            "This result set is PARTIAL: it ran with %s missing.",
+            ", ".join(preflight_report["missing"]),
+        )
 
 
 if __name__ == "__main__":

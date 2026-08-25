@@ -15,8 +15,23 @@ from bench.report import archetype_of, collect_result_sets, generate_comparison
 ROOT = Path(__file__).resolve().parent.parent
 
 
+# A completion long enough to clear the validity gate's length floor and
+# carrying a real code block, so these fixtures are runs the gates accept.
+# Without it every fixture would be rejected as an empty completion and the
+# comparison would legitimately have nothing to render.
+FIXTURE_CONTENT = (
+    "Here is the manifest set for the logs bucket, with the storage class "
+    "pinned and the retention policy attached as the brief asks. The overlay "
+    "patches the base rather than replacing it, so the shared labels survive.\n\n"
+    "`infra/s3/logs/bucket.yaml`\n\n"
+    "```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\n"
+    "metadata:\n  name: logs\n```\n"
+)
+
+
 def write_run(model_dir: Path, stack: str, task: str, run: int, *,
-              passed: bool = True, judge: dict | None = None) -> None:
+              passed: bool = True, judge: dict | None = None,
+              content: str = FIXTURE_CONTENT) -> None:
     out = model_dir / stack / "warm"
     out.mkdir(parents=True, exist_ok=True)
     result = {
@@ -25,6 +40,7 @@ def write_run(model_dir: Path, stack: str, task: str, run: int, *,
         "stack": stack,
         "run": run,
         "condition": "warm",
+        "content": content,
         "stages": {
             "lint": {"passed": passed},
             "static": {"passed": passed},
