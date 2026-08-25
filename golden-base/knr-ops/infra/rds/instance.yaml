@@ -1,45 +1,44 @@
-apiVersion: rds.aws.upbound.io/v1beta1
-kind: Instance
-metadata:
-  name: myapp-dev-db
-  namespace: infra
-spec:
-  forProvider:
-    region: us-east-1
-    allocatedStorage: 20
-    engine: postgres
-    engineVersion: "16"
-    instanceClass: db.t3.micro
-    dbName: appdb
-    dbUsername: app-user
-    dbPasswordSecretRef:
-      name: db-password-dev
-      namespace: infra
-      key: password
-    deletionProtection: true
-    backupRetentionPeriod: 7
-    backupWindow: "03:00-04:00"
-    multiAz: false
-    publiclyAccessible: false
-    storageEncrypted: true
-    vpcSecurityGroupIds:
-      - sg-example
-    dbSubnetGroupName: myapp-dev-subnet
-    skipFinalSnapshot: true
-  providerConfigRef:
-    name: default
----
-apiVersion: rds.aws.upbound.io/v1beta1
-kind: SubnetGroup
+# ACK rds-controller (rds.services.k8s.aws) - dev: db.t3.micro, single-AZ
+# (issue #47). Field names are ACK's, not Upbound's Terraform-flavored ones:
+# dbInstanceClass (not instanceClass), multiAZ (not multiAz),
+# preferredBackupWindow (not backupWindow), vpcSecurityGroupIDs/subnetIDs
+# (capitalized ID, not Id).
+apiVersion: rds.services.k8s.aws/v1alpha1
+kind: DBSubnetGroup
 metadata:
   name: myapp-dev-subnet
   namespace: infra
 spec:
-  forProvider:
-    region: us-east-1
-    description: Dev RDS subnet group
-    subnetIds:
-      - subnet-dev-1
-      - subnet-dev-2
-  providerConfigRef:
-    name: default
+  name: myapp-dev-subnet
+  description: Dev RDS subnet group
+  subnetIDs:
+    - subnet-dev-1
+    - subnet-dev-2
+---
+apiVersion: rds.services.k8s.aws/v1alpha1
+kind: DBInstance
+metadata:
+  name: myapp-dev-db
+  namespace: infra
+spec:
+  dbInstanceIdentifier: myapp-dev-db
+  engine: postgres
+  engineVersion: "16"
+  dbInstanceClass: db.t3.micro
+  allocatedStorage: 20
+  dbName: appdb
+  masterUsername: app_user
+  masterUserPassword:
+    name: db-password-dev
+    namespace: infra
+    key: password
+  deletionProtection: true
+  backupRetentionPeriod: 7
+  preferredBackupWindow: "03:00-04:00"
+  multiAZ: false
+  publiclyAccessible: false
+  storageEncrypted: true
+  vpcSecurityGroupIDs:
+    - sg-example
+  dbSubnetGroupName: myapp-dev-subnet
+  skipFinalSnapshot: true

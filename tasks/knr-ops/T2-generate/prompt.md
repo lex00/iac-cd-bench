@@ -26,7 +26,7 @@ Add a new S3 bucket for "logs" with the following requirements:
 6. A Flux kustomization that reconciles the logs bucket separately
 
 The bucket should be added idiomatically following knr-ops patterns:
-- Use ACK S3 CRDs (s3.aws.upbound.io)
+- Use ACK S3 CRDs (s3.services.k8s.aws)
 - Use kustomize overlays for dev/prod differentiation
 - Use SOPS for any sensitive values
 - Ensure the Flux kustomization references the correct source

@@ -1,48 +1,57 @@
 # Prod overlay
+#
+# Cluster patches updated for issue #47's CAPA v1beta2 EKS-managed shape:
+# no more KubeadmControlPlane replicas patch - AWSManagedControlPlane has no
+# "replicas" field, since AWS itself runs and HA-scales the EKS control
+# plane (a CAPA fidelity gap this golden can't paper over; see
+# clusters/eksa/controlplane.yaml). AWSMachineTemplate/MachineDeployment
+# patches become AWSManagedMachinePool/MachinePool.
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ../../clusters/kustomization.yaml
-  - ../../infra/kustomization.yaml
+  - ../../clusters
+  - ../../infra
 namePrefix: prod-
 patches:
   - target:
-      kind: KubeadmControlPlane
-      name: myapp-dev
+      kind: AWSManagedMachinePool
+      group: infrastructure.cluster.x-k8s.io
+      name: myapp-dev-workers
+    patch: |
+      - op: replace
+        path: /spec/instanceType
+        value: t3.large
+  - target:
+      kind: DBInstance
+      group: rds.services.k8s.aws
+      name: myapp-dev-db
+    patch: |
+      - op: replace
+        path: /spec/dbInstanceClass
+        value: db.t3.medium
+      - op: replace
+        path: /spec/multiAZ
+        value: true
+  - target:
+      kind: Bucket
+      group: s3.services.k8s.aws
+      name: myapp-assets-dev
+    patch: |
+      - op: replace
+        path: /spec/versioning/status
+        value: Enabled
+  - target:
+      kind: MachinePool
+      name: myapp-dev-workers
     patch: |
       - op: replace
         path: /spec/replicas
         value: 4
   - target:
-      kind: AWSMachineTemplate
+      kind: AWSManagedMachinePool
+      group: infrastructure.cluster.x-k8s.io
       name: myapp-dev-workers
     patch: |
       - op: replace
-        path: /spec/template/spec/instanceType
-        value: t3.large
-  - target:
-      kind: Instance
-      group: rds.aws.upbound.io
-      name: myapp-dev-db
-    patch: |
-      - op: replace
-        path: /spec/forProvider/instanceClass
-        value: db.t3.medium
-      - op: replace
-        path: /spec/forProvider/multiAz
-        value: true
-  - target:
-      kind: Bucket
-      group: s3.aws.upbound.io
-      name: myapp-assets-dev
-    patch: |
-      - op: replace
-        path: /spec/forProvider/versioningConfiguration/status
-        value: Enabled
-  - target:
-      kind: MachineDeployment
-      name: myapp-dev-workers
-    patch: |
-      - op: replace
-        path: /spec/replicas
+        path: /spec/scaling/maxSize
         value: 4

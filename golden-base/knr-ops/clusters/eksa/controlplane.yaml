@@ -1,29 +1,29 @@
-apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-kind: KubeadmControlPlane
+# CAPA's EKS-managed control plane (AWSManagedControlPlane, v1beta2) -
+# replaces the self-managed KubeadmControlPlane + AWSMachineTemplate this
+# golden previously used, matching the real knr-ops repo's shape (issue
+# #47). AWS itself runs and scales the control plane, so there is no
+# "replicas" or EC2 instance profile to configure here (see
+# overlays/prod/kustomization.yaml for the fidelity note this leaves).
+#
+# eks-pod-identity-agent is required for the ACK controllers reconciling
+# infra/ to authenticate via EKS Pod Identity.
+apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+kind: AWSManagedControlPlane
 metadata:
-  name: myapp-dev
+  name: myapp-dev-control-plane
   namespace: clusters
 spec:
-  version: v1.31.2
-  replicas: 2
-  machineTemplate:
-    infrastructureRef:
-      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-      kind: AWSMachineTemplate
-      name: myapp-dev-controlplane
-  kubeadmConfigRef:
-    apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
-    kind: KubeadmConfig
-    name: myapp-dev-kubeadm
----
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-kind: AWSMachineTemplate
-metadata:
-  name: myapp-dev-controlplane
-  namespace: clusters
-spec:
-  template:
-    spec:
-      instanceType: t3.medium
-      instanceProfile: controlplane
-      iamInstanceProfile: controlplane
+  region: us-east-1
+  version: "1.31.2"
+  endpointAccess:
+    public: true
+    private: true
+  addons:
+    - name: vpc-cni
+      conflictResolution: overwrite
+    - name: coredns
+      conflictResolution: overwrite
+    - name: kube-proxy
+      conflictResolution: overwrite
+    - name: eks-pod-identity-agent
+      conflictResolution: overwrite
