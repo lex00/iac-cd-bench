@@ -4,28 +4,33 @@ Regression tests pinning what the historical result JSONs score.
 This file has two jobs, and they pull in opposite directions on purpose.
 
 1. Honest stage gating (spec.yaml `stages.*.enabled`, landed in #56) must NOT
-   change any historical composite. Historical runs carry no `skipped` key, so
-   every stage recorded there is still counted as attempted.
+   change any *pre-gating* historical composite. A pre-gating run carries no
+   `skipped` key, so every stage recorded there is still counted as
+   attempted. Result sets produced by a harness that already honors stage
+   gating (e.g. the claude-*-3arm and claude-*-probe sets added for #40/#59)
+   legitimately carry `skipped` stages for tasks whose spec disables them —
+   those are a different experiment for this check's purposes, not evidence
+   of drift, so they are filtered out of `_historical_results()` rather than
+   asserted against the pre-gating formula.
 
-2. The vacuous-pass guard DOES change them, and that change is the point.
-   Before it, a stage with nothing to act on recorded `passed: True`:
-   "no YAML files in workspace", "no TypeScript files in workspace", "static
-   validation passed" (emitted when no kustomization/claim/manifest was found),
-   "no semantic tests". A run that produced no extractable output therefore
-   collected free passes on lint and static, and `completeness` defaulted to
-   1.0 whenever no assertion was evaluated — full marks on the second-heaviest
-   axis for a run nothing had checked. The runs that flattered hardest were
-   exactly the most broken ones.
+2. The vacuous-pass guard DOES change the surviving pre-gating composites,
+   and that change is the point. Before it, a stage with nothing to act on
+   recorded `passed: True`: "no YAML files in workspace", "no TypeScript
+   files in workspace", "static validation passed" (emitted when no
+   kustomization/claim/manifest was found), "no semantic tests". A run that
+   produced no extractable output therefore collected free passes on lint
+   and static, and `completeness` defaulted to 1.0 whenever no assertion was
+   evaluated — full marks on the second-heaviest axis for a run nothing had
+   checked. The runs that flattered hardest were exactly the most broken
+   ones.
 
-   Measured over the 1140 result JSONs under results/ at the time this landed:
+   Measured over the pre-gating result JSONs under results/ (1218 of the
+   1296 total on disk; 78 carry `skipped` and are out of scope per #1 above):
 
-     - 744 runs (65%) carried at least one vacuously-passed stage
-         - semantic: 621 (the 20 task dirs shipping no tests/test_task.py)
-         - static:   346 (nothing in the workspace to build)
-         - lint:     182 (no YAML/TypeScript in the workspace)
-     - 119 runs had *every* enabled stage inapplicable — no measurement at all;
-       bench.validate rejects these outright
-     - 762 composites change, every one of them downward (mean -0.22)
+     - 773 runs carried at least one vacuously-passed stage
+     - 127 runs had *every* enabled stage inapplicable — no measurement at
+       all; bench.validate rejects these outright
+     - 791 composites change, every one of them downward
 
    Zero composites move up. That is the check worth keeping: removing credit
    that was never earned can only lower a score, so an increase anywhere would
@@ -69,18 +74,11 @@ SAMPLED_HISTORICAL_JSONS = [
      0.3703703703703704, 0.3703703703703704),
 ]
 
-# Counts measured over results/ when the vacuous-pass guard landed. Pinned so
-# a later change to VACUOUS_LOG_MARKERS, or a stage runner quietly changing a
-# log body, shows up as a test failure rather than as a moved leaderboard.
-#
-# Re-pinned on bench/run-ready when #61 (bench/cli-provider-fix) and #62
-# (bench/integrity-gates) were merged together: cli-provider-fix's #40/#59
-# probe and re-smoke work added new pre-gating-shaped JSONs under results/
-# (claude-{haiku-4-5,opus-5}-3arm, claude-{haiku-4-5,opus-5}-probe), which
-# this file's _historical_results() counts (its post-gating `skipped` runs
-# are filtered out, per that generator's own docstring). The counts below are
-# what the merged tree measures; `increased == 0` is what's actually load-
-# bearing, not the exact totals.
+# Counts measured over the pre-gating subset of results/ (see module
+# docstring #1) after merging in the #59 result sets that already carry
+# `skipped` flags. Pinned so a later change to VACUOUS_LOG_MARKERS, or a
+# stage runner quietly changing a log body, shows up as a test failure
+# rather than as a moved leaderboard.
 EXPECTED_TOTAL_RUNS = 1218
 EXPECTED_VACUOUS_RUNS = 773
 EXPECTED_FULLY_VACUOUS_RUNS = 127
@@ -114,6 +112,13 @@ def _old_composite(stages: dict) -> float:
 
 
 def _historical_results():
+    """Pre-gating result JSONs only — see module docstring #1.
+
+    A result whose `stages` carry a `skipped` key came from a harness that
+    already honors spec-driven stage gating (#56) and is out of scope for
+    this file's "gating alone changes nothing" claim; it is not evidence of
+    drift, it is a different experiment.
+    """
     for json_path in sorted(RESULTS_DIR.rglob("*.json")):
         try:
             result = json.loads(json_path.read_text())
@@ -121,15 +126,9 @@ def _historical_results():
             continue
         if not isinstance(result, dict) or "stages" not in result:
             continue
-        # Result sets written after spec-driven stage gating landed (#56) -
-        # e.g. claude-*-3arm and claude-*-probe from #40/#59 - legitimately
-        # carry a `skipped` flag on stages a task's spec disables. Those are
-        # out of scope for this file: it isolates the vacuous-pass guard's
-        # own delta from stage gating's, and stage gating's own inertness
-        # over its runs is covered by tests/test_stage_gating.py instead.
         if any(
-            isinstance(s, dict) and "skipped" in s
-            for s in result["stages"].values()
+            isinstance(sr, dict) and "skipped" in sr
+            for sr in result["stages"].values()
         ):
             continue
         yield json_path, result

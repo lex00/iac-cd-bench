@@ -222,22 +222,32 @@ def test_aggregate_scores_no_rejected_key_when_nothing_rejected():
 # they still verify — a rejected run is surfaced with a count and a reason,
 # never silently folded in — is unchanged.
 
+# A run classify_run (bench.validate, #60) rejects on structural grounds -
+# an XML tool-invocation marker, which none of check_content's calibration
+# exemptions cover. generate_report/generate_comparison run on
+# bench.validate.classify_run via partition_by_validity, not on the
+# check_validity/run_validity pattern classifier used above, so the report
+# tests use a fixture the #60 classifier actually flags.
+TRANSCRIPT_LEAK_ANSWER = GENUINE_ANSWER + (
+    '\n<invoke name="Bash">\n<parameter name="command">ls -la</parameter>\n</invoke>\n'
+)
+
+
 def test_generate_report_surfaces_rejected_count():
-    runs = [_run(GENUINE_ANSWER), _run("I'll look for the actual diff artifacts in the repo before reviewing.\n\n**Bash**\n```\nls; find . -iname '*diff*' -not -path './.git/*' | head -50\n```\n")]
+    runs = [_run(GENUINE_ANSWER), _run(TRANSCRIPT_LEAK_ANSWER)]
     report = generate_report("m", runs)
-    assert "**rejected: 1**" in report
-    assert "scored: **1**" in report
-    assert "content_too_short" in report
+    assert "- **rejected: 1**" in report
+    assert "agent_transcript" in report
 
 
 def test_generate_report_states_zero_rejected_explicitly():
     runs = [_run(GENUINE_ANSWER)]
     report = generate_report("m", runs)
-    assert "**rejected: 0**" in report
+    assert "- **rejected: 0**" in report
 
 
 def test_generate_comparison_coverage_table_has_rejected_column():
-    runs = [_run(GENUINE_ANSWER), _run("I'll look for the actual diff artifacts in the repo before reviewing.\n\n**Bash**\n```\nls; find . -iname '*diff*' -not -path './.git/*' | head -50\n```\n")]
+    runs = [_run(GENUINE_ANSWER), _run(TRANSCRIPT_LEAK_ANSWER)]
     report = generate_comparison([("set-a", runs)])
     assert "| Result set | Scored | Rejected | Judged runs | Judge model | Judge prompt |" in report
     assert "| set-a | 1 | **1** |" in report
@@ -246,6 +256,11 @@ def test_generate_comparison_coverage_table_has_rejected_column():
 # ── runner.py: run_task stamps validity on every run ─────────────────────
 
 def test_run_task_stamps_validity_on_clean_content():
+    # bench.runner stamps result["validity"] with bench.validity.check_content
+    # (the #60 classifier: verdict/reasons/checks) rather than check_validity's
+    # valid/reason shape - see the module docstring on which classifier each
+    # caller uses. classify_run (bench.validate) is the downstream SSOT that
+    # reconciles both.
     from bench import runner
 
     class StubModel:
@@ -255,8 +270,8 @@ def test_run_task_stamps_validity_on_clean_content():
             return {"content": GENUINE_ANSWER, "input_tokens": 1, "output_tokens": 2}
 
     results = runner.run_task(T1, StubModel(), k=1)
-    assert results[0]["validity"]["valid"] is True
-    assert results[0]["validity"]["reason"] is None
+    assert results[0]["validity"]["verdict"] == "valid"
+    assert results[0]["validity"]["reasons"] == []
 
 
 def test_run_task_stamps_validity_on_contaminated_content():
@@ -267,10 +282,13 @@ def test_run_task_stamps_validity_on_contaminated_content():
 
         def complete(self, prompt, files):
             return {
-                "content": "I'll look for the actual diff artifacts in the repo before reviewing.\n\n**Bash**\n```\nls; find . -iname '*diff*'\n```\n",
+                "content": (
+                    "I'll start by exploring the repository.\n\n"
+                    '<invoke name="Bash">\n<parameter name="command">ls -la</parameter>\n</invoke>\n'
+                ),
                 "input_tokens": 1, "output_tokens": 2,
             }
 
     results = runner.run_task(T1, StubModel(), k=1)
-    assert results[0]["validity"]["valid"] is False
-    assert results[0]["validity"]["reason"] == "tool_invocation_markup"
+    assert results[0]["validity"]["verdict"] == "invalid"
+    assert any("agent_transcript" in r for r in results[0]["validity"]["reasons"])

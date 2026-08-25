@@ -111,7 +111,7 @@ def generate_report(model: str, results: list[dict]) -> str:
         for arch in ARCHETYPES:
             matrix[(stack, arch)] = {"runs": [], "tasks": []}
 
-    # Populate matrix
+    # Populate matrix (valid runs only — see docstring)
     for result in results:
         stack = result.get("stack", "")
         task = result.get("task", "")
@@ -266,7 +266,8 @@ def generate_comparison(
     header = "| " + " | ".join(["Stack", *labels]) + " |"
     divider = "| " + " | ".join(["---"] * (len(labels) + 1)) + " |"
 
-    # bucket[label][(stack, archetype)] -> [composite, ...]
+    # bucket[label][(stack, archetype)] -> [composite, ...]  (already-scored
+    # runs only — result_sets was filtered by partition_by_validity above)
     buckets: dict[str, dict[tuple[str, str], list[float]]] = {}
     for label, results in result_sets:
         bucket: dict[tuple[str, str], list[float]] = {}

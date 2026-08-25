@@ -72,6 +72,24 @@ no fenced code block on a task whose enabled stages act on model-produced
 files is flagged as the vacuous-pass generator described in issue #59 (lint
 had no YAML to lint, static had nothing to build, so a stub scored 2 of 3).
 
+Two independent classifiers live in this module, both closing issue #59 from
+different angles and both kept because different callers need each shape:
+
+- `check_validity`/`check_run_validity`/`run_validity` (above) run pattern
+  calibration against the 144-run #40 set and are what `bench.runner` stamps
+  onto a result at generation time and what `bench.score`/`bench.report`
+  filter on directly.
+- `check_content`/`expects_artifacts`/`check_result` (below) are the
+  structural/narration classifier `bench.validate.classify_run` (#60) uses to
+  re-derive a verdict for historical results and to catch the vacuous-pass
+  case where a task expected an artifact and got prose instead.
+
+`bench.validate.classify_run` is the single source of truth downstream: it
+prefers a result's already-stamped `validity` block (this module's first
+API), and otherwise recomputes with `check_result` (this module's second
+API), so the two do not disagree silently — anything either classifier
+rejects, `classify_run` rejects.
+
 No network, no subprocess in either half: this is pure text classification
 over the recorded completion, so both re-run identically over historical
 result JSONs.
