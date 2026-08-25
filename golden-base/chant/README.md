@@ -15,6 +15,10 @@ directory layout and kustomize patches, chant keeps it in composites and props.
 chant.config.ts            lexicons, environments, ownership marker, lint config
 package.json               file: deps on the two vendored chant packages
 vendor/                    the vendored tarballs + why they exist
+fixtures/                  recorded lifecycle snapshot + chant search/graph
+                            query output for the Phase 3 comprehension tasks
+                            (see fixtures/README.md); snapshot-fixtures.sh
+                            regenerates it against a throwaway kind cluster
 src/
   composites/              scenario-local Composite() factories
     region-cluster.ts        RegionCluster, RegionNodePool
@@ -197,6 +201,23 @@ Three notes on reading that output.
   validate every custom-resource spec against the shipped CRD schema during
   `chant lint` — unknown field, wrong scalar type, value outside an enum. That
   is the check kubeconform cannot make here, and it is clean.
+
+## Lifecycle snapshot + query fixtures
+
+`fixtures/` holds a recorded `chant lifecycle snapshot` of this estate (dev
+and prod, captured off a throwaway kind cluster with the six `dist/` files
+applied — no controller needs to reconcile anything; `describeResources()`
+reads the objects back through the k8s API directly) plus the
+`chant lifecycle show` / `chant search --explain` / `chant graph --format
+ir` output the Phase 3 comprehension tasks (iac-cd-bench#22/#24/#25) seed
+from, the way the knr-ops column seeds tasks from raw YAML. `fixtures/
+README.md` has the full account, including two chant CLI findings from
+generating it: the k8s lexicon doesn't yet reconstruct edges for `--at`/
+`--live` graphs (AWS-only today), and a real `--deep` snapshot bug in the
+vendored core's orphan-branch git plumbing (worked around by using identity-
+depth snapshots, which don't hit it). `fixtures/snapshot-fixtures.sh`
+regenerates the whole directory from scratch; it creates and deletes its own
+`chant-snap` kind cluster and touches no other cluster.
 
 ## Composite prop surfaces
 
