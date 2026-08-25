@@ -23,6 +23,7 @@ from bench import judge as judge_mod
 from bench import preflight as preflight_mod
 from bench import provenance as prov_mod
 from bench import validity as validity_mod
+from bench.validity import check_run_validity
 from bench.stages import lint, static, semantic, e2e
 
 ROOT = Path(__file__).resolve().parent.parent
