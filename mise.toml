@@ -13,6 +13,11 @@ checkov = "3.3.0"
 pulumi = "3.150.0"
 kind = "0.26.0"
 docker = "27.0"
+# chant CLI (@intentius/chant) + its TypeScript toolchain, pinned via mise's
+# npm backend. node itself is already pinned above via [env]. Version 5.9.3
+# matches what @intentius/chant's own devDependency pins for its build.
+"npm:@intentius/chant" = "0.46.0"
+"npm:typescript" = "5.9.3"
 
 [python.environments]
 default = { require_internet = false }
