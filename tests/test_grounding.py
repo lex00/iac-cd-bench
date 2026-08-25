@@ -2,7 +2,7 @@
 
 import pytest
 
-from bench.grounding import MCPClient, discover_kinds
+from bench.grounding import MCPClient, SchemaCache, discover_kinds
 
 
 class FakeResponse:
@@ -153,3 +153,64 @@ def test_discover_kinds_exempts_platform_example_org_resources(tmp_path):
     )
 
     assert discover_kinds(tmp_path) == [("v1", "Secret")]
+
+
+def test_schema_cache_roundtrip_fetches_once(tmp_path):
+    cache = SchemaCache(tmp_path)
+    calls = []
+
+    def fetch(kind, api_version):
+        calls.append((kind, api_version))
+        return '{"fetched": true}'
+
+    first = cache.get("Kustomization", "kustomize.toolkit.fluxcd.io/v1", fetch)
+    second = SchemaCache(tmp_path).get(
+        "Kustomization", "kustomize.toolkit.fluxcd.io/v1", fetch
+    )
+
+    assert first == second == '{"fetched": true}'
+    assert calls == [("Kustomization", "kustomize.toolkit.fluxcd.io/v1")]
+    assert (tmp_path / "Kustomization_kustomize.toolkit.fluxcd.io_v1.json").read_text() == first
+
+
+def test_schema_cache_key_is_deterministic_and_safe_for_slash_api_versions(tmp_path):
+    cache = SchemaCache(tmp_path)
+    api_version = "../outside/v1"
+
+    key = cache._key("Thing", api_version)
+    assert key == cache._key("Thing", api_version)
+    assert key == "Thing_.._outside_v1.json"
+    assert "/" not in key
+    assert "\\" not in key
+
+    cache.get("Thing", api_version, lambda *_: '{"safe": true}')
+    stored = tmp_path / key
+    assert stored.exists()
+    assert stored.resolve().is_relative_to(tmp_path.resolve())
+
+
+class FakeSchemaClient:
+    def __init__(self):
+        self.calls = []
+
+    def get_schema(self, kind, api_version):
+        self.calls.append((kind, api_version))
+        return f"{kind}:{api_version}"
+
+
+def test_schema_cache_warm_fetches_only_missing_pairs(tmp_path):
+    cache = SchemaCache(tmp_path)
+    cache.get("Bucket", "s3.services.k8s.aws/v1alpha1", lambda *_: "already cached")
+    client = FakeSchemaClient()
+    pairs = [
+        ("s3.services.k8s.aws/v1alpha1", "Bucket"),
+        ("kustomize.toolkit.fluxcd.io/v1", "Kustomization"),
+        ("kustomize.toolkit.fluxcd.io/v1", "Kustomization"),
+    ]
+
+    assert cache.warm(pairs, client) == 1
+    assert client.calls == [("Kustomization", "kustomize.toolkit.fluxcd.io/v1")]
+    assert cache.get("Kustomization", "kustomize.toolkit.fluxcd.io/v1", client.get_schema) == (
+        "Kustomization:kustomize.toolkit.fluxcd.io/v1"
+    )
+    assert client.calls == [("Kustomization", "kustomize.toolkit.fluxcd.io/v1")]

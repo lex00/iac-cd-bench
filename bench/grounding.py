@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -129,3 +130,45 @@ class MCPClient:
             {"name": "grep_catalog", "arguments": {"query": query}},
         )
         return self._text(result)
+
+
+class SchemaCache:
+    """Disk cache keyed by kind and apiVersion; fetch on cache misses."""
+
+    def __init__(self, cache_dir: Path) -> None:
+        self.dir = cache_dir
+        self.dir.mkdir(parents=True, exist_ok=True)
+
+    @staticmethod
+    def _key(kind: str, api_version: str) -> str:
+        """Return a deterministic filename containing no path separators."""
+        raw = f"{kind}_{api_version}".replace("/", "_").replace("\\", "_")
+        safe = re.sub(r"[^A-Za-z0-9._-]", "_", raw)
+        return f"{safe}.json"
+
+    def _path(self, kind: str, api_version: str) -> Path:
+        root = self.dir.resolve()
+        path = (self.dir / self._key(kind, api_version)).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError as exc:
+            raise ValueError("schema cache path escapes cache directory") from exc
+        return path
+
+    def get(self, kind: str, api_version: str, fetch) -> str:
+        path = self._path(kind, api_version)
+        if path.exists():
+            return path.read_text(encoding="utf-8")
+        schema = fetch(kind, api_version)
+        path.write_text(schema, encoding="utf-8")
+        return schema
+
+    def warm(self, pairs: list[tuple[str, str]], client: MCPClient) -> int:
+        """Prefetch pairs and return the number fetched from the client."""
+        fetched = 0
+        for api_version, kind in pairs:
+            path = self._path(kind, api_version)
+            if not path.exists():
+                self.get(kind, api_version, client.get_schema)
+                fetched += 1
+        return fetched
