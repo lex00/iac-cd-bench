@@ -1,8 +1,10 @@
 """Tests for schema grounding module (network mocked)."""
 
+import json
+
 import pytest
 
-from bench.grounding import MCPClient, SchemaCache, discover_kinds
+from bench.grounding import MCPClient, SchemaCache, build_grounding_section, discover_kinds
 
 
 class FakeResponse:
@@ -214,3 +216,44 @@ def test_schema_cache_warm_fetches_only_missing_pairs(tmp_path):
         "Kustomization:kustomize.toolkit.fluxcd.io/v1"
     )
     assert client.calls == [("Kustomization", "kustomize.toolkit.fluxcd.io/v1")]
+
+
+def test_build_grounding_section_lists_schemas_deterministically():
+    schemas = {
+        ("s3.services.k8s.aws/v1alpha1", "Bucket"): '{"description": "Bucket is"}',
+        ("kustomize.toolkit.fluxcd.io/v1", "Kustomization"): '{"description": "Kustomization is"}',
+    }
+    same_schemas = dict(reversed(list(schemas.items())))
+
+    section = build_grounding_section(schemas)
+
+    assert section == build_grounding_section(same_schemas)
+    assert section.startswith("### Reference schemas")
+    assert "Schema for `Bucket` (`s3.services.k8s.aws/v1alpha1`):" in section
+    assert "Schema for `Kustomization` (`kustomize.toolkit.fluxcd.io/v1`):" in section
+    assert section.index("Kustomization") < section.index("Bucket")
+    assert "```json" in section
+    assert schemas[("kustomize.toolkit.fluxcd.io/v1", "Kustomization")] in section
+    assert section.count("```json") == 2
+    assert "Field names and constraints are authoritative." in section
+
+
+def test_build_grounding_section_wraps_non_json_schema_as_json_text():
+    schema = "kind: Bucket\nspec: [not valid JSON]"
+
+    section = build_grounding_section({("example.org/v1", "Bucket"): schema})
+
+    block = section.split("```json\n", 1)[1].split("\n```", 1)[0]
+    payload = json.loads(block)
+    assert payload["raw_schema"] == schema
+    assert "not valid JSON" in section
+
+
+def test_build_grounding_section_uses_longer_fence_for_embedded_markers():
+    schema = '{"description": "contains ``` and ```` markers"}'
+
+    section = build_grounding_section({("example.org/v1", "Thing"): schema})
+
+    assert schema in section
+    assert "`````json" in section
+    assert section.count("\n```\n") == 0

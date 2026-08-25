@@ -172,3 +172,45 @@ class SchemaCache:
                 self.get(kind, api_version, client.get_schema)
                 fetched += 1
         return fetched
+
+
+def _safe_schema_payload(schema: str) -> str:
+    """Return schema text suitable for a JSON-labelled fenced block."""
+    try:
+        json.loads(schema)
+    except (TypeError, json.JSONDecodeError):
+        return json.dumps(
+            {"raw_schema": str(schema)},
+            ensure_ascii=False,
+            indent=2,
+        )
+    return schema
+
+
+def _fence_delimiter(text: str) -> str:
+    """Choose a deterministic Markdown fence longer than embedded backticks."""
+    longest = max((len(match) for match in re.findall(r"`+", text)), default=0)
+    return "`" * max(3, longest + 1)
+
+
+def build_grounding_section(schemas: dict[tuple[str, str], str]) -> str:
+    """Build a deterministic, authoritative reference section for schema text."""
+    lines = ["### Reference schemas (upstream CRD definitions)", ""]
+    for (api_version, kind), schema in sorted(schemas.items()):
+        payload = _safe_schema_payload(schema)
+        fence = _fence_delimiter(payload)
+        lines.extend(
+            [
+                f"Schema for `{kind}` (`{api_version}`):",
+                "",
+                f"{fence}json",
+                payload,
+                fence,
+                "",
+            ]
+        )
+    lines.append(
+        "Use these schemas when writing or reviewing manifests. "
+        "Field names and constraints are authoritative."
+    )
+    return "\n".join(lines)
