@@ -25,12 +25,12 @@
   },
   "tokens": {
     "input": 2,
-    "output": 265
+    "output": 284
   },
-  "content": "```json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\"kustomization\": \"infra-aws\", \"outcome\": \"pruned\"},\n  \"q3\": \"deleted\",\n  \"q4\": \"retained\",\n  \"q5\": {\"changes\": \"false\", \"reason\": \"apps-prod is suspended, so Flux ignores the commit\"},\n  \"q6\": {\"apps_dev_reconciles\": \"false\", \"reason\": \"dependsOn infra-aws, which stays not-ready due to the failing Bucket health check\"},\n  \"q7\": [\"infra-controllers\", \"infra-aws\", \"apps-dev\"]\n}\n```",
+  "content": "```json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\"kustomization\": \"infra-aws\", \"outcome\": \"pruned\"},\n  \"q3\": \"deleted\",\n  \"q4\": \"retained\",\n  \"q5\": {\"changes\": \"false\", \"reason\": \"apps-prod is suspend: true, so Flux skips reconciliation\"},\n  \"q6\": {\"apps_dev_reconciles\": \"false\", \"reason\": \"dependsOn infra-aws, which stays not-ready due to failing healthCheck\"},\n  \"q7\": [\"infra-controllers\", \"infra-aws\", \"apps-dev\"]\n}\n```",
   "validity": {
     "valid": true,
     "reason": null,
-    "content_length": 429
+    "content_length": 423
   }
 }
