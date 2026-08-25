@@ -1,4 +1,10 @@
-apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+# Core CAPI Cluster + CAPA's EKS-managed infrastructure object, matching the
+# real knr-ops repo's shape (mgmt/aws/clusters/*/staging/cluster.yaml):
+# the core Cluster kind lives under cluster.x-k8s.io/v1beta1, while the
+# provider-specific refs it points at are CAPA's v1beta2 kinds - not the
+# controlplane.cluster.x-k8s.io/v1beta1 self-managed KubeadmControlPlane +
+# AWSCluster shape this golden previously used (issue #47).
+apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   name: myapp-dev
@@ -8,21 +14,22 @@ spec:
     pods:
       cidrBlocks:
         - 192.168.0.0/16
-  infrastructureRef:
-    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-    kind: CAPACluster
-    name: myapp-dev
+    services:
+      cidrBlocks:
+        - 10.128.0.0/12
   controlPlaneRef:
-    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-    kind: CAPAKubeadmControlPlane
+    apiVersion: controlplane.cluster.x-k8s.io/v1beta2
+    kind: AWSManagedControlPlane
+    name: myapp-dev-control-plane
+  infrastructureRef:
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+    kind: AWSManagedCluster
     name: myapp-dev
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-kind: AWSCluster
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSManagedCluster
 metadata:
   name: myapp-dev
   namespace: clusters
 spec:
   region: us-east-1
-  managedNetwork:
-  additionalEndpoints: []

@@ -1,35 +1,35 @@
+# CAPA's EKS-managed node group (MachinePool + AWSManagedMachinePool,
+# v1beta2) - replaces the self-managed MachineDeployment + AWSMachineTemplate
+# this golden previously used, matching the real knr-ops repo's shape
+# (issue #47).
 apiVersion: cluster.x-k8s.io/v1beta1
-kind: MachineDeployment
+kind: MachinePool
 metadata:
   name: myapp-dev-workers
   namespace: clusters
 spec:
   clusterName: myapp-dev
   replicas: 2
-  selector:
-    matchLabels:
-      cluster.x-k8s.io/cluster-name: myapp-dev
   template:
     spec:
       clusterName: myapp-dev
-      version: v1.31.2
       bootstrap:
-        configRef:
-          apiVersion: bootstrap.cluster.x-k8s.io/v1beta1
-          kind: KubeadmConfig
-          name: myapp-dev-workers
+        dataSecretName: ""
       infrastructureRef:
-        apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-        kind: AWSMachineTemplate
+        apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+        kind: AWSManagedMachinePool
         name: myapp-dev-workers
+      version: "1.31.2"
 ---
-apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-kind: AWSMachineTemplate
+apiVersion: infrastructure.cluster.x-k8s.io/v1beta2
+kind: AWSManagedMachinePool
 metadata:
   name: myapp-dev-workers
   namespace: clusters
 spec:
-  template:
-    spec:
-      instanceType: t3.medium
-      instanceProfile: nodes
+  instanceType: t3.medium
+  scaling:
+    minSize: 2
+    maxSize: 2
+  amiType: AL2023_x86_64_STANDARD
+  capacityType: onDemand

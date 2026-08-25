@@ -15,9 +15,9 @@
 - **Fix:** Set `deletionProtection: true` for prod overlay
 
 **MEDIUM (P2): Bucket versioning disabled in prod overlay**
-- Prod S3 bucket has `versioningConfiguration: suspended`
+- Prod S3 bucket has `versioning.status: Suspended`
 - **Impact:** No recovery from accidental deletions; compliance violation for audit requirements
-- **Fix:** Enable versioning: `versioningConfiguration: Enabled`
+- **Fix:** Enable versioning: `versioning.status: Enabled`
 
 **LOW (P3): Missing security context in Deployment**
 - Container running as root, no readOnlyRootFilesystem

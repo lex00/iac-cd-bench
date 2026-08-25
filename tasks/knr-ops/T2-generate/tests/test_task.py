@@ -10,7 +10,7 @@ def test_bucket_versioning():
     """Bucket should have versioning enabled"""
     bucket_yaml = Path("infra/s3/logs-bucket.yaml")
     content = bucket_yaml.read_text()
-    assert "VersioningConfiguration" in content
+    assert "versioning" in content.lower()
     assert "Enabled" in content
 
 def test_bucket_encryption():

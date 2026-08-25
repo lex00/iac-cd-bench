@@ -1,92 +1,82 @@
-apiVersion: iam.aws.upbound.io/v1beta1
+# ACK iam-controller (iam.services.k8s.aws) - IAM user with programmatic
+# access, scoped to the assets bucket only, plus a separately-trusted
+# assumable role (issue #47).
+#
+# Known gap: ACK's iam-controller has no AccessKey kind (only
+# Role/Policy/User/InstanceProfile/OpenIDConnectProvider/ServiceLinkedRole).
+# "Programmatic access" therefore can't be expressed as a manifest in ACK at
+# all - the access key pair has to be generated out-of-band
+# (`aws iam create-access-key --user-name myapp-service-account`) and handed
+# to whatever consumes it the same way the DB password is - never committed
+# here. This is very likely why knr-ops originally reached for the Upbound
+# provider instead of ACK for IAM: Upbound's iam.aws.upbound.io/AccessKey
+# kind exists precisely where ACK has a gap.
+#
+# Attachment mechanism also differs from Upbound: ACK's User CRD attaches
+# policies via spec.policyRefs (a list of Policy object references), not a
+# separate UserPolicyAttachment kind.
+apiVersion: iam.services.k8s.aws/v1alpha1
 kind: User
 metadata:
   name: myapp-service-account
   namespace: infra
 spec:
-  forProvider:
-    path: /
-    tags:
-      Name: myapp-service-account
-      Environment: dev
-  providerConfigRef:
-    name: default
+  name: myapp-service-account
+  path: /
+  policyRefs:
+    - from:
+        name: myapp-service-policy
+        namespace: infra
+  tags:
+    - key: Name
+      value: myapp-service-account
+    - key: Environment
+      value: dev
 ---
-apiVersion: iam.aws.upbound.io/v1beta1
-kind: AccessKey
-metadata:
-  name: myapp-service-account-key
-  namespace: infra
-spec:
-  forProvider:
-    userName: myapp-service-account
-  providerConfigRef:
-    name: default
----
-apiVersion: iam.aws.upbound.io/v1beta1
-kind: Role
-metadata:
-  name: myapp-assumed-role
-  namespace: infra
-spec:
-  forProvider:
-    assumeRolePolicyDocument: |
-      {
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Principal": {
-              "AWS": "arn:aws:iam::123456789012:root"
-            },
-            "Action": "sts:AssumeRole"
-          }
-        ]
-      }
-    path: /
-    maxSessionDuration: 3600
-    tags:
-      Name: myapp-assumed-role
-  providerConfigRef:
-    name: default
----
-apiVersion: iam.aws.upbound.io/v1beta1
+apiVersion: iam.services.k8s.aws/v1alpha1
 kind: Policy
 metadata:
   name: myapp-service-policy
   namespace: infra
 spec:
-  forProvider:
-    policyDocument: |
-      {
-        "Version": "2012-10-17",
-        "Statement": [
-          {
-            "Effect": "Allow",
-            "Action": [
-              "s3:GetObject",
-              "s3:PutObject"
-            ],
-            "Resource": "arn:aws:s3:::myapp-assets-dev/*"
-          }
-        ]
-      }
-    policyName: myapp-service-policy
-  providerConfigRef:
-    name: default
+  name: myapp-service-policy
+  policyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Action": [
+            "s3:GetObject",
+            "s3:PutObject"
+          ],
+          "Resource": "arn:aws:s3:::myapp-assets-dev/*"
+        }
+      ]
+    }
 ---
-apiVersion: iam.aws.upbound.io/v1beta1
-kind: UserPolicyAttachment
+apiVersion: iam.services.k8s.aws/v1alpha1
+kind: Role
 metadata:
-  name: myapp-service-policy-attach
+  name: myapp-assumed-role
   namespace: infra
 spec:
-  forProvider:
-    policyArn:
-      name: myapp-service-policy
-      namespace: infra
-      from:
-        fieldPath: metadata.annotations.upbound.io.policy-arn
-    userName: myapp-service-account
-  providerConfigRef:
-    name: default
+  name: myapp-assumed-role
+  description: "Cross-account assumable role for myapp"
+  assumeRolePolicyDocument: |
+    {
+      "Version": "2012-10-17",
+      "Statement": [
+        {
+          "Effect": "Allow",
+          "Principal": {
+            "AWS": "arn:aws:iam::123456789012:root"
+          },
+          "Action": "sts:AssumeRole"
+        }
+      ]
+    }
+  maxSessionDuration: 3600
+  tags:
+    - key: Name
+      value: myapp-assumed-role
