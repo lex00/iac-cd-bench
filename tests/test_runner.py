@@ -74,6 +74,68 @@ def test_golden_implementations_exist():
     assert (golden_dirs / "pulumi-typescript" / "index.ts").exists()
 
 
+# The chant golden lands on its own branch, so these assertions are guarded on
+# the directory existing: whichever of bench/chant-golden and bench/chant-wiring
+# merges first, the suite stays green. Once both are on main the guard is a
+# no-op — golden-base/chant is always there.
+CHANT_GOLDEN = ROOT / "golden-base" / "chant"
+
+chant_golden_required = pytest.mark.skipif(
+    not CHANT_GOLDEN.is_dir(),
+    reason="golden-base/chant not present yet (bench/chant-golden not merged)",
+)
+
+
+@chant_golden_required
+def test_chant_golden_scaffold_exists():
+    """The chant golden ships a buildable chant project."""
+    for relative in (
+        "chant.config.ts",
+        "package.json",
+        "tsconfig.json",
+        "README.md",
+    ):
+        assert (CHANT_GOLDEN / relative).exists(), f"missing: golden-base/chant/{relative}"
+
+
+@chant_golden_required
+def test_chant_golden_entrypoints_exist():
+    """dev and prod are separate build roots, not one parameterized entrypoint."""
+    assert (CHANT_GOLDEN / "src" / "envs" / "dev" / "main.ts").exists()
+    assert (CHANT_GOLDEN / "src" / "envs" / "prod" / "main.ts").exists()
+
+
+@chant_golden_required
+def test_chant_golden_composites_exist():
+    """The scenario-local Composite() factories the golden is written over."""
+    composites = CHANT_GOLDEN / "src" / "composites"
+    for module, factory in (
+        ("region-cluster.ts", "RegionCluster"),
+        ("secure-bucket.ts", "SecureBucket"),
+        ("postgres-instance.ts", "PostgresInstance"),
+        ("reader-iam.ts", "ReaderIam"),
+    ):
+        path = composites / module
+        assert path.exists(), f"missing composite module: {path}"
+        source = path.read_text()
+        assert f'"{factory}"' in source, f"{module} does not name the {factory} composite"
+
+
+@chant_golden_required
+def test_chant_golden_vendors_the_lexicon():
+    """The CAPI/CAPA/ACK lexicon is vendored until upstream publishes it."""
+    vendor = CHANT_GOLDEN / "vendor"
+    assert vendor.is_dir(), "golden-base/chant/vendor missing"
+    assert (vendor / "README.md").exists(), "vendor/README.md must explain the file: deps"
+    tarballs = sorted(vendor.glob("*.tgz"))
+    assert tarballs, "no vendored chant tarball in golden-base/chant/vendor"
+    package_json = json.loads((CHANT_GOLDEN / "package.json").read_text())
+    deps = package_json.get("dependencies", {})
+    assert deps.get("@intentius/chant-lexicon-k8s", "").startswith("file:vendor/"), (
+        "the k8s lexicon must resolve from vendor/ until the CAPI/CAPA/ACK kinds publish"
+    )
+
+
 def test_stage_runners_import():
     """Stage runners import cleanly."""
     from bench.stages import lint, static, semantic, e2e
