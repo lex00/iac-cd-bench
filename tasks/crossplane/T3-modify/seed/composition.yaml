@@ -1,0 +1,34 @@
+# SEED REPO: Crossplane Composition provisioning the S3 bucket in a single
+# AWS region (us-east-1), via ProviderConfig prod-us-east-1.
+apiVersion: apiextensions.crossplane.io/v1
+kind: Composition
+metadata:
+  name: aws-web-service-composition
+  labels:
+    provider: aws
+    environment: prod
+spec:
+  compositeTypeRef:
+    apiVersion: composite.example.com/v1
+    kind: XAWSWebService
+  mode: Pipeline
+  pipeline:
+    - function: xpkg.upbound.io/crossplane/function-patch-and-transform:v0.2.0
+      input:
+        apiVersion: ptFunctions.crossplane.io/v1beta1
+        kind: Resources
+        resources:
+          - name: s3-bucket
+            base:
+              apiVersion: s3.aws.upbound.io/v1beta1
+              kind: Bucket
+              spec:
+                forProvider:
+                  region: us-east-1
+                providerConfigRef:
+                  name: prod-us-east-1
+                managementPolicy: Observe
+            patches:
+              - fromFieldPath: spec.bucket.name
+                toFieldPath: spec.forProvider.bucket
+            readyCondition: True

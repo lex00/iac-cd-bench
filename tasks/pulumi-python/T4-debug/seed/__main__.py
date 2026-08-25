@@ -1,9 +1,10 @@
 import pulumi
 import pulumi_aws as aws
 
-# SEED REPO: Pulumi Python with secret read as plain string + .apply() misuse
-# Defect 1: Secret read as plain string (should use config.Secret)
-# Defect 2: .apply() result used where Output expected
+# SEED REPO: Pulumi Python with secret read as plain string + deletion
+# protection left off on the prod RDS instance.
+# Defect 1: Secret read as plain string (should use config.require_secret)
+# Defect 2: RDS deletion_protection left False (should be True for prod)
 
 config = pulumi.Config()
 env = config.get("env")
@@ -21,8 +22,6 @@ bucket = aws.s3.Bucket(
     tags={"Environment": env, "Project": "myapp"},
 )
 
-# DEFECT: .apply() result used where Output<string> expected
-# This crashes because .apply() returns None, not a string
 bucket_url = bucket.arn.apply(lambda arn: f"https://s3.{region}.amazonaws.com/{arn}")
 
 # RDS Instance
@@ -36,7 +35,7 @@ db = aws.rds.Instance(
     username="app-user",
     password=db_password,
     skip_final_snapshot=True,
-    deletion_protection=False,  # Should be True for prod
+    deletion_protection=False,  # DEFECT: should be True for prod
 )
 
 # Output
