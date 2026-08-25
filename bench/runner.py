@@ -174,10 +174,14 @@ class ModelAdapter:
 class AnthropicAdapter(ModelAdapter):
     """Anthropic API adapter via httpx."""
 
-    def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None):
+    def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None,
+                 temperature: float | None = None):
         self.model = model
         self.api_key = api_key
         self.reasoning_effort = reasoning_effort
+        # Only set for deterministic side-calls (the rubric judge). Left None
+        # for benchmark runs: the 4.7+/5 family rejects sampling parameters.
+        self.temperature = temperature
         self._url = "https://api.anthropic.com/v1/messages"
 
     @property
@@ -208,6 +212,8 @@ class AnthropicAdapter(ModelAdapter):
             "max_tokens": 16384,
             "messages": messages,
         }
+        if self.temperature is not None:
+            payload["temperature"] = self.temperature
 
         # Opus 5.x and Opus 4.8 use adaptive thinking with output_config.effort
         # (4.8 rejects legacy budget_tokens with a 400 pointing at adaptive).

@@ -49,7 +49,10 @@ defect:
   description: "SOPS secret references wrong age key"
   # The golden/ contains the fixed version; seed/ contains the defect
 
-# Rubric criteria for T1/T5 (comprehend/review)
+# Rubric criteria for T1/T5 (comprehend/review).
+# Read by bench/judge.py: each criterion is scored 0-1 by the judge model
+# against golden/answer_key.md, and the weighted mean becomes the idiom axis
+# (only when the runner is invoked with --judge).
 rubric:
   - criterion: "Identifies all resources that will reconcile"
     weight: 1
