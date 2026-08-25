@@ -1,14 +1,15 @@
 /**
- * prod environment — build root.
+ * prod environment — infra build root.
  *
- * Read this next to src/envs/dev/main.ts. The two files are the same shape and
- * differ only where the SPEC matrix says they differ: node count and instance
- * type, bucket replication, RDS class and multi-AZ, and the IAM trust
- * relationship. Nothing here patches anything there.
+ * Read this next to `../../dev/infra/main.ts`. Same shape, differing only
+ * where the SPEC matrix says: a replica bucket, cross-region replication, a
+ * multi-AZ encrypted database, and an OIDC-trusted role instead of an IAM
+ * user. `chant build src/envs/prod/infra` sees this file only. The output
+ * lands at `dist/prod/infra/manifests.yaml`, the path
+ * `../delivery/main.ts`'s `myapp-prod-infra` Kustomization reconciles.
  */
 
 import { HelmRepository } from "@intentius/chant-lexicon-k8s";
-import { FluxAppFor, FluxGitSource } from "@intentius/chant-lexicon-k8s";
 
 import {
   ACK_CHART_REGISTRY,
@@ -17,11 +18,10 @@ import {
   INFRA_NAMESPACE,
   PostgresInstance,
   ReaderIam,
-  RegionCluster,
   SecureBucket,
   infraLabels,
   type SecretRef,
-} from "../../composites/index.js";
+} from "../../../composites/index.js";
 
 const ENV = "prod";
 const REGION = "us-east-1";
@@ -29,22 +29,6 @@ const REPLICA_REGION = "us-west-2";
 const ACK_REPOSITORY = "aws-controllers-k8s";
 const APP_NAMESPACE = "app";
 const SERVICE_ACCOUNT = "myapp";
-
-// ── Cluster ──────────────────────────────────────────────────────────────────
-// SPEC: 4 nodes, t3.large. Private API endpoint; IRSA/OIDC provider on.
-
-export const cluster = RegionCluster({
-  name: "myapp-prod",
-  env: ENV,
-  region: REGION,
-  availabilityZones: ["us-east-1a", "us-east-1b", "us-east-1c"],
-  nodeCount: 4,
-  instanceType: "t3.large",
-  minNodeCount: 4,
-  maxNodeCount: 8,
-  publicEndpoint: false,
-  associateOIDCProvider: true,
-});
 
 // ── Application assets bucket ────────────────────────────────────────────────
 // SPEC prod: versioned + encrypted + cross-region replication to us-west-2.
@@ -158,26 +142,4 @@ export const iamController = AckController({
   chartVersion: "1.3.16",
   repositoryName: ackCharts.name,
   replicas: 2,
-});
-
-// ── Delivery ─────────────────────────────────────────────────────────────────
-
-export const source = FluxGitSource("myapp-infra", {
-  url: "https://github.com/example/myapp-infra",
-  branch: "main",
-  interval: "1m",
-});
-
-export const infraApp = FluxAppFor("myapp-prod-infra", {
-  source,
-  path: "./dist/prod/infra",
-  targetNamespace: INFRA_NAMESPACE,
-  interval: "10m",
-});
-
-export const clusterApp = FluxAppFor("myapp-prod-clusters", {
-  source,
-  path: "./dist/prod/clusters",
-  interval: "10m",
-  dependsOn: ["myapp-prod-infra"],
 });

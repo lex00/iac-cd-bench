@@ -1,17 +1,15 @@
 /**
- * dev environment — build root.
+ * dev environment — infra build root.
  *
- * `chant build src/envs/dev` sees this file and nothing under src/envs/prod.
- * The two environments share every composite and share no build, which is what
- * makes SPEC acceptance criterion 7 (changing prod does not modify dev state)
- * structural rather than a convention someone has to remember.
- *
- * Everything below is either a composite call or a typed resource. No kustomize
- * overlay, no patch file, no raw YAML.
+ * The ACK-reconciled cloud resources and the chart-delivered ACK controllers
+ * that reconcile them. `chant build src/envs/dev/infra` sees this file only —
+ * not `../clusters`, not `../delivery`. The output lands at
+ * `dist/dev/infra/manifests.yaml`, the path `../delivery/main.ts`'s
+ * `myapp-dev-infra` Kustomization reconciles. See README, "Build output
+ * layout".
  */
 
 import { HelmRepository } from "@intentius/chant-lexicon-k8s";
-import { FluxAppFor, FluxGitSource } from "@intentius/chant-lexicon-k8s";
 
 import {
   ACK_CHART_REGISTRY,
@@ -20,28 +18,14 @@ import {
   INFRA_NAMESPACE,
   PostgresInstance,
   ReaderIam,
-  RegionCluster,
   SecureBucket,
   infraLabels,
   type SecretRef,
-} from "../../composites/index.js";
+} from "../../../composites/index.js";
 
 const ENV = "dev";
 const REGION = "us-east-1";
 const ACK_REPOSITORY = "aws-controllers-k8s";
-
-// ── Cluster ──────────────────────────────────────────────────────────────────
-// SPEC: 2 nodes, t3.medium.
-
-export const cluster = RegionCluster({
-  name: "myapp-dev",
-  env: ENV,
-  region: REGION,
-  availabilityZones: ["us-east-1a", "us-east-1b"],
-  nodeCount: 2,
-  instanceType: "t3.medium",
-  publicEndpoint: true,
-});
 
 // ── Application assets bucket ────────────────────────────────────────────────
 // SPEC dev: versioned + encrypted. Replication is the prod arm.
@@ -130,28 +114,4 @@ export const iamController = AckController({
   region: REGION,
   chartVersion: "1.3.16",
   repositoryName: ackCharts.name,
-});
-
-// ── Delivery ─────────────────────────────────────────────────────────────────
-// One GitRepository source, one Kustomization per reconciled path — the
-// lexicon's tested Flux composites, not hand-rolled ones.
-
-export const source = FluxGitSource("myapp-infra", {
-  url: "https://github.com/example/myapp-infra",
-  branch: "main",
-  interval: "1m",
-});
-
-export const infraApp = FluxAppFor("myapp-dev-infra", {
-  source,
-  path: "./dist/dev/infra",
-  targetNamespace: INFRA_NAMESPACE,
-  interval: "10m",
-});
-
-export const clusterApp = FluxAppFor("myapp-dev-clusters", {
-  source,
-  path: "./dist/dev/clusters",
-  interval: "10m",
-  dependsOn: ["myapp-dev-infra"],
 });
