@@ -1,0 +1,38 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\n# SEED REPO: .sops.yaml with WRONG age key (defect)\n# The correct age key is in age-key.txt but this file references a different key\ncreation_rules:\n  - path: '*.yaml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n  - path: '*.yml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n---\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\npatches:\n  - path: patch.yaml\n    target:\n      kind: Secret\n      name: db-password-dev # was the old/renamed name, e.g. db-password\n---\n# SEED REPO:\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-3db2ga56/.sops.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 3 resources found in 3 files - Valid: 1, Invalid: 0, Errors: 1, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [
+      "v1/Secret"
+    ],
+    "section_chars": 20062
+  },
+  "tokens": {
+    "input": 5112,
+    "output": 733
+  },
+  "content": "## Diagnosis\n\n**Defect 1 \u2014 SOPS key mismatch.** `age-key.txt` holds the recipient `age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg`, but `.sops.yaml`'s creation rules reference a different (stale) age recipient. SOPS can't decrypt `secret.yaml`, Flux's kustomize exec emits garbage/error text, and the kustomization fails at \"failed to merge command output\".\n\n**Defect 2 \u2014 stale patch target.** A kustomize patch in one of the overlays targets a resource by its old (renamed) name/kind, so even after decryption the build fails.\n\n## Fix\n\n### 1. Correct the age recipient in `.sops.yaml`\n\n```yaml\ncreation_rules:\n  - path_regex: .*\\.yaml$\n    encrypted_regex: ^(data|stringData)$\n    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\n### 2. Re-encrypt the secret with the correct key\n\n```bash\nexport SOPS_AGE_KEY_FILE=age-key.txt   # must contain the matching AGE-SECRET-KEY-... private key\nsops --encrypt --in-place secret.yaml\n```\n\nVerify it decrypts with the correct key:\n\n```bash\nsops --decrypt secret.yaml > /dev/null && echo OK\n```\n\n### 3. Fix the patch target\n\nIn the failing overlay (e.g. `overlays/dev/patch.yaml`), update the target to the resource's **current** name. Example:\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\npatches:\n  - path: patch.yaml\n    target:\n      kind: Secret\n      name: db-password-dev   # was the old/renamed name, e.g. db-password\n```\n\n(Adjust `kind`/`name`/`version` to match the renamed resource exactly \u2014 including `namespace` if the resource is namespaced.)\n\n### 4. Verify\n\n```bash\nkustomize build --enable-alpha-plugins overlays/dev   # or\nkubectl kustomize overlays/dev\nkustomize build overlays/prod\n```\n\nBoth overlays must render cleanly, with the decrypted `Secret/db-password-dev` (`stringData.password`) appearing in the output. Then reconcile Flux:\n\n```bash\nflux reconcile kustomization myapp-dev --with-source\nflux reconcile kustomization myapp-prod --with-source\n```\n\n**Note:** never commit the plaintext secret or the private `AGE-SECRET-KEY-...`; only the SOPS-encrypted YAML belongs in Git (acceptance criterion: secrets never stored in plaintext).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-3db2ga56/secret.yaml"
+  ]
+}

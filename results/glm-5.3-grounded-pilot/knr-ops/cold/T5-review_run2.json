@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [],
+    "section_chars": 151
+  },
+  "tokens": {
+    "input": 788,
+    "output": 526
+  },
+  "content": "# PR Security Review\n\n## Issues Identified (by severity)\n\n### \ud83d\udd34 Critical \u2014 block merge\n\n**1. Plaintext DB password in deployment env vars**\n- Violates acceptance criterion 3 (secrets never in plaintext in Git). Anyone with repo read access gets the prod/dev DB credential; it also lives in Git history forever.\n- **Fix:** Remove immediately. Use SOPS-encrypted `Secret` (ExternalSecret/SealedSecret also acceptable), referenced via `secretKeyRef`. Rotate the exposed credential since it's already committed. If prod is affected, purge history if feasible.\n\n**2. S3 bucket policy granting public read (`s3:GetObject` to `*`)**\n- Violates criterion 1 (no public access). Even for \"static assets,\" this bypasses CloudFront and can leak anything uploaded to the bucket; combined with versioning, prior versions are also exposed.\n- **Fix:** Remove the public statement; restrict to the CloudFront OAI/origin access control ARN only. Also set `PublicAccessBlock` (all four flags) explicitly.\n\n### \ud83d\udfe1 Warning \u2014 should fix before merge\n\n**3. Missing container resource limits**\n- No `resources.limits` \u2192 container can consume node resources unchecked (noisy-neighbor / DoS risk on shared nodes); also fails most admission policies (e.g., Kyverno/OPA \"require limits\").\n- **Fix:** Add `requests` and `limits` (CPU/memory) for app container. Consider `LimitRange` in base and check other containers (sidecars, init).\n\n**4. Verify related guardrails (likely-touched-but-not-shown)**\n- Confirm the RDS change didn't alter `publicly_accessible`, `deletion_protection`, or `backup_retention_window` (criterion 2). The instance class change itself is fine.\n\n### \u2139\ufe0f Info\n\n- Ensure Flux `kustomization` patch for the env var doesn't fall back to plaintext in `overlays/dev` either \u2014 the same fix applies to both overlays.\n- Add a policy gate (OPA/Kyverno or CI check like `checkov`/`kustomize` secret scan) to prevent recurrence.\n\n## Required before merge\n1. Rotate and move DB password to SOPS-encrypted Secret; reference via `secretKeyRef`.\n2. Replace public S3 policy with CloudFront OAI-only access + PublicAccessBlock.\n3. Add resource requests/limits.\n\nItems 1 and 2 are hard blockers; merge only after all three are addressed."
+}

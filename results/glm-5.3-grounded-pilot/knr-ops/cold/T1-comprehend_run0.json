@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [],
+    "section_chars": 151
+  },
+  "tokens": {
+    "input": 987,
+    "output": 963
+  },
+  "content": "## PR #42 Delivery Analysis (knr-ops / Flux + ACK)\n\n### 1. What reconciles, and in what order?\n\nOn merge, Flux's `source-controller` polls Git (default 30s interval or webhook-triggered), detects new commit SHA, and updates the GitRepository artifact. Then each Kustomization reconciles per its `dependsOn` chain, typically:\n\n```\nGitRepository \u2500\u2500\u25b6 Kustomization: clusters (CAPA/EKS)\n                \u2514\u2500\u25b6 Kustomization: infra \u2500\u2500\u25b6 dependsOn clusters\n                        \u2514\u2500\u25b6 Kustomization: overlays (dev, prod)\n```\n\nOrder: **cluster Kustomization \u2192 infra Kustomization (RDS resize + new S3 bucket) \u2192 dev/prod overlay Kustomizations (prod replica patch)**. Within a Kustomization, application order follows the resources' `dependsOn`/namespace ordering in the built output; ACK controllers then act asynchronously on the applied CRs (RDS controller modifies the instance, S3 controller creates the bucket, Deployment controller scales pods). Note dev and prod Kustomizations reconcile **in parallel** since they don't depend on each other.\n\n### 2. Does the RDS instance get recreated?\n\n**No.** The RDS ACK controller treats `instanceClass` (mapped to DBInstanceClass) as an **updatable field** \u2014 it issues an `rds:ModifyDBInstance` API call, which performs an in-place resize. This triggers:\n\n- An outage window for a single-AZ instance (dev), or failover then resize for multi-AZ (prod) \u2014 but no delete/recreate.\n- Recreation would only occur if an immutable field changed (e.g., storage engine, DB engine, identifier) or if the resource were deleted with the wrong finalizer/policy.\n\n**Important caveat:** if the RDS manifest carries `deletionProtection: true` (per acceptance criteria), it protects against deletion \u2014 reinforcing that this is a modify, not recreate. The instance will move through `Modifying` status before returning to `Available`.\n\n### 3. What happens if the S3 bucket manifest is deleted from Git?\n\nDepends on the finalizer/ownership semantics of the ACK S3 controller:\n\n- If the controller **adopts** the bucket as owned, deletion from Git \u2192 Flux prunes the `Bucket` CR \u2192 ACK finalizer attempts to delete the actual S3 bucket.\n- With `deletionPolicy`/retain behavior configured (or ACK's default for buckets without `deletionPolicy: Delete`), the bucket may be **orphaned/retained** in AWS while the CR is removed.\n\nFor an assets bucket with versioning, deletion would fail anyway if non-empty (S3 refuses to delete non-empty buckets), leaving the CR stuck in `Terminating` with the finalizer blocking. **Idiomatic practice:** set the CR to retain on delete, or accept the stuck-finalizer signal as intentional data protection.\n\n### 4. How does Flux handle the prod-only replica change?\n\nFlux reconciles per-Kustomization snapshots of the Git artifact. The `replicas: 4` patch exists only in `overlays/prod/kustomization.yaml`, so:\n\n- The **prod Kustomization** builds base + prod patch \u2192 applies Deployment with `replicas: 4`.\n- The **dev Kustomization** builds base + dev patch \u2192 untouched, dev replicas unchanged. \u2705 Environment isolation criterion satisfied.\n- Only prod's Deployment controller scales (HPA interplay: if an HPA targets replicas, Flux will fight it and drift-correct on each reconcile \u2014 avoid patching replicas when HPA manages the Deployment).\n\n### 5. Role of `dependsOn`\n\n`dependsOn` gives Flux ordering guarantees between Kustomizations, not within them:\n\n- Ensures the **cluster exists** before infra CRs are applied to it, and infra (IAM/RDS/S3 CRs) is applied before the app that consumes them (connection string secret, bucket IAM policy).\n- Flux waits for the upstream Kustomization to be `Ready=True` before reconciling dependents; if the cluster Kustomization fails, infra and overlays stall with a dependency-not-ready condition \u2014 a **gated rollout**.\n- In this PR: a failing RDS modify could be ordered so overlays wait (if declared), but replicas patch would still apply unless the infra Kustomization is unhealthy and overlays declare `dependsOn: infra`. This makes `dependsOn` the blast-radius containment mechanism: prod app changes don't ship while infra reconcile is broken."
+}

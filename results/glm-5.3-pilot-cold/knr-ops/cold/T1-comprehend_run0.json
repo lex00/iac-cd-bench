@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 961,
+    "output": 885
+  },
+  "content": "# PR #42 Delivery Behavior Analysis (Flux + kustomize + ACK)\n\n## 1. Reconciliation order after merge\n\n1. **Flux source-controller** detects the Git commit in the `GitRepository` and reconciles the artifact.\n2. Flux evaluates the Kustomization graph. Typical order, driven by `dependsOn`:\n   - **Cluster kustomization** (`clusters/eksa`) \u2014 unchanged this PR, so no drift, but still reconciled first if it's a dependency.\n   - **Infra layer** \u2014 ACK S3 + RDS manifests applied via their Kustomization.\n   - **Overlay kustomizations** \u2014 `overlays/prod` reconciles and patches the app Deployment to `replicas: 4`; `overlays/dev` is untouched.\n3. Within a Kustomization, Flux applies objects in **namespace/kind/name order**, not dependency order \u2014 ACK controllers (s3/rds controllers) then act on the applied resources **asynchronously** relative to each other.\n\n## 2. Does the RDS instance get recreated?\n\n**No \u2014 it's an in-place modification.** Changing `instanceClass` from `db.t3.micro` to `db.t3.medium` is an **immutable-from-Kubernetes-view but updatable-from-AWS-view** field: ACK's RDS controller issues an RDS `ModifyDBInstance` API call, which AWS performs as a rolling instance resize (brief failover/multi-AZ restart, possible reboot). The DBInstance CRD and the physical database identity are preserved \u2014 as long as immutable fields (engine, storage type, master username, DB subnet group) aren't changed. A recreate only happens if a field requiring replacement is modified or the CR is deleted and `deletionPolicy` dictates it.\n\n## 3. S3 bucket deleted from Git\n\nDepends on the `deletionPolicy` on the ACK `Bucket` CR:\n\n- **`deletionPolicy: Delete` (default for many ACK resources: `Delete` or `Retain` per controller defaults \u2014 ACK S3 default is `Delete` of the CR leading to bucket deletion)**: Flux/GitOps garbage collection removes the CR from the cluster, ACK deletes the S3 bucket \u2014 **data loss** unless versioning provides some protection (versioning does not protect against full bucket deletion).\n- **`deletionPolicy: Retain`**: the CR is deleted but the AWS bucket persists (orphaned).\n\nBest practice for prod assets: `Retain` (or `RetainExceptCreationFailed`) + Flux `prune: false` or `ignoreFor` to decouple Git removal from cloud deletion.\n\n## 4. Prod-only replica change\n\nThe `replicas: 4` patch lives only in `overlays/prod/kustomization.yaml`. Flux builds each overlay independently:\n\n- `overlays/prod` Kustomization \u2192 Deployment patched to 4 replicas \u2192 deployment-controller scales the ReplicaSet.\n- `overlays/dev` builds from the same `base/` without the patch \u2192 dev unchanged.\n\nFlux itself does nothing \"prod-aware\" \u2014 it's kustomize overlay composition providing isolation. There's a caveat: the base Deployment should not set `replicas` via an HPA-managed field if an HPA exists, or the HPA and Flux will fight over replica count.\n\n## 5. Role of `dependsOn`\n\n- Guarantees **ordering and readiness**: dependent Kustomizations wait until dependencies report `Ready=True`. E.g., app Kustomization depends on infra Kustomization, so the Deployment isn't applied before the S3/RDS ACK CRs exist and are reconciled.\n- Prevents race conditions like the app starting before its DB CR exists.\n- Creates a **failure gate**: if infra Kustomization fails health checks (e.g., RDS stuck), downstream app reconciliation is **suspended** \u2014 a health check on the ACK RDS CR blocks prod app rollout until the resize completes.\n- Forms a DAG; cycles or long-running DB modifications (like our `db.t3.medium` resize, which can take 10+ min) can delay everything downstream. Mitigate by scoping health checks narrowly (`spec.healthChecks`) or splitting infra into finer-grained Kustomizations."
+}
