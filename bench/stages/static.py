@@ -64,6 +64,8 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> bool:
             passed = False
         except FileNotFoundError:
             results.append(f"NOT FOUND: kustomize")
+            log.warning("Command not found: kustomize")
+            passed = False
 
     # Find flux kustomizations
     flux_kustomizations = list(workspace.glob("**/kustomization_*.yaml")) + \
@@ -85,6 +87,8 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> bool:
             passed = False
         except FileNotFoundError:
             results.append(f"NOT FOUND: flux")
+            log.warning("Command not found: flux")
+            passed = False
 
     return passed
 
@@ -115,6 +119,8 @@ def _crossplane_static(workspace: Path, results: list[str]) -> bool:
             passed = False
         except FileNotFoundError:
             results.append(f"NOT FOUND: crossplane")
+            log.warning("Command not found: crossplane")
+            passed = False
 
     return passed
 
@@ -141,6 +147,8 @@ def _terraform_static(workspace: Path, results: list[str]) -> bool:
         passed = False
     except FileNotFoundError:
         results.append("NOT FOUND: terraform")
+        log.warning("Command not found: terraform")
+        passed = False
 
     return passed
 
@@ -168,6 +176,8 @@ def _pulumi_static(workspace: Path, results: list[str]) -> bool:
         passed = False
     except FileNotFoundError:
         results.append("NOT FOUND: pulumi")
+        log.warning("Command not found: pulumi")
+        passed = False
 
     return passed
 
@@ -199,7 +209,8 @@ def _chant_static(workspace: Path, results: list[str]) -> bool:
         passed = False
     except FileNotFoundError:
         results.append("NOT FOUND: chant")
-        return passed
+        log.warning("Command not found: chant")
+        return False
 
     if not build_out.exists():
         results.append("chant build produced no manifest; skipping kubeconform")
@@ -223,6 +234,8 @@ def _chant_static(workspace: Path, results: list[str]) -> bool:
         passed = False
     except FileNotFoundError:
         results.append("NOT FOUND: kubeconform")
+        log.warning("Command not found: kubeconform")
+        passed = False
 
     return passed
 
@@ -259,6 +272,8 @@ def _bare_static(workspace: Path, results: list[str]) -> bool:
             passed = False
         except FileNotFoundError:
             results.append("NOT FOUND: kubectl")
+            log.warning("Command not found: kubectl")
+            passed = False
             break
 
     return passed

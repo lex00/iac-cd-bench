@@ -97,6 +97,7 @@ def run_lint(workspace: Path, stack: str) -> dict:
         except FileNotFoundError:
             results.append(f"NOT FOUND: {cmd} ({description})")
             log.warning("Command not found: %s", cmd)
+            all_passed = False
 
     return {
         "passed": all_passed,
