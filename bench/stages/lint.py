@@ -42,11 +42,26 @@ LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
 }
 
 
+def inapplicable(reason: str) -> dict:
+    """A stage that had nothing to act on did not pass — it did not run.
+
+    Recording `passed: True` for "no YAML files in workspace" is the
+    vacuous-pass bug: the runs that produce no artifacts at all are exactly
+    the most broken ones, and they collected free passes on lint and static
+    while only semantic failed, inflating every gate rate in their favour.
+    An inapplicable stage carries no `passed` key at all, so every existing
+    `.get("passed", False)` reader treats it as not-passed, and
+    bench.score.compute_score drops it from the correctness denominator
+    rather than crediting it.
+    """
+    return {"inapplicable": True, "reason": reason, "logs": reason}
+
+
 def run_lint(workspace: Path, stack: str) -> dict:
     """Run lint checks for the stack."""
     commands = LINT_COMMANDS.get(stack, [])
     if not commands:
-        return {"passed": True, "logs": "no lint commands for stack"}
+        return inapplicable(f"no lint commands for stack: {stack}")
 
     results: list[str] = []
     all_passed = True
@@ -55,14 +70,12 @@ def run_lint(workspace: Path, stack: str) -> dict:
     yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
     if stack in ("knr-ops", "crossplane", "bare"):
         files = [str(f) for f in yaml_files]
-        # If no YAML files exist, lint passes (nothing to lint)
         if not files:
-            return {"passed": True, "logs": "no YAML files in workspace"}
+            return inapplicable("no YAML files in workspace")
     elif stack in ("pulumi-typescript", "chant"):
         files = [str(f) for f in workspace.rglob("*.ts")]
-        # If no TS files exist, lint passes (nothing to lint)
         if not files:
-            return {"passed": True, "logs": "no TypeScript files in workspace"}
+            return inapplicable("no TypeScript files in workspace")
     else:
         files = ["."]
 
