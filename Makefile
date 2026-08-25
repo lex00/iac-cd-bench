@@ -46,12 +46,14 @@ run-e2e:
 		$(if $(API_KEY),--api-key $(API_KEY)))
 
 # Generate markdown report from results
+# make report MODEL=claude-opus-5
 report:
-	($(PYTHON) -m bench.report $(if $(OUTPUT),--output $(OUTPUT)))
+	($(PYTHON) -m bench.report --model $(MODEL) $(if $(OUTPUT),--output $(OUTPUT)))
 
-# Generate comparative report across models
+# Generate comparative report across result sets (default: every dir in results/)
+# make compare DIRS="results/claude-opus-5 results/gpt-5.4"
 compare:
-	($(PYTHON) -m bench.report --compare $(RESULTS)/*)
+	($(PYTHON) -m bench.report --compare $(or $(DIRS),$(RESULTS)/*) $(if $(OUTPUT),--output $(OUTPUT)))
 
 # Run cold condition (no docs injected)
 run-cold:

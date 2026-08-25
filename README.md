@@ -46,6 +46,9 @@ python -m bench.runner --model anthropic/claude-sonnet-4-20250514 --stacks all -
 
 # Generate report
 python -m bench.report --model anthropic/claude-sonnet-4-20250514
+
+# Compare result sets side by side
+python -m bench.report --compare results/claude-opus-5 results/gpt-5.4
 ```
 
 ## Results
