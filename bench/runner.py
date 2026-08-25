@@ -733,11 +733,24 @@ def run_task(
                 expects_artifacts=expects_artifacts,
                 extracted_files=result.get("extracted_files"),
             )
-            result["validity"] = {**simple_validity, **rich_validity}
+            # Both halves now carry a `category`, and they can legitimately
+            # disagree (one sees a short stub, the other sees leaked tool
+            # markup), so the union is reconciled explicitly rather than
+            # letting dict-merge order pick a winner. HARNESS_INVALID wins —
+            # see bench.validity.merge_categories.
+            result["validity"] = {
+                **simple_validity,
+                **rich_validity,
+                "category": validity_mod.merge_categories(
+                    simple_validity.get("category"), rich_validity.get("category")
+                ),
+            }
             if result["validity"]["verdict"] != "valid":
                 log.error(
-                    "Run %s/%s#%d REJECTED by the validity gate: %s",
-                    stack, task_id, run_idx, "; ".join(result["validity"]["reasons"]),
+                    "Run %s/%s#%d rejected by the validity gate [%s]: %s",
+                    stack, task_id, run_idx,
+                    result["validity"].get("category") or "unknown",
+                    "; ".join(result["validity"]["reasons"]),
                 )
 
             # Stage 1: lint
@@ -781,9 +794,14 @@ def run_task(
         except Exception as e:
             result["error"] = str(e)
             result["stages"]["lint"] = {"passed": False, "logs": str(e)}
+            # The adapter raised — an API error, a timeout, a crash in a
+            # stage. The harness captured no completion, so this is
+            # harness-invalid and the run is excluded, never charged to the
+            # model (#69).
             result.setdefault("validity", {
                 "valid": False,
                 "reason": "runner_error",
+                "category": validity_mod.HARNESS_INVALID,
                 "content_length": None,
                 "verdict": "invalid",
                 "reasons": [f"runner_error: {e}"],
@@ -963,21 +981,35 @@ def main() -> None:
                     json.dump(r, f, indent=2, default=str)
                 log.info("Wrote %s", out_path)
 
-    # Summary. Rejected runs are named here rather than buried: a run the
-    # gates rejected did not measure the model, and the count belongs next to
-    # the pass count, not underneath it.
+    # Summary. Both failure counts are named here rather than buried, and
+    # separately (#69): a harness-rejected run did not measure the model and
+    # must be re-run, while an empty answer measured it and scored 0.
     total = len(all_results)
     passed = sum(1 for r in all_results if r["stages"].get("lint", {}).get("passed"))
     rejected = sum(
         1 for r in all_results
-        if (r.get("validity") or {}).get("verdict", "valid") != "valid"
+        if validity_mod.is_harness_invalid(r.get("validity"))
     )
-    log.info("Summary: %d runs, %d passed lint, rejected: %d", total, passed, rejected)
+    empty_answers = sum(
+        1 for r in all_results
+        if validity_mod.is_model_failure(r.get("validity"))
+    )
+    log.info(
+        "Summary: %d runs, %d passed lint, harness-rejected: %d, empty answers: %d",
+        total, passed, rejected, empty_answers,
+    )
     if rejected:
         log.warning(
-            "%d of %d runs were rejected by the validity gate and must not be "
-            "quoted as scores. Run `python3 -m bench.validate %s` for the reasons.",
+            "%d of %d runs were harness-rejected and must not be quoted as "
+            "scores — the harness captured no completion. Run "
+            "`python3 -m bench.validate %s` for the reasons.",
             rejected, total, RESULTS_DIR / adapter.name.replace("/", "-"),
+        )
+    if empty_answers:
+        log.warning(
+            "%d of %d runs produced no usable answer. These score 0 and stay in "
+            "the denominator — a real result about the model, not a re-run.",
+            empty_answers, total,
         )
     if preflight_report["partial"]:
         log.warning(

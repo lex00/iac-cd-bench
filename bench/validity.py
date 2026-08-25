@@ -93,12 +93,243 @@ rejects, `classify_run` rejects.
 No network, no subprocess in either half: this is pure text classification
 over the recorded completion, so both re-run identically over historical
 result JSONs.
+
+## Part 0: the failure taxonomy (#69)
+
+Both classifiers above originally returned one verdict — "invalid" — for two
+situations that are not alike, and `bench.score` excluded both from every
+aggregate. That is a scoring bug, not a cosmetic one:
+
+- The harness failing to capture a completion means no measurement of the
+  model exists. Excluding the run is right; scoring it 0 would charge the
+  model for the harness's mistake.
+- The model producing nothing usable while the harness worked fine IS a
+  measurement, and the worst one a model can produce. Excluding it drops a
+  model's worst runs from its own denominator, so a model that answers
+  nothing half the time gets averaged over the survivor-biased half it did
+  answer. That is the same perverse incentive as the vacuous passes this
+  project just removed, arriving through the other door: a free pass became
+  a free exclusion.
+
+  Empirically, `qwen 3.8 - local` keeps rank #1 of 13 under blanket exclusion
+  because 44 of its 90 runs are dropped rather than counted; zero-filled, it
+  is #12. The exclusion is doing the work, not the answers.
+
+So every rejection reason carries a category:
+
+- `HARNESS_INVALID` — the harness failed to capture a completion. Tool-call
+  markup and Claude Code UI markers leaking into the answer, a real host
+  worktree path (the model saw its own environment), transcript structural
+  markers, an adapter/API error or timeout, an unreadable result JSON, and a
+  stage recording a pass with its own binary absent. Excluded from every
+  aggregate; a high rate of these means the harness is broken and the set is
+  unpublishable.
+- `MODEL_FAILURE` — the harness worked and the model produced nothing usable.
+  An empty or near-empty completion, a short stub, prose where the task's
+  enabled stages needed a file. Scored as a failure (correctness 0) and kept
+  in the denominator. A high rate of these is a real, publishable result
+  about the model, not a broken run set.
+
+A reason this module does not recognise is categorised HARNESS_INVALID, the
+conservative direction: charging a model for a failure mode nobody has
+classified is the false-accusation error, and excluding an unknown is only
+the loss of one data point.
+
+### The ambiguous case: an empty completion that burned its budget on reasoning
+
+`claude-opus-5` produced 31 completions of zero visible characters in the 90-run
+historical set, every one of them billed at exactly `max_tokens` (16,384) of
+output. Nothing was truncated by the harness and no API error was raised: the
+model spent its entire output allowance on reasoning tokens and emitted no
+answer.
+
+**This is scored as a MODEL_FAILURE, not as missing data.** The reasoning:
+the harness sets a token budget and asks a question; how a model spends that
+budget is part of what a benchmark at that configuration measures. A model
+that reliably thinks itself past its own output allowance has failed the task
+as surely as one that answers wrongly — the user gets nothing either way.
+Calling it "not a measurement" would mean a model could raise its average by
+thinking longer, which is precisely the incentive #69 exists to close.
+
+The counter-argument is real and is why this is configurable rather than
+asserted: the budget is a harness parameter, so one could argue the harness
+under-provisioned the model. Set `IAC_BENCH_REASONING_EXHAUSTION=harness-invalid`
+to score it that way, and the runs are excluded instead. The distinct
+sub-reason `empty_reasoning_exhausted` is recorded either way, so the choice
+is always visible in the data and reversible without a re-run.
+
+Detection is deliberately budget-agnostic: a completion under the empty floor
+whose provider billed more than `REASONING_EXHAUSTION_OUTPUT_TOKENS` output
+tokens spent those tokens somewhere invisible. That holds whatever `max_tokens`
+was, and does not fire on the genuinely-terse answers that make up every other
+short completion in the corpus (`qwen 3.8 - local`'s stubs bill 43-200 output
+tokens, matching their visible length).
 """
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
+
+# ─────────────────────────────────────────────────────────────────────────
+# Part 0: the failure taxonomy (#69) — see the module docstring
+# ─────────────────────────────────────────────────────────────────────────
+
+#: The harness failed to capture a completion. No measurement of the model
+#: exists, so the run is excluded from every aggregate.
+HARNESS_INVALID = "harness-invalid"
+
+#: The harness worked; the model produced nothing usable. A measurement, and
+#: the worst one available, so the run scores 0 and stays in the denominator.
+MODEL_FAILURE = "model-failure"
+
+#: Environment variable overriding how an empty-because-reasoning-exhausted
+#: completion is categorised. Accepts either category constant.
+REASONING_EXHAUSTION_ENV = "IAC_BENCH_REASONING_EXHAUSTION"
+
+#: Default for that case. See "The ambiguous case" in the module docstring.
+REASONING_EXHAUSTION_DEFAULT = MODEL_FAILURE
+
+#: A completion under the empty floor that still billed more than this many
+#: output tokens spent them on invisible (reasoning) output rather than on an
+#: answer. Set far above the longest genuinely-terse completion in the corpus
+#: (200 output tokens) and far below any real reasoning budget.
+REASONING_EXHAUSTION_OUTPUT_TOKENS = 1024
+
+#: Sub-reason -> category. Sub-reasons are kept exactly as they were already
+#: recorded (#59, #56, #60) so nothing already on disk loses its meaning; the
+#: category is the new axis layered over them.
+REASON_CATEGORIES: dict[str, str] = {
+    # Part 1 (check_validity): Claude Code's own machinery in the answer.
+    "tool_invocation_markup": HARNESS_INVALID,
+    "claude_code_ui_marker": HARNESS_INVALID,
+    "leaked_host_worktree_path": HARNESS_INVALID,
+    # Part 1: the model answered, badly or not at all.
+    "empty_or_near_empty": MODEL_FAILURE,
+    "short_stub": MODEL_FAILURE,
+    # Part 2 (check_content).
+    "agent_transcript": HARNESS_INVALID,
+    "empty_completion": MODEL_FAILURE,
+    "content_too_short": MODEL_FAILURE,
+    # Prose where the task's enabled stages needed a file: the harness
+    # delivered the completion intact, the model just did not produce the
+    # artifact. This is the vacuous-pass generator of #59 and it is squarely
+    # a model failure.
+    "no_extractable_output": MODEL_FAILURE,
+    # bench.validate.classify_run's own reasons.
+    "runner_error": HARNESS_INVALID,
+    "adapter_error": HARNESS_INVALID,
+    "api_error": HARNESS_INVALID,
+    "timeout": HARNESS_INVALID,
+    "unreadable_json": HARNESS_INVALID,
+    # The stage's binary was absent from PATH: an infrastructure gap, so
+    # nothing about the model was checked (#56).
+    "tool_missing_scored_as_pass": HARNESS_INVALID,
+    # Every enabled stage had nothing to act on because the model produced no
+    # artifact — same family as no_extractable_output, same verdict.
+    "all_stages_inapplicable": MODEL_FAILURE,
+}
+
+
+def reasoning_exhaustion_category() -> str:
+    """How an empty-because-reasoning-exhausted completion is categorised.
+
+    Read per call rather than at import so a rescore can flip it without
+    reloading the module. Anything other than the two category constants is
+    ignored in favour of the default, rather than silently creating a third
+    category.
+    """
+    override = (os.environ.get(REASONING_EXHAUSTION_ENV) or "").strip().lower()
+    if override in (HARNESS_INVALID, MODEL_FAILURE):
+        return override
+    return REASONING_EXHAUSTION_DEFAULT
+
+
+def categorize_reason(reason: str | None) -> str | None:
+    """Map one rejection reason (or `reason: detail` string) to a category.
+
+    Unknown reasons categorise as HARNESS_INVALID — see the module docstring
+    on why that is the conservative direction.
+    """
+    if not reason:
+        return None
+    key = str(reason).split(":", 1)[0].strip()
+    if key == "empty_reasoning_exhausted":
+        return reasoning_exhaustion_category()
+    return REASON_CATEGORIES.get(key, HARNESS_INVALID)
+
+
+def merge_categories(*categories: str | None) -> str | None:
+    """Combine categories for a run with several reasons.
+
+    HARNESS_INVALID wins: if any part of the run shows the harness failed,
+    the completion cannot be attributed to the model at all, so the run is
+    not evidence about the model even if it also looks empty.
+    """
+    present = [c for c in categories if c]
+    if not present:
+        return None
+    return HARNESS_INVALID if HARNESS_INVALID in present else MODEL_FAILURE
+
+
+def categorize_reasons(reasons: list[str] | None) -> str | None:
+    return merge_categories(*(categorize_reason(r) for r in (reasons or [])))
+
+
+def is_harness_invalid(verdict: dict[str, Any] | None) -> bool:
+    """Whether a validity block says the harness, not the model, failed."""
+    return _category_of(verdict) == HARNESS_INVALID
+
+
+def is_model_failure(verdict: dict[str, Any] | None) -> bool:
+    """Whether a validity block says the model produced nothing usable."""
+    return _category_of(verdict) == MODEL_FAILURE
+
+
+def _category_of(verdict: dict[str, Any] | None) -> str | None:
+    """Category of an arbitrary validity block, recomputing if it predates one.
+
+    Result JSONs written before #69 carry reasons but no `category`, so the
+    category is re-derived from the reasons rather than defaulting — the
+    whole point of keeping the sub-reason strings stable.
+    """
+    if not isinstance(verdict, dict):
+        return None
+    stated = verdict.get("category")
+    if stated in (HARNESS_INVALID, MODEL_FAILURE):
+        return stated
+    if verdict.get("reasons"):
+        return categorize_reasons(verdict.get("reasons"))
+    if verdict.get("valid") is False or verdict.get("verdict") == "invalid":
+        return categorize_reason(verdict.get("reason"))
+    return None
+
+
+def _output_tokens(result: dict[str, Any]) -> int | None:
+    tokens = result.get("tokens")
+    if isinstance(tokens, dict):
+        try:
+            return int(tokens.get("output"))
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def is_reasoning_exhausted(result: dict[str, Any]) -> bool:
+    """Did this run bill a large output budget while emitting no answer?
+
+    True only for the ambiguous case in the module docstring: visible text
+    below the empty floor, but the provider charged for output tokens that
+    have to have gone into reasoning. A run that errored out is not this
+    case — that is a harness failure with its own reason.
+    """
+    if result.get("error"):
+        return False
+    if len((result.get("content") or "").strip()) >= ABSOLUTE_FLOOR:
+        return False
+    out = _output_tokens(result)
+    return out is not None and out > REASONING_EXHAUSTION_OUTPUT_TOKENS
 
 # ─────────────────────────────────────────────────────────────────────────
 # Part 1: check_validity / check_run_validity / run_validity
@@ -158,31 +389,59 @@ _WEAK_RE = re.compile(
 )
 
 
-def check_validity(content: str | None) -> dict[str, Any]:
-    """Classify one run's model output. Returns {"valid": bool, "reason": str|None}.
+def _verdict(valid: bool, reason: str | None, length: int) -> dict[str, Any]:
+    return {
+        "valid": valid,
+        "reason": reason,
+        "category": categorize_reason(reason) if not valid else None,
+        "content_length": length,
+    }
 
-    `reason` is always populated when `valid` is False, and always None when
-    `valid` is True - callers should treat that as the contract, not guess.
+
+def check_validity(content: str | None) -> dict[str, Any]:
+    """Classify one run's model output.
+
+    Returns `{"valid": bool, "reason": str|None, "category": str|None,
+    "content_length": int}`. `reason` and `category` are always populated when
+    `valid` is False and always None when `valid` is True — callers should
+    treat that as the contract, not guess.
+
+    Harness markers are tested BEFORE the empty floor (#69). The order used to
+    be the other way round, which meant a 40-character completion consisting of
+    nothing but leaked tool-call markup was filed as `empty_or_near_empty` — a
+    model failure — when it is the clearest possible evidence that the harness,
+    not the model, produced the text. Length is only meaningful once the text is
+    known to have come from the model.
     """
     text = content or ""
     stripped = text.strip()
 
-    if len(stripped) < ABSOLUTE_FLOOR:
-        return {"valid": False, "reason": "empty_or_near_empty", "content_length": len(stripped)}
-
     strong = _strong_reason(text)
     if strong is not None:
-        return {"valid": False, "reason": strong, "content_length": len(stripped)}
+        return _verdict(False, strong, len(stripped))
+
+    if len(stripped) < ABSOLUTE_FLOOR:
+        return _verdict(False, "empty_or_near_empty", len(stripped))
 
     if len(stripped) < WEAK_PATTERN_FLOOR and _WEAK_RE.search(text):
-        return {"valid": False, "reason": "short_stub", "content_length": len(stripped)}
+        return _verdict(False, "short_stub", len(stripped))
 
-    return {"valid": True, "reason": None, "content_length": len(stripped)}
+    return _verdict(True, None, len(stripped))
 
 
 def check_run_validity(result: dict[str, Any]) -> dict[str, Any]:
-    """Same as `check_validity`, reading `content` off a run result dict."""
-    return check_validity(result.get("content"))
+    """Same as `check_validity`, reading `content` off a run result dict.
+
+    Given the whole run rather than just its text, this can also separate the
+    ambiguous empty case: a completion that is empty because the model spent
+    its output budget on reasoning is recorded under the distinct sub-reason
+    `empty_reasoning_exhausted`, whose category is configurable (see the
+    module docstring).
+    """
+    verdict = check_validity(result.get("content"))
+    if verdict.get("reason") == "empty_or_near_empty" and is_reasoning_exhausted(result):
+        return _verdict(False, "empty_reasoning_exhausted", verdict["content_length"])
+    return verdict
 
 
 def run_validity(result: dict[str, Any]) -> dict[str, Any]:
@@ -200,10 +459,14 @@ def run_validity(result: dict[str, Any]) -> dict[str, Any]:
     """
     existing = result.get("validity")
     if isinstance(existing, dict) and "valid" in existing:
-        return existing
+        if existing.get("valid") or existing.get("category") in (HARNESS_INVALID, MODEL_FAILURE):
+            return existing
+        # Stamped before #69: keep the recorded verdict and sub-reason exactly
+        # as they are, and only add the category the taxonomy now needs.
+        return {**existing, "category": _category_of(existing)}
     if "content" not in result:
-        return {"valid": True, "reason": None, "content_length": None}
-    return check_validity(result.get("content"))
+        return {"valid": True, "reason": None, "category": None, "content_length": None}
+    return check_run_validity(result)
 
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -276,7 +539,12 @@ def check_content(
         extracted_files: what bench.runner.extract_code_blocks actually wrote.
 
     Returns a verdict dict:
-        {"verdict": "valid"|"invalid", "reasons": [...], "checks": {...}}
+        {"verdict": "valid"|"invalid", "category": str|None,
+         "reasons": [...], "checks": {...}}
+
+    `category` is HARNESS_INVALID when any reason shows the harness failed to
+    capture the completion, MODEL_FAILURE when every reason is about what the
+    model produced, and None for a valid completion (#69).
     """
     reasons: list[str] = []
     text = content or ""
@@ -333,6 +601,7 @@ def check_content(
 
     return {
         "verdict": "invalid" if reasons else "valid",
+        "category": categorize_reasons(reasons),
         "reasons": reasons,
         "checks": checks,
     }
@@ -360,8 +629,23 @@ def check_result(result: dict[str, Any], spec: dict[str, Any] | None = None) -> 
     Used by bench.validate to classify historical runs written before the gate
     existed, so old result sets get the same verdict a fresh run would.
     """
-    return check_content(
+    verdict = check_content(
         result.get("content"),
         expects_artifacts=expects_artifacts(spec) if spec is not None else False,
         extracted_files=result.get("extracted_files"),
     )
+    # The ambiguous empty case gets its own sub-reason so the choice made
+    # about it stays visible in the data (see the module docstring).
+    if is_reasoning_exhausted(result):
+        verdict["reasons"] = [
+            (
+                "empty_reasoning_exhausted: the provider returned no text but "
+                f"billed {_output_tokens(result)} output tokens — the model spent "
+                "its whole output budget on reasoning and emitted no answer"
+            )
+            if r.startswith("empty_completion")
+            else r
+            for r in verdict["reasons"]
+        ]
+        verdict["category"] = categorize_reasons(verdict["reasons"])
+    return verdict
