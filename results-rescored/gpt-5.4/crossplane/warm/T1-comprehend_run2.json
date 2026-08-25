@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 944,
+    "output": 1552
+  },
+  "content": "Here\u2019s the Crossplane flow for a claim update like `storageGB: 20 -> 50`.\n\n## 1) Trace: Claim \u2192 XRD \u2192 Composition \u2192 managed resources\n\nAssume you have:\n\n- a **Claim** with `spec.storageGB`\n- an **XRD** that defines that field in the composite API\n- a **Composition** that patches `spec.storageGB` into an RDS managed resource field like `spec.forProvider.allocatedStorage`\n\n### Step-by-step\n\n1. **Claim is updated**\n   - User changes the claim from `storageGB: 20` to `storageGB: 50`.\n\n2. **Claim reconciles to Composite Resource (XR)**\n   - Because the claim is bound to an XRD via `claimNames`, Crossplane maintains a backing **composite resource**.\n   - The claim spec is propagated to the XR spec.\n\n3. **Composition is re-evaluated**\n   - Crossplane sees the XR desired state changed.\n   - It re-renders the composition logic:\n     - patches\n     - transforms\n     - function pipeline stages, if used\n\n4. **Managed resource desired specs are recalculated**\n   - For the RDS resource template, the composition patch updates:\n     - from XR/claim `storageGB=50`\n     - to managed resource `allocatedStorage=50`\n   - Other managed resources are also re-evaluated, but only changed if their inputs changed.\n\n5. **Crossplane updates the managed resource object**\n   - The Kubernetes managed resource for the RDS instance is patched with the new desired spec.\n\n6. **Provider reconciler compares desired vs external state**\n   - The AWS provider sees:\n     - desired allocated storage = 50\n     - actual external DB allocated storage = 20\n   - It calls the cloud API to modify the RDS instance.\n\n7. **Status flows back upward**\n   - Managed resource status updates\n   - XR readiness/status updates\n   - Claim readiness/status updates\n\nSo the path is:\n\n**Claim change \u2192 XR spec change \u2192 Composition re-render \u2192 managed resource spec change \u2192 provider cloud API call \u2192 status propagates back**\n\n---\n\n## 2) Is the RDS instance updated in-place or recreated?\n\n**Usually updated in-place**, not recreated.\n\nFor AWS RDS, increasing allocated storage is typically a **mutable field** and is handled via an API modify operation rather than replacement.\n\n### In Crossplane terms\nWhether a resource is updated or recreated depends on:\n\n- whether the managed resource field is mutable in the provider/cloud API\n- whether the provider marks it as requiring replacement\n- whether immutable identifiers changed\n\nFor `allocatedStorage` on RDS:\n- **20 \u2192 50** is generally an **in-place modify**\n- Crossplane updates the existing managed resource, and the provider updates the same external DB instance\n\n### When would recreation happen?\nRecreation would happen if you changed something effectively immutable, such as:\n- engine family in some cases\n- certain subnet/network settings\n- identifiers/names if modeled as immutable\n- fields the provider treats as \u201ccreate-only\u201d\n\nBut for this storage increase scenario: **expect in-place modification**.\n\n---\n\n## 3) What happens to the S3 bucket?\n\n**Nothing changes**, assuming the bucket spec does not depend on `storageGB`.\n\nCrossplane re-runs reconciliation for the whole composite, but that does **not** mean every resource is modified. It means every resource is checked against desired state.\n\n### Outcome\n- S3 bucket resource template is re-evaluated\n- Desired spec for bucket remains the same\n- Provider sees no drift / no spec change\n- No update call is made to AWS\n- Bucket stays as-is\n\nSo:\n- **reconciled:** yes\n- **modified:** no\n\n---\n\n## 4) What role do `ReadinessChecks` play?\n\n`ReadinessChecks` control when a composed resource is considered **ready** by the composition, which influences XR/claim readiness.\n\nThey do **not** decide whether to update or recreate resources. They are about **readiness aggregation**, not mutation strategy.\n\n### In this scenario\nAfter the RDS storage change:\n\n- the RDS managed resource may enter a temporary non-ready or updating state\n- readiness checks determine whether Crossplane should consider that composed resource ready\n- until the RDS passes readiness checks again, the XR and claim may remain not-ready / reconciling\n\n### Practical effect\nIf the composition has readiness checks for:\n- `Ready` condition\n- specific status fields\n- non-empty endpoint/ARN/etc.\n\nthen the composite won\u2019t be marked ready until those checks pass again.\n\n### Summary\n`ReadinessChecks`:\n- help determine **when** the XR/claim is ready\n- do **not** control **how** updates are performed\n- are especially useful when resources take time to converge, like RDS modifications\n\n---\n\n## 5) How does Crossplane handle the reconciliation loop?\n\nCrossplane is **continuously reconciling**, Kubernetes-controller style.\n\n### Loop behavior for this change\n\n1. **Observe**\n   - Claim/XR/managed resource change is detected.\n\n2. **Compute desired state**\n   - Composition is evaluated from current XR spec.\n\n3. **Compare**\n   - Crossplane/provider compares desired managed resource spec with actual resource spec/status and external cloud state.\n\n4. **Act**\n   - If different, it issues the required update through the provider.\n   - For RDS, that means a modify call.\n\n5. **Requeue and re-observe**\n   - Controllers requeue reconciliation.\n   - While AWS is still applying the DB modification, status may show updating/not ready.\n\n6. **Converge**\n   - Once external state matches desired state and readiness checks pass, managed resource becomes ready.\n   - Then XR becomes ready.\n   - Then claim becomes ready.\n\n### Important characteristic\nThis is **not** a one-shot apply model. If:\n- AWS takes time\n- status is temporarily stale\n- another controller update happens\n- drift occurs later\n\nCrossplane keeps reconciling until actual state matches desired state.\n\n### Drift handling\nEven if someone manually changes the RDS later, Crossplane may detect drift and attempt to move it back toward the declared spec, depending on:\n- provider observation behavior\n- management policies\n- late initialization and external-name handling\n\n---\n\n## Direct answers\n\n### 1. Trace what happens\n- Claim `storageGB` changes\n- Bound XR gets updated\n- Composition re-renders\n- RDS managed resource spec changes (`allocatedStorage: 50`)\n- AWS provider modifies the existing RDS instance\n- Status/conditions propagate back to XR and claim\n\n### 2. RDS updated in-place or recreated?\n- **In-place update** in the normal `20 -> 50` storage expansion case\n\n### 3. What happens to S3 bucket?\n- **Nothing changes**\n- It is re-evaluated during reconciliation but not modified\n\n### 4. Role of `ReadinessChecks`\n- They determine when composed resources, the XR, and the claim are considered **ready**\n- They do not determine replacement vs in-place update\n\n### 5. Reconciliation loop\n- Crossplane continuously observes desired vs actual state\n- Applies changes through provider controllers\n- Requeues until the external resource converges\n- Updates readiness/status back up the chain\n\nIf you want, I can also show this with a small concrete example YAML for **XRD + Composition patches + claim** using `storageGB -> allocatedStorage`.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/crossplane/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

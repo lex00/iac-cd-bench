@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q1_rds_class_change_in_place PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q2_prune_kustomization PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q3_default_deletion_policy_deletes FAILED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q4_retain_annotation_orphans PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q5_suspended_kustomization_applies_nothing PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q6_dependency_gate_blocks_apps_dev PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q7_reconcile_order PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q3: expected deleted, got 'exists'\n    assert 'delet' in 'exists'\n     +  where 'exists' = _norm('exists')\n     +    where 'exists' = <built-in method get of dict object at 0x109116a00>('q3', '')\n     +      where <built-in method get of dict object at 0x109116a00> = {'q1': 'updated-in-place', 'q2': {'kustomization': 'infra-aws', 'outcome': 'pruned'}, 'q3': 'exists', 'q4': 'retained', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py:67: AssertionError: q3: expected deleted, got 'exists'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q3_default_deletion_policy_deletes\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 2177,
+    "output": 173
+  },
+  "content": "```json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\n    \"kustomization\": \"infra-aws\",\n    \"outcome\": \"pruned\"\n  },\n  \"q3\": \"exists\",\n  \"q4\": \"retained\",\n  \"q5\": {\n    \"changes\": false,\n    \"reason\": \"The apps-prod Kustomization is suspended.\"\n  },\n  \"q6\": {\n    \"apps_dev_reconciles\": false,\n    \"reason\": \"apps-dev depends on infra-aws, which fails health checks.\"\n  },\n  \"q7\": [\n    \"infra-controllers\",\n    \"infra-aws\",\n    \"apps-dev\"\n  ]\n}\n```",
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.8571428571428571,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.746031746031746
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/knr-ops/warm/T6-semantics_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6349206349206349
+    },
+    "published_composite_no_idiom": 0.7142857142857143,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.746031746031746
+    },
+    "corrected_composite_no_idiom": 0.8392857142857143,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

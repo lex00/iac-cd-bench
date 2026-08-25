@@ -1,0 +1,86 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 2243,
+    "output": 2009
+  },
+  "content": "# PR #42 Delivery Behavior Analysis\n\n## 1. What reconciles, and in what order?\n\nReconciliation is driven by Flux's `Kustomization` objects, not by which files changed. When PR #42 merges:\n\n1. **`GitRepository` source** fetches the new commit on its next poll interval.\n2. Each **`Kustomization`** whose rendered output changed gets reapplied, following `dependsOn` ordering.\n\nGiven the three changes touch **infra (RDS/S3)** and the **prod app overlay**, the likely order is:\n\n```\ninfra-controllers (ACK CRDs, if changed)  \u2192\ninfra (S3 bucket + RDS instance)          \u2192\napps-prod (deployment replicas: 4)\n```\n\n- The **new S3 bucket** and **RDS instanceClass change** land in the `infra` Kustomization sweep.\n- The **prod replica patch** lands only when the **prod apps Kustomization** reconciles.\n- Dev is untouched because its rendered output did not change.\n\nOrder is determined by `dependsOn` edges, *not* by directory layout or PR file order.\n\n## 2. Does the RDS instance get recreated?\n\n**No \u2014 it's an in-place modification, not a recreate.**\n\n- ACK's RDS `Instance` controller maps `instanceClass` to the AWS `ModifyDBInstance` API.\n- Changing `db.t3.micro \u2192 db.t3.medium` is a **modify** operation (a compute resize), which AWS performs in place \u2014 the DB identifier, storage, endpoint, and data are preserved.\n- Expect a brief reboot/failover during the resize (near-zero downtime if Multi-AZ, as prod is).\n\n**Recreation only happens for immutable fields** (e.g., changing the DB identifier, engine, or certain storage/encryption settings). `instanceClass` is not immutable, so no replace.\n\n> Caveat: the resize is not instant. ACK will show the resource as reconciling until AWS reports the modification complete. If `applyImmediately` is not set, the change may wait for the maintenance window.\n\n## 3. What happens to the S3 bucket if its manifest is deleted from Git?\n\nDepends on **pruning** and **deletion policy** \u2014 two independent gates:\n\n1. **Flux pruning** (`prune: true` on the Kustomization): when the manifest disappears from the rendered overlay, Flux issues `kubectl delete` on the `Bucket` CR. If `prune: false`, the CR is orphaned in-cluster and nothing happens in AWS.\n\n2. **ACK deletion policy**: even when the CR is deleted, the annotation\n   `services.k8s.aws/deletion-policy: retain` causes ACK to leave the actual S3 bucket in AWS (only removing the CR/finalizer). With `delete` (default), ACK calls `DeleteBucket`.\n\n\u26a0\ufe0f **Extra gotcha:** S3 `DeleteBucket` fails on a **non-empty bucket**. So even with pruning + delete policy, a bucket with objects will get stuck \u2014 the CR's finalizer won't clear, and Flux reconciliation may report the delete as failed/pending.\n\n## 4. How does Flux handle the prod-only replica change?\n\nThrough **overlay isolation**:\n\n- The `replicas: 4` patch lives in `overlays/prod/`, consumed only by the **prod Kustomization**.\n- Flux renders `kustomize build overlays/prod/` independently from `overlays/dev/`.\n- Only the prod app deployment gets `replicas: 4`; **dev's rendered output is byte-identical to before**, so its Kustomization reconciles to no-op (or isn't re-triggered at all).\n\nThis satisfies acceptance criterion #7 (**environment isolation** \u2014 changing prod does not modify dev state), *provided dev and prod are separate Kustomization objects pointing at separate overlay paths*. If a single Kustomization built both, isolation would still hold at the manifest level but they'd share a reconciliation/failure blast radius.\n\n## 5. Role of `dependsOn` between Kustomizations\n\n`dependsOn` enforces **ordering and readiness gating** in the reconciliation DAG:\n\n- A Kustomization with `dependsOn: [infra-controllers]` will **not apply** until the ACK controllers Kustomization is `Ready`.\n- This prevents the classic race: applying a `Bucket`/`Instance` CR **before** the ACK CRDs and controllers exist \u2192 \"no matches for kind Bucket\" errors.\n\nTypical chain for this repo:\n\n```\nsources \u2192 cluster (CAPA) \u2192 ack-controllers \u2192 infra (S3/RDS) \u2192 apps (dev/prod)\n```\n\n- **For PR #42 specifically:** if the new S3 bucket introduces a CRD not yet installed, `dependsOn` ensures the controller layer is healthy first. Since the RDS resize and replica change target already-established kinds, `dependsOn` mostly guarantees infra is `Ready` before apps that may reference DB connection secrets reconcile.\n- **Health assessment matters:** `dependsOn` waits for `Ready` status. If an ACK resource never reports healthy (e.g., stuck RDS modify), downstream Kustomizations **block** \u2014 a slow RDS resize could stall the apps layer if it depends on infra.\n\n---\n\n## Summary Table\n\n| Change | Reconciles via | AWS effect | Recreate? |\n|---|---|---|---|\n| RDS `instanceClass` \u2191 | `infra` Kustomization | `ModifyDBInstance` resize | No (in-place) |\n| New S3 bucket | `infra` Kustomization | `CreateBucket` | N/A (new) |\n| Prod `replicas: 4` | `apps-prod` Kustomization | Deployment scale-up | No |\n\n**Key risks:** RDS resize latency blocking `dependsOn` chains, and S3 prune behavior gated by both Flux `prune` and ACK deletion-policy (plus the non-empty-bucket delete trap).",
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/knr-ops/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

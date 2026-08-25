@@ -1,0 +1,89 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 642,
+    "output": 866
+  },
+  "content": "Here is the Pulumi-specific behavior for the scenario described:\n\n## 1. Which property triggered the replace?\n\n**`instance_class`** (or `instanceClass` in snake_case) on the `aws.rds.Instance` resource.\n\nIn the Pulumi AWS provider, `instance_class` is a **ForceNew** property. When you change the instance size from `db.t3.micro` (dev) to `db.t3.medium` (prod), the AWS provider schema marks this as requiring resource replacement rather than in-place modification. \n\nDuring `pulumi preview`, you will see:\n```\n~ aws:rds/instance:Instance: (replace)\n    [id=i-1234567890abcdef0]\n    [urn=urn:pulumi:prod::my-project::aws:rds/instance:Instance::my-db]\n    instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n```\n\n**Note:** If the stack config also changes the `multi_az` flag from `false` to `true`, that property *can* be modified in-place (it triggers a reboot but not replacement). However, `instance_class` changes always force replacement in the Pulumi AWS provider.\n\n## 2. What does `pulumi up --target` skip?\n\nWhen you run `pulumi up --target <URN>` (e.g., targeting only the EKS cluster or S3 bucket), Pulumi skips **all resources not explicitly listed as targets** and **all resources that depend on non-targeted resources**.\n\nSpecifically:\n- **Non-targeted resources** are not refreshed, created, updated, or deleted\n- **Dependencies flow downward**: If you target the RDS instance, Pulumi will also target resources it depends on (like the DB subnet group or security group), but **not** resources that depend on it (like Kubernetes Secrets containing the DB connection string)\n- **ConfigSecret resources** (if not targeted) remain unchanged in the state and cluster\n\n**Critical implication for this scenario:** If you target only the RDS instance for replacement, the `ConfigSecret` containing the database connection string (which depends on the RDS endpoint/address) will **not** be updated with the new endpoint. This creates a state where the secret references the old database instance until you run a full `pulumi up` or explicitly target the dependent secret.\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi uses **stack-level encryption** for secrets, distinct from the SOPS approach used in other stacks:\n\n- **Encryption at rest**: Values marked as secrets (via `pulumi config set --secret` or `Output.secret()`) are encrypted using the stack's configured secrets provider (default: Pulumi Service passphrase, AWS KMS, Azure KeyVault, etc.) before being stored in the state file\n- **State file storage**: In the state file, secrets appear as ciphertext with a special `{\"special\": \"secret\"}` wrapper:\n  ```json\n  {\n    \"special\": \"secret\",\n    \"ciphertext\": \"v1:abc123...\"\n  }\n  ```\n- **In-memory handling**: During program execution, secret values are decrypted and available as plaintext within the Pulumi engine process, but are tracked as `Secret` outputs\n- **CLI display**: `pulumi stack output` shows `[secret]` for secret values unless `--show-secrets` is passed\n- **Cross-stack references**: When one stack references another's secret output, the value remains encrypted in transit and at rest in the referencing stack\n\n**For this scenario:** The `ConfigSecret` resource (likely a Kubernetes Secret or AWS Secrets Manager secret created via Pulumi) will have its `data` fields encrypted in the Pulumi state file. The actual database connection string never appears in plaintext in the state file, satisfying the \"never stored in plaintext in Git\" requirement (assuming state files are committed or stored in the Pulumi Service backend).\n\n**Key distinction:** Unlike Terraform (which requires external SOPS or Vault integration for secret management), Pulumi's secret handling is built into the programming model\u2014any `Output<T>` can be wrapped with `.apply_secret()` or returned as a secret from a resource, and the engine automatically handles encryption without additional tooling.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-cuwj3pdy/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-cuwj3pdy/generated_0.json"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-python/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

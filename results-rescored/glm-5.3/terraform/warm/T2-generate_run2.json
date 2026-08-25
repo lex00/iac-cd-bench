@@ -1,0 +1,104 @@
+{
+  "model": "glm-5.3",
+  "task": "T2-generate",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\u001b[0mTerraform encountered problems during initialisation, including problems\n\u001b[31m\u2502\u001b[0m \u001b[0mwith the configuration, described below.\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mThe Terraform configuration must be valid before initialization so that\n\u001b[31m\u2502\u001b[0m \u001b[0mTerraform can determine which modules and providers need to be installed.\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mArgument or block definition required\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on main.tf line 28, in data \"aws_iam_policy_document\" \"least_privilege\":\n\u001b[31m\u2502\u001b[0m \u001b[0m  28:       \u001b[4m?\u001b[0m [var.bucket_arn, \"${var.bucket_arn}/*\"]\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mAn argument or block definition is required here.\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mInvalid single-argument block definition\u001b[0m\n\u001b[31m\u2502\u001b[0m"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "s/terraform/T2-generate/tests/test_task.py:10: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('dev.tfvars').exists\n     +      where PosixPath('dev.tfvars') = Path('dev.tfvars')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:18: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('prod.tfvars').exists\n     +      where PosixPath('prod.tfvars') = Path('prod.tfvars')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:22: AssertionError: assert False\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infrastructure.tf'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:26: FileNotFoundError: [Errno 2] No such file or directory: 'infrastructure.tf'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'prod.tfvars'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py:32: FileNotFoundError: [Errno 2] No such file or directory: 'prod.tfvars'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_infrastructure_tf_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_dev_tfvars_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_prod_tfvars_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_s3_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T2-generate/tests/test_task.py::test_rds_deletion_protection\n========================= 5 failed, 2 passed in 0.01s ==========================\n",
+      "passed_count": 2,
+      "total_count": 7,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 666,
+    "output": 3279
+  },
+  "content": "# Terraform Module: S3 + RDS + IAM\n\n## Structure\n\n```\n.\n\u251c\u2500\u2500 main.tf\n\u251c\u2500\u2500 variables.tf\n\u251c\u2500\u2500 outputs.tf\n\u251c\u2500\u2500 providers.tf\n\u251c\u2500\u2500 backend.tf\n\u251c\u2500\u2500 environments/\n\u2502   \u251c\u2500\u2500 dev.tfvars\n\u2502   \u2514\u2500\u2500 prod.tfvars\n\u2514\u2500\u2500 modules/\n    \u251c\u2500\u2500 s3_bucket/\n    \u251c\u2500\u2500 rds/\n    \u2514\u2500\u2500 iam_role/\n```\n\n---\n\n## Root\n\n### `providers.tf`\n\n```hcl\nterraform {\n  required_version = \">= 1.5.0\"\n\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n\nprovider \"aws\" {\n  region = var.aws_region\n}\n```\n\n### `backend.tf`\n\n```hcl\nterraform {\n  backend \"s3\" {\n    bucket         = \"mycompany-tfstate\"\n    key            = \"app/terraform.tfstate\"\n    dynamodb_table = \"tf-locks\"\n    encrypt        = true\n  }\n}\n```\n\n### `variables.tf`\n\n```hcl\nvariable \"environment\" {\n  description = \"Environment name (dev | prod)\"\n  type        = string\n\n  validation {\n    condition     = contains([\"dev\", \"prod\"], var.environment)\n    error_message = \"environment must be dev or prod.\"\n  }\n}\n\nvariable \"aws_region\" {\n  type    = string\n  default = \"us-east-1\"\n}\n\nvariable \"project\" {\n  type    = string\n  default = \"myapp\"\n}\n\nvariable \"db_instance_class\" {\n  type = string\n}\n\nvariable \"db_multi_az\" {\n  type = bool\n}\n\nvariable \"db_allocated_storage\" {\n  type = number\n}\n\nvariable \"replication_region\" {\n  description = \"Destination region for bucket replication (prod only). null disables.\"\n  type        = string\n  default     = null\n}\n\nvariable \"db_password\" {\n  description = \"Provided via SOPS-decrypted tfvars or env var \u2014 never committed\"\n  type        = string\n  sensitive   = true\n}\n\nvariable \"oidc_provider_url\" {\n  description = \"EKS OIDC issuer URL for IRSA trust\"\n  type        = string\n  default     = null\n}\n\nvariable \"oidc_namespace\" {\n  type    = string\n  default = \"default\"\n}\n\nvariable \"oidc_service_account\" {\n  type    = string\n  default = \"app-sa\"\n}\n```\n\n### `main.tf`\n\n```hcl\nmodule \"s3_bucket\" {\n  source = \"./modules/s3_bucket\"\n\n  name               = \"${var.project}-${var.environment}-assets\"\n  replication_region = var.replication_region\n  tags = {\n    Environment = var.environment\n    Project     = var.project\n    ManagedBy   = \"terraform\"\n  }\n}\n\nmodule \"rds\" {\n  source = \"./modules/rds\"\n\n  identifier          = \"${var.project}-${var.environment}\"\n  instance_class      = var.db_instance_class\n  multi_az            = var.db_multi_az\n  allocated_storage   = var.db_allocated_storage\n  password            = var.db_password\n  deletion_protection = true\n  tags = {\n    Environment = var.environment\n    Project     = var.project\n  }\n}\n\nmodule \"iam_role\" {\n  source = \"./modules/iam_role\"\n\n  name                  = \"${var.project}-${var.environment}-sa-role\"\n  oidc_provider_url     = var.oidc_provider_url\n  oidc_namespace        = var.oidc_namespace\n  oidc_service_account  = var.oidc_service_account\n  bucket_arn            = module.s3_bucket.bucket_arn\n  restrict_to_bucket    = true\n  tags = {\n    Environment = var.environment\n  }\n}\n```\n\n### `outputs.tf`\n\n```hcl\noutput \"bucket_name\" {\n  value = module.s3_bucket.bucket_name\n}\n\noutput \"bucket_arn\" {\n  value = module.s3_bucket.bucket_arn\n}\n\noutput \"db_endpoint\" {\n  value = module.rds.endpoint\n}\n\noutput \"db_connection_string\" {\n  value     = \"postgresql://${module.rds.username}:${var.db_password}@${module.rds.endpoint}/${module.rds.db_name}\"\n  sensitive = true\n}\n\noutput \"service_account_role_arn\" {\n  value = module.iam_role.role_arn\n}\n```\n\n---\n\n## Module: `modules/s3_bucket/`\n\n### `variables.tf`\n\n```hcl\nvariable \"name\" { type = string }\nvariable \"replication_region\" { type = string, default = null }\nvariable \"tags\" { type = map(string), default = {} }\n```\n\n### `main.tf`\n\n```hcl\nresource \"aws_s3_bucket\" \"this\" {\n  bucket = var.name\n  tags   = var.tags\n}\n\nresource \"aws_s3_bucket_versioning\" \"this\" {\n  bucket = aws_s3_bucket.this.id\n  versioning_configuration {\n    status = \"Enabled\"\n  }\n}\n\nresource \"aws_s3_bucket_server_side_encryption_configuration\" \"this\" {\n  bucket = aws_s3_bucket.this.id\n  rule {\n    apply_server_side_encryption_by_default {\n      sse_algorithm = \"aws:kms\"\n    }\n    bucket_key_enabled = true\n  }\n}\n\nresource \"aws_s3_bucket_public_access_block\" \"this\" {\n  bucket                  = aws_s3_bucket.this.id\n  block_public_acls       = true\n  block_public_policy     = true\n  ignore_public_acls      = true\n  restrict_public_buckets = true\n}\n\n# Cross-region replication (prod)\nresource \"aws_s3_bucket\" \"replica\" {\n  count  = var.replication_region != null ? 1 : 0\n  provider = aws.replica\n  bucket = \"${var.name}-replica\"\n  tags   = var.tags\n}\n\nresource \"aws_s3_bucket_versioning\" \"replica\" {\n  count   = var.replication_region != null ? 1 : 0\n  provider = aws.replica\n  bucket   = aws_s3_bucket.replica[0].id\n  versioning_configuration {\n    status = \"Enabled\"\n  }\n}\n\nresource \"aws_iam_role\" \"replication\" {\n  count = var.replication_region != null ? 1 : 0\n  name  = \"${var.name}-replication\"\n  assume_role_policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      Effect    = \"Allow\"\n      Principal = { Service = \"s3.amazonaws.com\" }\n      Action    = \"sts:AssumeRole\"\n    }]\n  })\n}\n\nresource \"aws_iam_role_policy\" \"replication\" {\n  count = var.replication_region != null ? 1 : 0\n  name  = \"replication\"\n  role  = aws_iam_role.replication[0].id\n  policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [\n      {\n        Effect   = \"Allow\"\n        Action   = [\"s3:GetReplicationConfiguration\", \"s3:ListBucket\"]\n        Resource = aws_s3_bucket.this.arn\n      },\n      {\n        Effect = \"Allow\"\n        Action = [\"s3:GetObjectVersionForReplication\", \"s3:GetObjectVersionAcl\", \"s3:GetObjectVersionTagging\"]\n        Resource = [\"${aws_s3_bucket.this.arn}/*\"]\n      },\n      {\n        Effect   = \"Allow\"\n        Action   = [\"s3:ReplicateObject\", \"s3:ReplicateDelete\", \"s3:ReplicateTags\"]\n        Resource = [\"${aws_s3_bucket.replica[0].arn}/*\"]\n      }\n    ]\n  })\n}\n\nresource \"aws_s3_bucket_replication_configuration\" \"this\" {\n  count     = var.replication_region != null ? 1 : 0\n  depends_on = [aws_s3_bucket_versioning.this]\n  role       = aws_iam_role.replication[0].arn\n  bucket     = aws_s3_bucket.this.id\n\n  rule {\n    status = \"Enabled\"\n    destination {\n      bucket        = aws_s3_bucket.replica[0].arn\n      storage_class = \"STANDARD\"\n    }\n  }\n}\n```\n\n### `outputs.tf`\n\n```hcl\noutput \"bucket_name\" { value = aws_s3_bucket.this.id }\noutput \"bucket_arn\"  { value = aws_s3_bucket.this.arn }\n```\n\n*(Also add `provider \"aws\" { alias = \"replica\" region = var.replication_region }` and pass `replica` provider via module `providers` block, or use `aws.replica` as shown.)*\n\n---\n\n## Module: `modules/rds/`\n\n### `main.tf`\n\n```hcl\nresource \"aws_db_subnet_group\" \"this\" {\n  name       = \"${var.identifier}-db-subnets\"\n  subnet_ids = var.subnet_ids\n  tags       = var.tags\n}\n\nresource \"aws_security_group\" \"this\" {\n  name   = \"${var.identifier}-db\"\n  vpc_id = var.vpc_id\n  tags   = var.tags\n\n  ingress {\n    from_port       = 5432\n    to_port         = 5432\n    protocol        = \"tcp\"\n    security_groups = var.allowed_security_groups\n  }\n\n  egress {\n    from_port   = 0\n    to_port     = 0\n    protocol    = \"-1\"\n    cidr_blocks = [\"0.0.0.0/0\"]\n  }\n}\n\nresource \"aws_db_instance\" \"this\" {\n  identifier     = var.identifier\n  engine         = \"postgres\"\n  engine_version = \"15\"\n  instance_class = var.instance_class\n\n  allocated_storage     = var.allocated_storage\n  max_allocated_storage = var.allocated_storage * 2\n  storage_encrypted     = true\n\n  db_name  = var.db_name\n  username = var.username\n  password = var.password\n\n  db_subnet_group_name   = aws_db_subnet_group.this.name\n  vpc_security_group_ids = [aws_security_group.this.id]\n  multi_az               = var.multi_az\n  publicly_accessible    = false\n\n  deletion_protection      = var.deletion_protection\n  backup_retention_period  = 7\n  skip_final_snapshot      = false\n  final_snapshot_identifier = \"${var.identifier}-final\"\n}\n```\n\n### `variables.tf`\n\n```hcl\nvariable \"identifier\"        { type = string }\nvariable \"instance_class\"    { type = string }\nvariable \"allocated_storage\" { type = number }\nvariable \"multi_az\"          { type = bool }\nvariable \"deletion_protection\" { type = bool }\nvariable \"password\"          { type = string, sensitive = true }\nvariable \"db_name\"           { type = string, default = \"appdb\" }\nvariable \"username\"          { type = string, default = \"appuser\" }\nvariable \"vpc_id\"            { type = string }\nvariable \"subnet_ids\"        { type = list(string) }\nvariable \"allowed_security_groups\" { type = list(string), default = [] }\nvariable \"tags\"              { type = map(string), default = {} }\n```\n\n### `outputs.tf`\n\n```hcl\noutput \"endpoint\"  { value = aws_db_instance.this.address }\noutput \"db_name\"   { value = aws_db_instance.this.db_name }\noutput \"username\"  { value = aws_db_instance.this.username }\n```\n\n---\n\n## Module: `modules/iam_role/`\n\n### `main.tf`\n\n```hcl\ndata \"aws_iam_policy_document\" \"trust\" {\n  statement {\n    effect  = \"Allow\"\n    actions = [\"sts:AssumeRoleWithWebIdentity\"]\n\n    principals {\n      type        = \"Federated\"\n      identifiers = [\"arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/${replace(var.oidc_provider_url, \"https://\", \"\")}\"]\n    }\n\n    condition {\n      test     = \"StringEquals\"\n      variable = \"${replace(var.oidc_provider_url, \"https://\", \"\")}:sub\"\n      values   = [\"system:serviceaccount:${var.oidc_namespace}:${var.oidc_service_account}\"]\n    }\n  }\n}\n\ndata \"aws_iam_policy_document\" \"least_privilege\" {\n  statement {\n    effect = \"Allow\"\n    actions = [\n      \"s3:GetObject\",\n      \"s3:PutObject\",\n      \"s3:ListBucket\",\n    ]\n    resources = var.restrict_to_bucket\n      ? [var.bucket_arn, \"${var.bucket_arn}/*\"]\n      : [\"*\"] # dev only\n  }\n}\n\nresource \"aws_iam_role\" \"this\" {\n  name               = var.name\n  assume_role_policy = data.aws_iam_policy_document.trust.json\n  tags               = var.tags\n}\n\nresource \"aws_iam_role_policy\" \"this\" {\n  name   = \"${var.name}-policy\"\n  role   = aws_iam_role.this.id\n  policy = data.aws_iam_policy_document.least_privilege.json\n}\n```\n\n### `outputs.tf`\n\n```hcl\noutput \"role_arn\" { value = aws_iam_role.this.arn }\n```\n\n---\n\n## Environment configs\n\n### `environments/dev.tfvars`\n\n```hcl\nenvironment        = \"dev\"\naws_region         = \"us-east-1\"\ndb_instance_class  = \"db.t3.micro\"\ndb_multi_az        = false\ndb_allocated_storage = 20\nreplication_region = null\n```\n\n### `environments/prod.tfvars`\n\n```hcl\nenvironment        = \"prod\"\naws_region         = \"us-east-1\"\ndb_instance_class  = \"db.t3.medium\"\ndb_multi_az        = true\ndb_allocated_storage = 50\nreplication_region = \"us-west-2\"\n```\n\nDB password is supplied at plan/apply time from SOPS: `sops -d secrets/prod.yaml > /tmp/prod-secrets.tfvars && terraform apply -var-file=environments/prod.tfvars -var-file=/tmp/prod-secrets.tfvars`\n\n---\n\n## Usage (workspaces)\n\n```bash\nterraform workspace new dev\nterraform workspace select dev\nterraform init\nterraform apply -var-file=environments/dev.tfvars -var=\"db_password=$DB_PASSWORD\"\n\nterraform workspace select prod\nterraform apply -var-file=environments/prod.tfvars -var=\"db_password=$(sops -d --extract '[\"db_password\"]' secrets/prod.yaml)\"\n```\n\n**Isolation note:** with a single S3 backend, use `key = \"app/${terraform.workspace}/terraform.tfstate\"` (or a `prefix` in the backend config) so dev/prod state files are fully separate \u2014 changing prod never touches dev state.\n\n## Acceptance criteria mapping\n\n- \u2705 Bucket: versioning, SSE-KMS with bucket key, public access blocked, replication in prod\n- \u2705 RDS: deletion protection, 7-day backups, encrypted storage, `publicly_accessible = false`\n- \u2705 Secret: passed as sensitive var from SOPS, never committed\n- \u2705 IAM: OIDC-trust role scoped to one service account, actions limited to specific S3 ops (no wildcards on prod)\n- \u2705 Environments: separate tfvars + workspaces/state keys \u2192 independent deployability",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/providers.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/backend.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/variables.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/main.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/outputs.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/variables.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/main.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/outputs.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/main.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/variables.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/outputs.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/main.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/outputs.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/environments/dev.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/environments/prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pdw28z6w/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 3,
+    "completeness": 0.2857142857142857,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/terraform/warm/T2-generate_run2.json",
+    "published_score": {
+      "correctness": 0.0,
+      "completeness": 0.2857142857142857,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.2857142857142857
+    },
+    "published_composite_no_idiom": 0.3214285714285714,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 3,
+      "completeness": 0.2857142857142857,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3214285714285714,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 7757
+  },
+  "content": "## First, a caveat on what I can actually see\n\nThe rendered diff itself isn't in my context \u2014 I have the four-line prose summary of it, not file paths, hunk contents, or which overlay each change lands in. So treat the below as a review of the *described* findings plus the verification steps I'd run against the real diff. Two of the items change severity substantially depending on details I can't see, and I've flagged where.\n\n---\n\n## Findings, ranked\n\n### 1. CRITICAL \u2014 Plaintext DB password in deployment env vars\n\nViolates acceptance criterion 3 (\"never stored in plaintext in Git\").\n\nThe reason I rank this above the S3 policy: the S3 exposure is *pending* \u2014 it activates on merge and reverts on rollback. The credential exposure has **already happened**. The moment that branch was pushed, the secret is in git history, in every clone, in the CI runner's checkout cache, in any fork, and in the PR's diff view in your forge's database. `git revert` does not remediate this. Neither does force-pushing a rewritten branch, once anyone has fetched it.\n\n**Required actions, in order:**\n\n1. **Rotate the credential now**, before any code discussion. Assume compromised.\n2. Fix forward with a SOPS-encrypted Secret (do *not* block on history rewriting \u2014 rotation is the real control).\n3. Optionally scrub history afterward, but treat it as hygiene, not remediation.\n\n**knr-ops idiom:**\n\n```yaml\n# apps/base/web/secret.enc.yaml  (encrypted with age; only stringData values encrypted)\napiVersion: v1\nkind: Secret\nmetadata:\n  name: web-db\ntype: Opaque\nstringData:\n  DATABASE_URL: ENC[AES256_GCM,data:...,type:str]\n```\n\n```yaml\n# clusters/prod/apps.yaml \u2014 Flux Kustomization\nspec:\n  decryption:\n    provider: sops\n    secretRef:\n      name: sops-age\n```\n\n```yaml\n# deployment.yaml\nenv:\n  - name: DATABASE_URL\n    valueFrom:\n      secretKeyRef: { name: web-db, key: DATABASE_URL }\n```\n\nIn `.sops.yaml`, use **separate creation_rules and keys per environment** so the dev reconciler's age key cannot decrypt prod secrets. That's the cheapest reinforcement of criterion 7 you'll get.\n\n**One thing to check before you treat this as a real leak:** with konflate hydration, is the diff preview showing the *source* file or the *rendered* output? If the source is `secret.enc.yaml` and the preview is post-decryption, the credential may never have been in Git \u2014 and the actual finding becomes \"our rendered-diff pipeline leaks plaintext secrets into PR views and CI logs,\" which is its own critical bug, just a different one. Confirm which before you page anyone.\n\n---\n\n### 2. CRITICAL \u2014 S3 bucket policy granting public read\n\nViolates acceptance criterion 1 (\"no public access\").\n\nSeverity depends on two things I can't see:\n\n- **Bucket contents.** If this is the app-assets bucket holding only fingerprinted static files, it's a misconfiguration. If it holds uploads, exports, or backups, this is a data breach on merge. If the latter, it outranks finding #1.\n- **Block Public Access state.** If account- or bucket-level BPA is enforced with `blockPublicPolicy: true`, this policy will be *rejected at apply time* and is inert. Still block the merge \u2014 it's a landmine that arms itself the day someone disables BPA for an unrelated reason. But it's not an active exposure.\n\nNote the diagnostic: if the PR author expects this policy to apply successfully, that implies BPA is off or is being turned off somewhere in this diff. Grep for it.\n\n**Also check the policy's blast radius,** which the summary doesn't specify:\n\n- `s3:GetObject` on `bucket/*` \u2014 read of known keys.\n- `s3:ListBucket` on the bucket ARN \u2014 enumeration. Much worse; turns \"you need the URL\" into \"here's the index.\"\n- Any `s3:Put*` / `s3:Delete*` with `Principal: \"*\"` \u2014 anonymous write. Malware hosting and unbounded billing. Escalate to incident immediately if present.\n\n**The correct pattern** for the spec's CloudFront + ACM exposure is Origin Access Control, not public read:\n\n```json\n{\n  \"Sid\": \"AllowCloudFrontOAC\",\n  \"Effect\": \"Allow\",\n  \"Principal\": { \"Service\": \"cloudfront.amazonaws.com\" },\n  \"Action\": \"s3:GetObject\",\n  \"Resource\": \"arn:aws:s3:::app-assets-prod/*\",\n  \"Condition\": {\n    \"StringEquals\": {\n      \"AWS:SourceArn\": \"arn:aws:cloudfront::<acct>:distribution/<dist-id>\"\n    }\n  }\n}\n```\n\nPlus explicit BPA on the bucket resource (all four flags true). The `AWS:SourceArn` condition is the part people drop \u2014 without it you've granted read to *every* CloudFront distribution in *every* AWS account.\n\n---\n\n### 3. WARNING \u2014 Missing resource limits\n\nNot in the acceptance criteria; genuine but availability-scoped. An unbounded container can exhaust node memory, trigger node pressure, and evict co-scheduled pods. Noisy-neighbor DoS, not confidentiality or integrity.\n\nTwo corrections to how this is usually written up:\n\n**Missing *requests* and missing *limits* are different bugs.** No requests \u2192 the pod is `BestEffort` QoS and is first in line for the OOM killer under node pressure, plus the scheduler can't bin-pack. That's often the more damaging half.\n\n**Don't blanket-demand CPU limits.** For a latency-sensitive stateless web app, CPU limits enforced via CFS quota cause throttling that shows up as p99 tail latency, and many teams omit them deliberately. Memory limits are non-negotiable (memory is incompressible); CPU limits are a judgment call.\n\n```yaml\nresources:\n  requests:\n    cpu: 100m\n    memory: 256Mi\n  limits:\n    memory: 256Mi   # == request \u2192 Guaranteed-ish; no OOM surprise from overcommit\n    # cpu limit intentionally omitted \u2014 see ADR on CFS throttling\n```\n\nBefore calling this a defect: check whether a `LimitRange` in the target namespace already injects defaults, or whether Kyverno/Gatekeeper has a `require-resources` policy. If either exists, the manifest is fine as-is. If neither does, add a `LimitRange` as a backstop so this class of finding stops reaching code review.\n\n**Merge posture:** shouldn't block a dev-only change. Should block prod.\n\n---\n\n### 4. INFO \u2014 RDS instance class change, and things the summary calls clean\n\nI wouldn't accept \"no issue\" on the RDS change without checking three things:\n\n**Which directory is it in?** If the class change is in `base/` rather than `overlays/{dev,prod}/`, it silently retargets *both* environments and violates criterion 7. This is the single highest-leverage question in the whole review, and it applies to all three other changes too. A base-layer change to the S3 policy means you're exposing dev *and* prod.\n\n**Does it still match spec?** Dev `db.t3.micro` single-AZ, prod `db.t3.medium` multi-AZ encrypted. A prod downsize below `db.t3.medium` is a spec violation even if it's not a security one.\n\n**Since the PR is already touching the RDS resource** \u2014 confirm the diff doesn't remove or flip: `deletionProtection: true`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false`, `storageEncrypted: true`. Criterion 2. Field paths differ by provider (`spec.forProvider.*` under Crossplane provider-aws, `spec.*` under ACK), so grep accordingly.\n\nOperationally, an instance class change forces a reboot \u2014 failover on multi-AZ prod, hard downtime on single-AZ dev. Change-management concern, not security, but worth a maintenance window note.\n\n---\n\n## Merge decision\n\n**Block.** Two criticals.\n\n**Before merge:**\n\n- [ ] Rotate the DB credential; confirm the old one is revoked at the DB, not just replaced in Git\n- [ ] Replace env-var password with SOPS-encrypted Secret + `secretKeyRef`; confirm per-env age keys in `.sops.yaml`\n- [ ] Replace public bucket policy with OAC + `AWS:SourceArn` condition; assert all four BPA flags true\n- [ ] Confirm which overlay each hunk targets; anything in `base/` needs explicit justification\n- [ ] Add resource requests + memory limit (or confirm a `LimitRange` covers it)\n- [ ] Verify the RDS diff doesn't touch deletion protection / backup retention / public accessibility\n\n**One process note:** review the **hydrated** output, not just the source diff \u2014 `kustomize build overlays/dev` and `overlays/prod` (or `flux build kustomization`), diffed against the current rendered state. With konflate in the path, an overlay patch can reintroduce something the base removed, and a source-level diff won't show it. If your CI doesn't already post rendered-manifest diffs for both environments on every PR, that's the highest-value thing to add after this one merges.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-qvg_rmoh/secret.enc.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-qvg_rmoh/generated_1.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/knr-ops/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

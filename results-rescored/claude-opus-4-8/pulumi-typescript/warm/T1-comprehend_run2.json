@@ -1,0 +1,92 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1091,
+    "output": 1873
+  },
+  "content": "# Pulumi Preview Behavior: Replace on RDS\n\n## 1. Which property triggered the replace?\n\nFor an RDS PostgreSQL instance, a **replace** (rather than an in-place update) is triggered by properties that AWS cannot mutate on a live instance. Common culprits in this scenario:\n\n| Property | Why it forces replace |\n|---|---|\n| `engine` / major `engineVersion` jump | Engine change can't be done in place |\n| `dbName` (`name`) | The initial database name is immutable |\n| `availabilityZone` | Moving an instance's AZ requires recreation |\n| `kmsKeyId` / `storageEncrypted` | Toggling encryption or changing the KMS key requires a new instance |\n| `snapshotIdentifier` | Restoring from a different snapshot |\n| `characterSetName` | Immutable at creation |\n\n**How to read the preview** \u2014 Pulumi tells you exactly which one:\n\n```\n~ aws:rds/instance:Instance db  replace  [diff: ~storageEncrypted]\n    ++aws:rds/instance:Instance db  create replacement\n    +-aws:rds/instance:Instance db  replace\n```\n\nThe property annotated with the `replace` diff (e.g. `storageEncrypted`) is the trigger. Run with detail to confirm:\n\n```bash\npulumi preview --diff\n```\n\nLook for the property marked with `(requires replacement)` / listed under `replace [...]`. In the dev\u2192prod delta of this spec, flipping **`storageEncrypted: false \u2192 true`** (dev is unencrypted, prod is encrypted) is the classic replace trigger \u2014 but note this is a *different stack*, so it wouldn't actually replace across environments (see #4 on isolation).\n\n> \u26a0\ufe0f A replace on RDS with `deletionProtection: true` (required by the spec) will **fail** unless you handle it. Pulumi will attempt create-before-delete or delete-before-create; deletion protection blocks the delete. You may need `pulumi state` intervention, a manual protection toggle, or `ignoreChanges`.\n\n---\n\n## 2. What does `pulumi up --target` skip?\n\n`--target <urn>` restricts the operation to the **specified resource(s) only**. It **skips**:\n\n- **All non-targeted resources** \u2014 they are not created, updated, or deleted, even if they have pending diffs.\n- **Downstream dependents** \u2014 unless you add `--target-dependents`, resources that depend on the target are *not* updated.\n\n```bash\npulumi up --target 'urn:pulumi:prod::app::aws:rds/instance:Instance::db'\n```\n\nImportant caveats:\n\n- Targeting does **not** skip the dependency *graph evaluation* \u2014 Pulumi still reads upstream resources needed to compute the target's inputs.\n- It can leave your stack in a **partially-applied / drifted** state relative to the program. Pulumi warns about this.\n- New resources referenced by the target but not yet created will error unless also targeted (or `--target-dependents` is used).\n\nSo: `--target` skips *actuation* of everything outside the target set, not *evaluation* of the program.\n\n---\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi treats secrets as first-class, tainted values:\n\n**Encryption at rest**\n- Secret config (`pulumi config set --secret dbConnectionString ...`) and secret outputs are stored **encrypted in the stack state** using the stack's encryption provider (default Pulumi service key, or KMS/passphrase/Vault/etc.).\n- Values in `Pulumi.<stack>.yaml` appear as `secure:` ciphertext \u2014 never plaintext. This satisfies AC #3.\n\n```yaml\nconfig:\n  app:dbConnectionString:\n    secure: AAABAJ...ciphertext...\n```\n\n**Taint propagation**\n- Any output computed from a secret input **inherits the secret marking automatically**. If you interpolate a secret DB password into a connection string, that string is also secret.\n\n```ts\nconst conn = pulumi.secret(\n  pulumi.interpolate`postgres://${user}:${password}@${db.address}/${dbName}`\n);\nexport const connectionString = conn; // marked secret in state + CLI\n```\n\n**CLI / display behavior**\n- In `preview`, `up`, and `stack output`, secret values are masked as `[secret]`.\n- To reveal explicitly: `pulumi stack output connectionString --show-secrets`.\n\n**Forcing a secret**\n```ts\nconst s = new pulumi.Config().requireSecret(\"dbConnectionString\");\n// or\nexport const x = pulumi.secret(rawValue);\n```\n\n**Gotchas**\n- Secrets are encrypted **in state**, but if you `export const` a secret and consume it as a **stack reference** in another stack, the consuming stack must also treat it as secret (Pulumi preserves this).\n- Logging a secret via `console.log`/`.apply(v => ...)` **can leak it** \u2014 the taint doesn't follow values into arbitrary JS side effects.\n\n---\n\n### TL;DR\n1. The property flagged `(requires replacement)` in `pulumi preview --diff` (here likely `storageEncrypted`/`kmsKeyId`/`dbName`/`availabilityZone`) \u2014 and watch out for `deletionProtection` blocking the replace.\n2. `--target` skips actuation of all non-targeted resources (use `--target-dependents` to include downstream), risking partial/drifted state.\n3. Secrets are encrypted in stack state, masked as `[secret]` in CLI output, and their secret-ness propagates automatically to derived outputs.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-deogn_a5/Pulumi.<stack>.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-deogn_a5/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-deogn_a5/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-deogn_a5/generated_1.ts"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/pulumi-typescript/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

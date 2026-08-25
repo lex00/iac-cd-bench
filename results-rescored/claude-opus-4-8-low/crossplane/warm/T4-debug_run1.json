@@ -1,0 +1,90 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 4 resources found in 4 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 4\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1854,
+    "output": 1803
+  },
+  "content": "Here are the corrected files. The key issues: the patch referenced a non-existent field (and the XRD stores the full instance class like `db.t3.medium`, so the `Format` transform was also wrong), and readiness had no checks.\n\n## Fix\n\n**composition.yaml**\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n            # Acceptance criteria: deletion protection, backups >= 7 days, not public\n            deletionProtection: true\n            backupRetentionPeriod: 7\n            publiclyAccessible: false\n          providerConfigRef:\n            name: default\n      patches:\n        # FIX: reference the field that actually exists on the XR.\n        # instanceClass already holds a full value like \"db.t3.medium\",\n        # so no Format transform is needed.\n        - fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n        - fromFieldPath: spec.deletionProtection\n          toFieldPath: spec.forProvider.deletionProtection\n      # FIX: add ReadinessChecks so the Composition can reach Ready.\n      readiness:\n        policy: MatchConditions\n        matchConditions:\n          - type: Ready\n            status: \"True\"\n```\n\n**xrd.yaml** (unchanged logic, shown for clarity \u2014 the schema already matches `spec.instanceClass`):\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  names:\n    kind: XAWSWebService\n    plural: xawswebservices\n  versions:\n    - name: v1alpha1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                instanceClass:\n                  type: string\n                  default: db.t3.medium\n                deletionProtection:\n                  type: boolean\n                  default: true\n              required:\n                - instanceClass\n  claimNames:\n    kind: AWSWebService\n    plural: awswebservices\n```\n\n## What changed and why\n\n1. **`fromFieldPath` defect** \u2014 The patch pointed at `spec.parameters.storageClass`, which doesn't exist in the XRD schema. With no source value the patch produced nothing, so `instanceClass` was never set on the RDS resource. Corrected to `spec.instanceClass`, matching the field the XRD actually defines.\n\n2. **`Format` transform removed** \u2014 The XRD's `instanceClass` already stores a complete value (`db.t3.medium`). Applying `\"db.t3.%s\"` would have produced `db.t3.db.t3.medium`. Since the field is already fully-formed, the transform is dropped. (If you'd rather the XR only carry the size suffix like `medium`, keep the transform and change the XRD default to `medium` \u2014 but be consistent.)\n\n3. **Missing `ReadinessChecks` defect** \u2014 `readiness: {}` gave Crossplane no signal for when the RDS instance is Ready, so the Composition never propagated readiness upward. Added a `MatchConditions` check on the provider's `Ready` condition so the composite becomes Ready only when the underlying RDS instance is.\n\n**Note:** the seed `Composition` used `mode: Pipeline` but declared resources under the legacy `spec.resources` (Resources mode). I kept `resources` and the patch/readiness fields as-is per the seed's structure. If you truly intend Pipeline mode, these would move into a `function-patch-and-transform` step instead \u2014 let me know and I'll convert it.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-4gwqowpv/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-4gwqowpv/generated_1.yaml"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 2,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7777777777777778
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/crossplane/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 2,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7777777777777778
+    },
+    "corrected_composite_no_idiom": 0.875,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

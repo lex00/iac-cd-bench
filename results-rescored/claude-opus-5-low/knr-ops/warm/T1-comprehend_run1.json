@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 2243,
+    "output": 2749
+  },
+  "content": "## 0. First, a caveat about the slice\n\nTwo things in the prompt can't be resolved from the files shown, and they change the answers materially:\n\n- **Where the RDS `instanceClass` change lives.** If it's in `infra/rds/instance.yaml` (the base), it hits *both* overlays \u2014 dev silently gets promoted from `db.t3.micro` to `db.t3.medium`, which breaks acceptance criterion #7 (changing prod must not modify dev) and the sizing table. If it's in `overlays/prod/`, it's correct and dev is untouched. Given the file list shows `infra/rds/instance.yaml` as the only RDS manifest, **the base is the likely location, and this is the bug to catch in review.** The dev overlay would need a counter-patch pinning `db.t3.micro`, or the base should stay micro and prod should patch up.\n- **The actual `dependsOn` graph.** `flux/kustomizations.yaml` is listed but its contents aren't in the slice, so ordering below is the *intended* pattern, not a reading of your file. Verify before relying on it.\n\nAlso: I have no way to verify `konflate render` from what's here \u2014 the doc snippet mentions it, but treat the preview step as \"whatever dry-run tool your repo actually uses\" (`flux build kustomization --dry-run`, `kustomize build | kubectl diff -f -`).\n\n---\n\n## 1. What reconciles, and in what order\n\nMerge itself does nothing. The sequence is:\n\n1. **`GitRepository` source** polls on its interval (or a webhook fires) and fetches the new commit. Nothing else moves until the source's `Ready` condition flips to the new revision.\n2. **Kustomization controllers** wake on *their own* intervals and see the new source revision. They do **not** all fire simultaneously \u2014 `dependsOn` gates them.\n3. Typical order in this repo shape:\n   - `clusters` (CAPI/CAPA) \u2014 unchanged by this PR, reconciles as a no-op but still must report Ready if others depend on it.\n   - `infra` \u2014 the ACK `Bucket` (new) and `Instance` (modified) get applied. These are the two AWS-touching changes.\n   - `apps` / overlays \u2014 the prod replica patch lands on the Deployment.\n4. **ACK controllers** then reconcile the CRs to AWS *asynchronously*. Flux reports success as soon as the `Instance` object is accepted by the API server; the RDS modification may still be in progress for many minutes afterward. **Flux \"green\" \u2260 AWS converged.** This is the single most common misread in ACK+Flux setups.\n\nDev and prod overlays are separate Kustomizations reconciling independently \u2014 there is no ordering between them.\n\n## 2. Does the RDS instance get recreated?\n\n**No.** `db.t3.micro` \u2192 `db.t3.medium` is a **modify-in-place** operation. ACK issues `ModifyDBInstance`; AWS performs a compute resize, not a replace. The instance identifier, endpoint DNS, storage, and data all persist.\n\nWhat you *do* get:\n- A **reboot / brief outage** unless `applyImmediately: false` defers it to the maintenance window. Check which the manifest sets \u2014 this determines whether prod takes an unplanned blip the moment Flux reconciles.\n- Multi-AZ (which prod should have per spec) makes this a failover rather than a hard outage \u2014 shorter, but still a connection reset.\n\nFields that *would* force replacement are things like `dbInstanceIdentifier`, `engine`, or `availabilityZone` \u2014 none of which this PR touches. And `deletionProtection: true` (required by acceptance criterion #2) means a replace attempt would **stall rather than proceed**, which is the desired failure mode.\n\n## 3. If the S3 bucket manifest is deleted from Git\n\nThis depends entirely on **`prune: true`** on the owning Kustomization:\n\n- **`prune: true`** \u2192 Flux garbage-collects the `Bucket` CR. ACK sees the deletion and, by default, **deletes the actual S3 bucket**. If the bucket is non-empty, the AWS `DeleteBucket` call fails and the CR hangs on its finalizer \u2014 you get a stuck terminating resource and a red Kustomization.\n- **`prune: false`** \u2192 the CR is orphaned in-cluster. The bucket survives, but it's now unmanaged drift: in the cluster, not in Git.\n\nBecause the spec requires versioning, deletion is worse than it sounds \u2014 versioned buckets need every version and delete marker purged before removal.\n\n**Mitigation:** set the ACK deletion policy annotation to `retain` on stateful resources (`services.k8s.aws/deletion-policy: retain`). Buckets and RDS instances should never be deletable by a Git revert. This is worth confirming is present on both the new bucket and the RDS instance.\n\n## 4. The prod-only replica change\n\nThis is the case kustomize handles cleanly. The `replicas: 4` patch lives in `overlays/prod/kustomization.yaml` and targets the app Deployment by name/kind. When `kustomize build overlays/prod` runs, the rendered Deployment has `replicas: 4`; `overlays/dev` renders from the same base with no such patch and is byte-identical to before.\n\nSince dev and prod are separate Kustomizations, **the dev reconciliation is a genuine no-op** \u2014 same rendered output, same revision applied, no pod churn. That's the environment isolation the spec asks for, and it's the model the RDS change should have followed.\n\nOne caveat: if an HPA also manages this Deployment, a hardcoded `replicas` in the manifest and the HPA will fight, with Flux re-asserting 4 on every reconcile. Worth checking.\n\n## 5. What `dependsOn` buys you\n\n`dependsOn` is **ordering and gating, not data flow**. A Kustomization with `dependsOn` will not apply until its dependencies report `Ready`.\n\nWhy it matters here:\n- **CRDs before CRs.** The ACK `Bucket`/`Instance` CRDs must exist before `infra` applies those manifests. Without gating, the first reconcile after a fresh install fails with \"no matches for kind Bucket\" and you rely on retry-on-interval to eventually succeed \u2014 noisy and slow.\n- **Cluster before workloads.** The CAPA cluster must be Ready before app manifests target it.\n- **Blast-radius control.** If `infra` fails, dependents don't apply, so you don't get a half-deployed state.\n\nTwo limits to be honest about:\n- **`dependsOn` does not wait for AWS.** It waits for the Kustomization to be Ready, which (unless `wait: true` and healthChecks are configured against the ACK resource's `ACK.ResourceSynced` condition) means \"manifests applied,\" not \"RDS resized.\" If the app depends on the new bucket actually existing, you need explicit health checks, not just `dependsOn`.\n- **It does not create rollback ordering.** On revert, Flux does not tear down in reverse dependency order.\n\n---\n\n## Review recommendations for PR #42\n\n1. **Confirm the RDS change is in the prod overlay, not the base.** If it's in the base, dev gets resized too \u2014 reject or add a dev counter-patch.\n2. **Check `applyImmediately`** on the RDS `Instance` \u2014 decide consciously whether prod takes the reboot now or at the maintenance window.\n3. **Verify `deletion-policy: retain`** on the new S3 `Bucket` and the RDS `Instance`.\n4. **Confirm the new bucket meets criteria #1** \u2014 versioning, SSE, public access block. A new bucket manifest is exactly where these get forgotten.\n5. **Dry-run both overlays** and diff, to prove dev's render is unchanged.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/knr-ops/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

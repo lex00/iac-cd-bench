@@ -1,0 +1,95 @@
+{
+  "model": "qwen36-local",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/generated_2.ts(5,32): error TS1109: Expression expected.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 657,
+    "output": 3982
+  },
+  "content": "\n\nThe preview crash you're seeing is a classic Pulumi runtime error. TypeScript's type checker passes because `Promise<T>`, `Output<T>`, and plain values can all satisfy generic interfaces, but Pulumi's engine builds a **strict dependency graph (DAG)** at runtime. If async logic or `pulumi.output()` breaks graph tracking, `preview` fails with `async misuse` or `cannot wrap a promise in output`.\n\nBelow is a targeted fix guide aligned with your canonical scenario.\n\n---\n\n### \ud83d\udd0d Why `tsc` Passes but Preview Crashes\n- `pulumi.output()` expects a **synchronously resolvable value** or an existing `Output<T>`. Passing a `Promise` or `async` function breaks Pulumi's ability to track resource dependencies.\n- `await` on `Output<T>` outside of `pulumi.run(async () => { ... })` tears the DAG apart. Pulumi sees the resolved value but loses the reference to the source resource, causing preview crashes or missing dependencies.\n- Redundant wrapping (e.g., `pulumi.output(alreadyAnOutput)`) or mixing sync/async in resource inputs confuses the computation graph.\n\n---\n\n### \ud83d\udee0\ufe0f Common Anti-Patterns & Fixes\n\n#### 1. \u274c Wrapping Promises or Async Results in `pulumi.output()`\n```ts\n// WRONG: Preview crashes\nconst secret = await getSecretFromVault();\nconst dbPassword = pulumi.output(secret);\n\n// OR\nconst rds = new aws.rds.Instance(\"db\", {\n  password: pulumi.output(fetchPasswordAsync()) // Promise passed directly\n});\n```\n\n\u2705 **FIX**: Use Pulumi's native secret handling or `Output.fromPromise()` (only if unavoidable).\n```ts\n// \u2705 Idiomatic: Use ConfigSecret or data source\nconst password = pulumi.config.getSecret(\"dbPassword\"); // Returns Output<string>\n\n// \u2705 If you MUST call an async API:\nconst password = pulumi.Output.fromPromise(fetchPasswordAsync());\n// Note: fromPromise() breaks some DAG optimizations. Prefer config/data sources.\n```\n\n#### 2. \u274c `await` on `Output<T>` in Resource Constructors\n```ts\n// WRONG: Breaks DAG tracking\nconst bucket = new aws.s3.Bucket(\"assets\", {});\nnew aws.s3.BucketPolicy(\"policy\", {\n  bucket: await bucket.id, // \u274c Tears dependency graph\n  policy: JSON.stringify({ ... })\n});\n```\n\n\u2705 **FIX**: Pass `Output<T>` directly. Use `.apply()` for transformations.\n```ts\nnew aws.s3.BucketPolicy(\"policy\", {\n  bucket: bucket.id, // \u2705 Output flows through\n  policy: bucket.id.apply(id => JSON.stringify({\n    Effect: \"Allow\",\n    Principal: { AWS: \"*\" },\n    Action: [\"s3:GetObject\"],\n    Resource: [`arn:aws:s3:::${id}/*`]\n  }))\n});\n```\n\n#### 3. \u274c Redundant/Incorrect `pulumi.output()` Wrapping\n```ts\n// WRONG: getRegion() already returns Output<string>\nconst region = pulumi.output(pulumi.getRegion());\n\n// WRONG: async function returns a Promise, not an Output\nconst env = pulumi.output(async () => process.env.PULUMI_STACK || \"dev\");\n```\n\n\u2705 **FIX**: Use synchronous config or `Output.create()` when needed.\n```ts\n// \u2705 Config is synchronous and returns Output<T>\nconst region = pulumi.getRegion();\nconst env = pulumi.getStack(); // Output<string>, no wrapping needed\n\n// \u2705 If you need runtime env vars (discouraged in Pulumi):\nconst env = pulumi.output(process.env.PULUMI_STACK || \"dev\");\n```\n\n---\n\n### \ud83e\udde9 Scenario-Specific Mapping (Your Spec)\n\n| Resource | Idiomatic Pulumi TS Pattern |\n|----------|-----------------------------|\n| **S3 Bucket** | `new aws.s3.Bucket(\"assets\", { versioning: { enabled: true }, serverSideEncryptionConfiguration: { ... }, publicAccessBlock: { blockPublicAcls: true, ... } })` |\n| **RDS** | `new aws.rds.Instance(\"db\", { masterPassword: password, publiclyAccessible: false, deletionProtection: true, backupRetentionPeriod: 7, ... })` |\n| **Secret** | `pulumi.config.getSecret(\"dbConnectionString\")` or `aws.secretsmanager.getSecretValue({ secretId: \"...\" }, { async: true }).secretString` |\n| **IAM/OIDC** | `new aws.iam.Role(\"app\", { assumeRolePolicy: bucket.canonicalUserArn.apply(...) })` |\n| **CloudFront/ALB** | `cert.arn.apply(arn => ({ listener: { port: 443, protocol: \"HTTPS\", sslPolicy: \"ELBSecurityPolicy-TLS13-1-2-2021-09\", defaultActions: [{ type: \"forward\", targetGroupArn: tg.arn }] } }) )` |\n| **Env Isolation** | Use `dev.yaml`/`prod.yaml` stack configs. Access via `pulumi.config.get(\"instanceType\")`, `pulumi.config.getObject(\"nodeGroup\")`, etc. No conditionals in resource constructors. |\n\n---\n\n### \ud83d\udd0e Debug Checklist\n1. **Search your codebase** for:\n   - `await ` followed by a resource property (e.g., `await bucket.id`)\n   - `pulumi.output(async` or `pulumi.output(getXxxAsync())`\n   - Double-wrapping: `pulumi.output(outputVar)` or `pulumi.output(pulumi.getRegion())`\n2. **Replace** all `await Output<T>` in resource args with direct `Output<T>` or `.apply()`.\n3. **Remove redundant `pulumi.output()`** calls. Pulumi automatically wraps plain values when passed to resources.\n4. **Run with verbose logging** to pinpoint the exact DAG break:\n   ```bash\n   pulumi preview --logtostderr -v=9 2>&1 | grep -i \"async\\|output\\|dAG\"\n   ```\n5. **Verify stack configs** are loaded synchronously:\n   ```ts\n   const config = new pulumi.Config();\n   const instanceType = config.require(\"instanceType\"); // string, not Output\n   const replicaCount = config.requireNumber(\"replicas\"); // number\n   ```\n\n---\n\n### \ud83d\udca1 Pro Tip: When You *Must* Use Async\nIf you're integrating legacy APIs or external secrets managers:\n```ts\n// Only use this pattern when unavoidable\nconst secretValue = pulumi.Output.fromPromise(async () => {\n  const res = await fetch(\"https://vault.internal/secret\");\n  return (await res.json()).data.password;\n});\n\n// Then pass directly:\nnew aws.rds.Instance(\"db\", { password: secretValue });\n```\n\u26a0\ufe0f `Output.fromPromise()` prevents Pulumi from inferring dependencies statically. Prefer `pulumi.ConfigSecret`, `aws.secretsmanager.getSecretValue`, or `vault.readSecret` (which return `Output<T>` natively).\n\nApply these patterns to your `index.ts`, and the preview will stabilize. If you share the exact line(s) triggering the crash, I can give a precise diff.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/generated_2.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/generated_3.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/generated_4.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lz3d3jtj/generated_5.ts"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.42857142857142855
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.42857142857142855
+    },
+    "corrected_composite_no_idiom": 0.5,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

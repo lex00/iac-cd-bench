@@ -1,0 +1,92 @@
+{
+  "model": "gpt-5.4",
+  "task": "T6-semantics",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "g/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q1_protect_blocks_destroy PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q2_logical_rename_replaces FAILED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q3_secret_propagates_to_export PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q4_delete_before_replace PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q5_stack_config_wins PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q6_outputs_unknown_at_preview PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q7_fstring_prints_output_repr PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q2: expected replace, got 'no-op'\n    assert 'replace' in 'no-op'\n     +  where 'no-op' = _norm('no-op')\n     +    where 'no-op' = <built-in method get of dict object at 0x108b56700>('q2', '')\n     +      where <built-in method get of dict object at 0x108b56700> = {'q1': {'completes': False, 'blocking_resource': 'artifacts'}, 'q2': 'no-op', 'q3': 'masked', 'q4': 'delete-then-create', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py:59: AssertionError: q2: expected replace, got 'no-op'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T6-semantics/tests/test_task.py::test_q2_logical_rename_replaces\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1718,
+    "output": 93
+  },
+  "content": "```json\n{\n  \"q1\": {\"completes\": false, \"blocking_resource\": \"artifacts\"},\n  \"q2\": \"no-op\",\n  \"q3\": \"masked\",\n  \"q4\": \"delete-then-create\",\n  \"q5\": {\"value\": 4, \"changes_if_removed\": true},\n  \"q6\": \"unknown\",\n  \"q7\": \"output-repr\"\n}\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-3cop9wrx/generated_0.json"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.8571428571428571,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.746031746031746
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/pulumi-python/warm/T6-semantics_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.746031746031746
+    },
+    "published_composite_no_idiom": 0.8392857142857143,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.746031746031746
+    },
+    "corrected_composite_no_idiom": 0.8392857142857143,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

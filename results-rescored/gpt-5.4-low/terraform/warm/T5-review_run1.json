@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 1225
+  },
+  "content": "Yes \u2014 in a Terraform `tfplan` JSON, those are exactly the kinds of changes that can be easy to miss if you only skim the human-readable plan.\n\n## What to look for\n\n### 1. Hidden destructive change: DB recreate\nIn plan JSON, a recreate usually appears as:\n\n```json\n\"change\": {\n  \"actions\": [\"delete\", \"create\"]\n}\n```\n\nor sometimes:\n\n```json\n\"actions\": [\"create\", \"delete\"]\n```\n\nFor an RDS instance, this is high risk because it means replacement, not in-place update.\n\nRelevant resource types to flag:\n- `aws_db_instance`\n- `aws_rds_cluster`\n- `aws_rds_cluster_instance`\n\n### 2. Dangerous security group change\nYou want to detect ingress rules allowing:\n\n- `cidr_blocks = [\"0.0.0.0/0\"]`\n- or IPv6 `ipv6_cidr_blocks = [\"::/0\"]`\n\nEspecially on:\n- `aws_security_group`\n- `aws_security_group_rule`\n- `aws_vpc_security_group_ingress_rule`\n\n---\n\n# Quick jq checks\n\nAssuming you have:\n\n```bash\nterraform show -json tfplan > tfplan.json\n```\n\n## A. Show all destructive/replacement changes\n\n```bash\njq '\n  .resource_changes[]\n  | select(\n      (.change.actions | index(\"delete\")) and\n      (.change.actions | index(\"create\"))\n    )\n  | {\n      address,\n      type,\n      actions: .change.actions,\n      before: .change.before,\n      after: .change.after\n    }\n' tfplan.json\n```\n\nThis will surface replacements hidden among no-ops.\n\n---\n\n## B. Show any pure destroys too\n\n```bash\njq '\n  .resource_changes[]\n  | select(.change.actions == [\"delete\"])\n  | { address, type, actions: .change.actions }\n' tfplan.json\n```\n\n---\n\n## C. Find open ingress to the world\n\n```bash\njq '\n  .resource_changes[]\n  | select(\n      .type == \"aws_security_group\" or\n      .type == \"aws_security_group_rule\" or\n      .type == \"aws_vpc_security_group_ingress_rule\"\n    )\n  | select(\n      (\n        (.change.after.ingress // [])[]?.cidr_blocks? // []\n      ) | index(\"0.0.0.0/0\")\n      or\n      (\n        (.change.after.cidr_blocks // [])\n      ) | index(\"0.0.0.0/0\")\n      or\n      (\n        (.change.after.ingress // [])[]?.ipv6_cidr_blocks? // []\n      ) | index(\"::/0\")\n      or\n      (\n        (.change.after.ipv6_cidr_blocks // [])\n      ) | index(\"::/0\")\n    )\n  | { address, type, actions: .change.actions, after: .change.after }\n' tfplan.json\n```\n\n---\n\n# What a reviewer should conclude\n\nIf your 40-change plan contains:\n\n## 1. DB replacement\nThat is a major red flag unless explicitly intended.\n\nFor this scenario, it likely violates the spirit of:\n- **RDS deletion protection on**\n- **environment safety**\n- avoiding accidental destructive changes\n\nReview:\n- what attribute changed that forced replacement\n- whether snapshot/retention/deletion protection are set\n- whether this is hitting dev or prod\n\nCommon replacement triggers:\n- identifier/name changes\n- storage encryption toggles\n- subnet group changes\n- engine mode/class changes in some cases\n- parameter group family incompatibility\n\n---\n\n## 2. `0.0.0.0/0` ingress\nThat is almost certainly a security finding unless it is very specifically justified.\n\nFor this canonical stack:\n- RDS should **not be publicly accessible**\n- least privilege is expected\n- broad ingress on DB or internal services is not acceptable\n\nReview:\n- target port\n- attached resource\n- whether this is an ALB listener SG vs DB SG\n- whether source should instead be VPC CIDR, node SG, or ALB SG\n\n---\n\n# Best review pattern for noisy plans\n\nWhen there are many no-op or cosmetic changes, reduce the plan to risky actions.\n\n## Summarize all action types\n\n```bash\njq '\n  .resource_changes\n  | map({address, type, actions: .change.actions})\n' tfplan.json\n```\n\n## Only non-noop changes\n\n```bash\njq '\n  .resource_changes[]\n  | select(.change.actions != [\"no-op\"])\n  | {address, type, actions: .change.actions}\n' tfplan.json\n```\n\n## Only replacements and destroys\n\n```bash\njq '\n  .resource_changes[]\n  | select(\n      .change.actions == [\"delete\", \"create\"] or\n      .change.actions == [\"create\", \"delete\"] or\n      .change.actions == [\"delete\"]\n    )\n  | {address, type, actions: .change.actions}\n' tfplan.json\n```\n\n---\n\n# Suggested review verdict\n\nIf the plan includes both:\n- an RDS replacement\n- and a new `0.0.0.0/0` ingress rule\n\nthen I would mark it:\n\n**Not safe to apply without investigation**\n\nbecause it contains:\n1. a hidden destructive infrastructure change\n2. a likely security regression\n\n---\n\n# If you want, I can also help with either of these:\n\n1. a **jq script** that prints only risky Terraform changes from any plan  \n2. a **human review** if you paste the actual `tfplan.json` excerpt here",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/terraform/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

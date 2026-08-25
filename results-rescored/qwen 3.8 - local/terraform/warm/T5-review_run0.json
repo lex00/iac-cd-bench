@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 673,
+    "output": 1467
+  },
+  "content": "# Terraform Plan Review: Hidden Destructive Changes\n\n## Summary\n\nThe plan contains **two critical issues** that violate the acceptance criteria and represent significant risk:\n\n1. **Hidden destructive change**: An RDS PostgreSQL instance is being destroyed and recreated (destroy + create pair), concealed among numerous no-op changes. This will cause data loss unless the backup retention and deletion protection safeguards are properly in place\u2014and even then, a destroy+create is a destructive operation that should never be silently accepted.\n\n2. **Insecure security group ingress**: A `0.0.0.0/0` ingress rule is being added to a security group, exposing services to the entire internet. This violates the principle of least privilege and the \"no public access\" requirements.\n\n---\n\n## Detailed Findings\n\n### Finding 1: RDS Instance Destroy + Create (CRITICAL)\n\n**Change pattern:**\n- `destroy` on an existing `aws_db_instance` resource\n- `create` on a new `aws_db_instance` resource\n\n**Why this is dangerous:**\n- The destroy+create pair is hidden among 38 no-op changes, making it easy to miss during manual review.\n- This is a **destructive operation** that will wipe the existing database.\n- Per acceptance criteria #2, the RDS instance must have `deletion_protection = true` and `backup_retention_period >= 7`. Even with these settings:\n  - `deletion_protection = true` would **block** the destroy if applied via Terraform, meaning the plan would fail or the protection was recently removed.\n  - If deletion protection was removed to allow this operation, that removal is itself a security violation.\n- A destroy+create is never an idiomatically safe way to update an RDS instance. In-place updates (changing instance class, storage, etc.) preserve data. Only force-replacement triggers destroy+create, which should require explicit review and mitigation (e.g., snapshot first).\n\n**Acceptance Criteria Violations:**\n- **#2 (RDS)**: Deletion protection and backup retention are compromised.\n- **#7 (Environment isolation)**: If this affects prod, it risks data loss in production.\n\n**Required Action:**\n- **Reject the plan.**\n- Verify why the RDS instance is being replaced. If it's an intended change (e.g., moving to a different engine or AZ configuration that forces replacement):\n  1. Confirm a full snapshot exists and is verified.\n  2. Ensure `deletion_protection = true` is set on the new resource.\n  3. Set `backup_retention_period >= 7`.\n  4. Explicitly document the data-loss risk and approval.\n- If the replacement was unintentional (e.g., a misconfigured argument causing force-replacement), fix the configuration to allow in-place update.\n\n---\n\n### Finding 2: `0.0.0.0/0` Ingress Rule (CRITICAL)\n\n**Change pattern:**\n- `create` or `update` on `aws_security_group_rule` (or `aws_security_group` inline ingress) with:\n  - `cidr_blocks = [\"0.0.0.0/0\"]`\n  - `from_port` / `to_port` likely covering application or management ports\n\n**Why this is dangerous:**\n- Exposes the resource to **all public IPs**, violating:\n  - Acceptance criterion **#1 (S3)**: \"no public access\" \u2014 if this SG protects S3 or related resources.\n  - Acceptance criterion **#3 (Secret)**: DB connection string secret must not be exposed.\n  - Acceptance criterion **#4 (IAM)**: Principle of least privilege.\n  - General security best practices: Internet-facing ingress should be limited to specific trusted CIDRs (e.g., ALB, CloudFront, VPN, office IP ranges).\n- Per the scenario spec, HTTPS exposure should be via **internal ALB or CloudFront** (dev) or **CloudFront + ACM** (prod). Neither should require direct `0.0.0.0/0` ingress to the underlying security group. Traffic should flow through the load balancer/WAF, which has its own security group with restricted ingress.\n\n**Acceptance Criteria Violations:**\n- **#1, #3, #4**: All violated by excessive public exposure.\n\n**Required Action:**\n- **Reject the plan.**\n- Identify what service the security group protects.\n- Replace `0.0.0.0/0` with the appropriate trusted source CIDR:\n  - If behind an ALB: ingress from the ALB's security group or VPC subnet.\n  - If behind CloudFront: ingress from CloudFront's well-known CIDRs (or via a WAF/ALB layer).\n  - If it's a management port (e.g., SSH, RDS): restrict to specific operator IPs or remove entirely.\n- Verify that no other rules in the plan similarly over-expose resources.\n\n---\n\n## Secondary Observations\n\n| # | Observation | Severity |\n|---|---|---|\n| 3 | With 40 total changes and 38 being no-ops, the plan is noisy. Recommend filtering plans to show only non-no-op changes in CI to reduce review burden. | Low |\n| 4 | No evidence in the plan description that `deletion_protection` is explicitly set on the new RDS instance. Confirm this attribute is present. | Medium |\n| 5 | No evidence that `backup_retention_period >= 7` is set on the new RDS instance. Confirm this attribute is present. | Medium |\n| 6 | Verify that the S3 bucket change (if any) preserves versioning, encryption, and no-public-access settings. The summary mentions 40 changes but only two were highlighted\u2014ensure the remaining 38 no-ops aren't masking a subtle S3 policy change. | Medium |\n\n---\n\n## Recommendation\n\n**Reject the plan.** Both critical findings must be resolved before merging:\n\n1. **RDS destroy+create**: Determine root cause. If intentional, implement full snapshot mitigation, verify `deletion_protection = true` and `backup_retention_period >= 7` on the new instance, and obtain explicit sign-off for the data-loss risk. If unintentional, fix the configuration to allow in-place update.\n\n2. **`0.0.0.0/0` ingress**: Remove or restrict to trusted CIDRs per the architecture spec (ALB/CloudFront fronted). Verify no other security group rules expose resources unnecessarily.\n\nAfter fixes, re-run `terraform plan` and verify that:\n- No destroy+create pairs exist for stateful resources.\n- No `0.0.0.0/0` or overly broad CIDRs appear in ingress rules.\n- All acceptance criteria are met (especially #2 and #4).",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/terraform/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

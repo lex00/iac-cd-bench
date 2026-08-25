@@ -1,0 +1,91 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-pdfu1g8e/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-pdfu1g8e/index.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-types"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1795,
+    "output": 1826
+  },
+  "content": "## Diagnosis\n\nTwo runtime defects that `tsc` can't catch (types happen to line up, but the values are wrong at preview/apply time):\n\n1. **Async misuse** \u2014 `getBucketUrl` does `await arn` on a `pulumi.Output`. Awaiting an Output doesn't resolve to its value; it returns a `Promise`, so `bucketUrl` is a floating promise, not an `Output`. Exporting it yields a garbage stack output and can crash preview. The correct pattern is `.apply()`.\n\n2. **Wrong `pulumi.output()` wrapping** \u2014 `pulumi.output(\"plain-text-password\")` wraps a plaintext literal. It's not a secret (violates AC #3) and defeats the purpose of Outputs. Use `config.requireSecret()`.\n\n## Fixed `index.ts`\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") || \"dev\";\nconst region = config.get(\"region\") || \"us-east-1\";\nconst isProd = env === \"prod\";\n\n// Secret sourced from stack config (encrypted at rest in <stack>.yaml).\n// Set with:  pulumi config set --secret dbPassword <value>\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\n// S3 Bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: { enabled: true },\n    serverSideEncryptionConfiguration: {\n        rule: {\n            applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" },\n        },\n    },\n    tags: { Environment: env, Project: \"myapp\" },\n});\n\n// Block all public access (AC #1)\nnew aws.s3.BucketPublicAccessBlock(\"app-bucket-pab\", {\n    bucket: bucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n});\n\n// FIX 1: derive a stack Output via .apply() instead of awaiting inside an\n// async function. .apply() runs the callback once the Output resolves and\n// returns a new Output<string> \u2014 no promises, no preview crash.\nconst bucketUrl: pulumi.Output<string> = bucket.arn.apply(\n    (arn) => `https://s3.${region}.amazonaws.com/${arn}`,\n);\n\n// RDS Instance\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app-user\",\n    password: dbPassword,               // FIX 2: real Output<string> secret\n    multiAz: isProd,\n    storageEncrypted: isProd,\n    publiclyAccessible: false,          // AC #2\n    backupRetentionPeriod: 7,           // AC #2 (>= 7 days)\n    deletionProtection: isProd,         // AC #2\n    skipFinalSnapshot: !isProd,\n    finalSnapshotIdentifier: isProd ? `app-db-final-${env}` : undefined,\n    tags: { Environment: env, Project: \"myapp\" },\n});\n\n// Outputs are proper Output<string> values now.\nexport const bucketEndpoint = bucketUrl;\nexport const dbEndpoint = db.endpoint;\n```\n\n## What changed and why\n\n| Defect | Before | After |\n|---|---|---|\n| Async misuse | `async function` + `await arn` \u2192 returns `Promise` | `bucket.arn.apply(arn => ...)` \u2192 returns `Output<string>` |\n| Bad Output wrap | `pulumi.output(\"plain-text-password\")` | `config.requireSecret(\"dbPassword\")` (encrypted in stack config) |\n| Exported Promise | `export const bucketEndpoint = bucketUrl` (Promise) | same name, now backed by a real `Output` |\n\n**Why `.apply()` not `await`:** at preview time resource output values may be *unknown* (not yet created). `Output.apply()` understands unknowns and defers evaluation; `await` forces resolution eagerly and breaks the dependency graph, which is what crashes preview.\n\n**Set the secret before deploying:**\n```bash\npulumi config set env prod --stack prod\npulumi config set --secret dbPassword 'S3cr3t...' --stack prod\n```\n\nI also folded in the acceptance-criteria hardening (encryption, public-access block, backup retention, deletion protection, multi-AZ, env-based sizing) since the file was violating AC #1/#2 alongside the two crash defects. If you want the fix scoped *strictly* to the two runtime bugs, keep only the `dbPassword` and `bucketUrl` changes.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-pdfu1g8e/index.ts"
+  ],
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.6666666666666666
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T4-debug_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.6666666666666666,
+      "attempted_stages": 3,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.6666666666666666
+    },
+    "corrected_composite_no_idiom": 0.75,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

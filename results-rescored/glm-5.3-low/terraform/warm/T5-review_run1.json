@@ -1,0 +1,89 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 650,
+    "output": 825
+  },
+  "content": "# Terraform Plan Review \u2014 Destructive Changes Found\n\n## Summary\n\n**40 changes scanned. 2 critical issues, both destructive/insecure.**\n\n---\n\n## \ud83d\udd34 Critical Finding #1: RDS instance replacement hidden in plan\n\n```json\n{\n  \"resource_changes\": [\n    {\n      \"address\": \"aws_db_instance.main\",\n      \"change\": {\n        \"actions\": [\"delete\", \"create\"],   // \u2190 replacement, not update!\n        \"before\": { \"identifier\": \"app-prod-db\", \"multi_az\": true, ... },\n        \"after\": { \"allocated_storage\": 100, ... }\n      },\n      \"replace_paths\": [[\"allocated_storage\"]]\n    }\n  ]\n}\n```\n\n**Why it's hidden:**\n- Rendered plan shows `# aws_db_instance.main must be replaced` \u2014 easy to miss among `~` and `+` no-ops at line ~300\n- `actions: [\"delete\", \"create\"]` (not `[\"update\"]`) \u2014 this is **destroy + recreate**, not in-place\n\n**Trigger:** `allocated_storage` change forces new resource. The fix is in-place scaling:\n\n```hcl\n# Use storage autoscaling instead of replacing:\nallocated_storage     = 50\nmax_allocated_storage = 200   # AWS grows it live, no replacement\n```\n\n**Impact:** Data loss unless final snapshot is taken; prod outage during recreate; multi-AZ standby rebuilt. Verify `final_snapshot_identifier` / `skip_final_snapshot = false` before proceeding.\n\n**Verdict:** \u274c **Block.** Do not apply.\n\n---\n\n## \ud83d\udd34 Critical Finding #2: 0.0.0.0/0 ingress added to security group\n\n```json\n{\n  \"address\": \"aws_security_group.db_sg\",\n  \"change\": {\n    \"after_unknown\": {\n      \"ingress\": [\n        {\n          \"cidr_blocks\": [\"0.0.0.0/0\"],\n          \"from_port\": 5432,\n          \"to_port\": 5432,\n          \"protocol\": \"tcp\"\n        }\n      ]\n    }\n  }\n}\n```\n\n**Impact:** PostgreSQL (5432) exposed to the entire internet. Violates Acceptance Criteria #2 (RDS not publicly accessible) and breaks the EKS\u2192RDS trust boundary. The SG already has the node group CIDR \u2014 this addition is redundant *and* catastrophic.\n\n**Likely cause:** debugging shortcut committed accidentally, or a copy-paste from a dev overlay into prod tfvars.\n\n**Verdict:** \u274c **Block.** Remove the ingress block; keep access scoped to the VPC/node SG:\n\n```hcl\ningress {\n  description = \"Postgres from EKS nodes\"\n  from_port   = 5432\n  to_port     = 5432\n  protocol    = \"tcp\"\n  security_groups = [aws_security_group.eks_nodes.id]   # not cidr_blocks\n}\n```\n\n---\n\n## \u2705 Remaining 38 changes\n\nNo-op/compliant: ACM cert references, S3 versioning + SSE unchanged, IAM role unchanged, no changes touching `dev` workspace resources (criteria #7 holds).\n\n## Recommended actions\n\n1. **Do not apply.** Re-run plan with `-out` after fixing both issues.\n2. Add `prevent_destroy` lifecycle block on `aws_db_instance.main` as a guardrail.\n3. Add a CI check: `jq` policy gate rejecting plans containing `[\"delete\",\"create\"]` on stateful resources or any `0.0.0.0/0` ingress:\n\n```bash\njq -e '.resource_changes[] | select(.change.actions == [\"delete\",\"create\"] and .address | test(\"db|s3|volume\")) | error(\"REPLACEMENT DETECTED\")' tfplan.json\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-u_0_jit_/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-u_0_jit_/generated_1.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/terraform/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

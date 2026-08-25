@@ -1,0 +1,85 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 616,
+    "output": 783
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Critical Issues\n\n### \ud83d\udd34 **P0: Bucket Versioning Dropped \u2014 Violates Acceptance Criteria**\n\n**Spec requirement:** *\"Bucket: versioning enabled\"* for both dev and prod.\n\nRemoving versioning from the S3 bucket composition directly violates acceptance criterion #1. In prod, this also breaks the prerequisite for **cross-region replication to us-west-2**, since S3 replication requires versioning on both source and destination buckets.\n\n**Impact:**\n- Prod replication silently broken or never deployable\n- No protection against accidental object deletion/overwrite\n- Non-compliant with the canonical spec\n\n**Recommendation:** Restore `versioning: enabled: true` in the composition. If the intent was to make it configurable per environment, expose it as a composition parameter with a default of `true`, not remove it.\n\n---\n\n### \ud83d\udd34 **P0: `deletionPolicy: Delete` \u2014 Dangerous for Stateful Resources**\n\nSetting `deletionPolicy: Delete` provider-wide means that when a Composite Resource (XR) or Claim is deleted, Crossplane will **destroy the actual cloud resource**.\n\n**This is especially dangerous for:**\n\n| Resource | Risk |\n|---|---|\n| **RDS** | Database and all data destroyed. Spec requires `deletionProtection: true` \u2014 but `deletionPolicy: Delete` on the Crossplane managed resource can race with or override RDS-level deletion protection depending on sequencing. |\n| **S3 Bucket** | All application assets deleted. If versioning were still enabled (it should be), deletion would fail on non-empty versioned buckets, but without versioning, this succeeds silently. |\n| **IAM resources** | Service accounts and roles destroyed, potentially breaking running workloads. |\n\n**Recommendation:**\n- Use `deletionPolicy: Orphan` as the **default** for all stateful resources (RDS, S3, IAM)\n- Only use `Delete` for truly ephemeral resources (e.g., temporary networking)\n- If per-resource granularity is needed, set `deletionPolicy` on individual managed resources within the composition, not provider-wide\n\n```yaml\n# Per-resource, not provider-wide\ndeletionPolicy: Orphan  # for RDS, S3, IAM\n```\n\n---\n\n## Additional Observations\n\n### \ud83d\udfe1 **P1: Interaction Between the Two Changes Compounds Risk**\n\nThe combination is worse than either change alone:\n\n1. Versioning removed \u2192 bucket has no delete protection at the S3 level\n2. `deletionPolicy: Delete` \u2192 Crossplane will destroy the bucket on claim deletion\n3. Result: **one `kubectl delete claim` permanently destroys all application assets with no recovery path**\n\n### \ud83d\udfe1 **P1: No Mention of Composition Parameterization**\n\nThe spec requires environment-specific behavior (dev vs. prod sizing, prod-only replication). If these changes were made to simplify the composition, the correct approach is:\n\n```yaml\n# Composition patch from XR spec\n- type: FromCompositeFieldPath\n  fromFieldPath: spec.parameters.versioning\n  toFieldPath: spec.forProvider.versioning.enabled\n```\n\nWith claims setting:\n\n```yaml\n# dev claim\nparameters:\n  versioning: true   # spec requires versioning in dev too\n\n# prod claim  \nparameters:\n  versioning: true\n  replication: true\n```\n\n---\n\n## Summary\n\n| Change | Verdict | Action |\n|---|---|---|\n| `deletionPolicy: Delete` provider-wide | **Reject** | Use `Orphan` for stateful resources; scope `Delete` to ephemeral resources only |\n| Bucket versioning dropped | **Reject** | Restore versioning; parameterize if needed, but default to `true` per spec |\n\n**Both changes should be reverted.** They violate the canonical spec, break prod replication, and together create a path to irreversible data loss.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/crossplane/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

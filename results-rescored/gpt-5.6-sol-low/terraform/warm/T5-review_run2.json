@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 880
+  },
+  "content": "## Review result\n\n**Do not apply this plan.** It contains two high-risk changes hidden among otherwise benign/no-op entries.\n\n### 1. Critical \u2014 RDS instance replacement\n\nThe database has replacement actions such as:\n\n```json\n\"actions\": [\"delete\", \"create\"]\n```\n\nor:\n\n```json\n\"actions\": [\"create\", \"delete\"]\n```\n\nBoth indicate resource replacement. A delete-first replacement can cause downtime and data loss; create-first still requires a database cutover and may fail because of naming or dependency constraints.\n\nBefore approval:\n\n- Identify the attribute in `replace_paths` or the `forces replacement` field in the human-readable plan.\n- Confirm the change was intentional.\n- Ensure:\n  - `deletion_protection = true`\n  - `backup_retention_period >= 7`\n  - `publicly_accessible = false`\n  - a current snapshot/restore procedure exists\n- Add lifecycle protection where appropriate:\n\n```hcl\nlifecycle {\n  prevent_destroy = true\n}\n```\n\nDo not bypass deletion protection merely to make the apply succeed. If replacement is intended, use a reviewed migration/cutover plan rather than an unreviewed in-place Terraform apply.\n\n### 2. Critical \u2014 Public security-group ingress\n\nThe plan adds ingress with:\n\n```text\n0.0.0.0/0\n```\n\nThis exposes the relevant port to the entire IPv4 internet. It is especially unacceptable for RDS, EKS control-plane access, SSH, or application administration ports.\n\nReplace it with one of:\n\n- A source security-group reference, such as ALB SG \u2192 application SG\n- A specific corporate/VPN CIDR\n- Private subnet/VPC CIDRs where justified\n- CloudFront origin controls or AWS-managed prefix lists, depending on the resource\n\nFor RDS, inbound access should normally be limited to the application/node security group on PostgreSQL port `5432`.\n\nAlso check for the IPv6 equivalent:\n\n```text\n::/0\n```\n\n## Useful plan checks\n\nList all non-no-op changes:\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(.change.actions != [\"no-op\"])\n  | [.address, (.change.actions | join(\" -> \"))]\n  | @tsv\n' tfplan.json\n```\n\nFind replacements:\n\n```bash\njq '\n  .resource_changes[]\n  | select(\n      (.change.actions | index(\"delete\")) != null and\n      (.change.actions | index(\"create\")) != null\n    )\n  | {\n      address,\n      actions: .change.actions,\n      replace_paths: .change.replace_paths\n    }\n' tfplan.json\n```\n\nFind newly introduced world-open ingress values:\n\n```bash\njq '\n  .resource_changes[]\n  | select(.change.actions != [\"no-op\"])\n  | select(\n      (.change.after | tostring | contains(\"0.0.0.0/0\")) or\n      (.change.after | tostring | contains(\"::/0\"))\n    )\n  | {\n      address,\n      actions: .change.actions,\n      before: .change.before,\n      after: .change.after\n    }\n' tfplan.json\n```\n\n> The last query also reports pre-existing public CIDRs on changed resources. Review `before` versus `after` to confirm whether exposure is newly added.\n\n## Decision\n\n**Status: Block / reject plan**\n\nApproval requires:\n\n1. Removing or explicitly managing the RDS replacement through a backed-up, reviewed migration plan.\n2. Removing the `0.0.0.0/0` ingress and restricting access to the minimum required source.\n3. Regenerating and reviewing the saved plan.\n4. Confirming the plan targets only the intended dev or prod state/workspace and does not modify the other environment.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-qhtp6f5m/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 722
+  },
+  "content": "## Review findings\n\n### 1. **Blocker \u2014 Bucket versioning no longer meets the specification**\n\nDropping the bucket versioning configuration violates the acceptance criterion requiring versioning in both `dev` and `prod`.\n\nIf versioning is represented by a separate Crossplane managed resource, removing it from the composition may also cause Crossplane to delete that resource. Depending on the provider behavior, this can suspend versioning on the existing bucket rather than merely stop managing it.\n\n**Required change:** Restore explicit versioning with status `Enabled` for both environments. Ensure the composed versioning resource remains associated with the bucket and has correct dependency/reference handling.\n\n---\n\n### 2. **High \u2014 Provider-wide `deletionPolicy: Delete` creates unsafe teardown behavior**\n\nApplying `deletionPolicy: Delete` indiscriminately means deleting a claim/XR, changing composition resource names, or removing resources from the composition can trigger deletion of external infrastructure. This is especially risky for:\n\n- Production S3 data\n- RDS databases\n- Secrets\n- IAM and cluster resources during composition refactors\n\nRDS deletion protection may reject deletion, but that leaves the managed resource/XR stuck rather than making provider-wide `Delete` safe. A versioned, non-empty S3 bucket may similarly fail deletion, while empty buckets or other resources can still be destroyed.\n\n**Required change:** Choose deletion behavior per resource and environment rather than provider-wide. At minimum, use `Orphan` for stateful production resources such as S3 and RDS, or introduce an explicit, separately reviewed teardown path. If `Delete` is intentionally retained for ephemeral dev resources, scope it only to dev compositions/parameters.\n\nAlso verify that composition upgrades do not rename composed-resource annotations or otherwise make Crossplane interpret existing resources as removed and recreate/delete them.\n\n## Verdict\n\n**Do not merge as-is.** Restore bucket versioning and replace the blanket deletion policy with resource- and environment-specific lifecycle handling.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/crossplane/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

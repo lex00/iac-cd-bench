@@ -1,0 +1,86 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\n# overlays/dev/patch.yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-password-dev # was: db-password (renamed)\n  namespace: infra\n---\n# SEED REPO: .sops.yaml with WRONG age key (defect)\n# The correct age key is in age-key.txt but this file references a different key\ncreation_rules:\n  - path: '*.yaml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n  - path: '*.yml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n---\n# SEED REPO: knr-ops with SOPS age key defect\n# The defect: .sops.yaml ref\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-8xgg63r9/.sops.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 3 resources found in 3 files - Valid: 2, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 930,
+    "output": 859
+  },
+  "content": "## Diagnosis\n\nSymptom `yaml: line 1: did not find expected key` from the Flux kustomize controller is the classic signature of **SOPS failing to decrypt**: the controller leaves the encrypted blob (or partially decrypted garbage) in place, then `kustomize build` chokes on it while trying to merge/patch \u2014 so the real root cause is the decrypt failure, not malformed YAML.\n\nTwo defects:\n\n1. **`.sops.yaml` age recipient \u2260 key in `age-key.txt`** \u2014 the creation rules encrypt to a stale/wrong `age1...` public key, so decryption with the actual private key fails.\n2. **Kustomize patch targets a renamed resource** \u2014 a patch in an overlay still references the old resource name, so even after decryption the build fails.\n\n## Fix 1 \u2014 Correct the age key reference\n\nThe correct public key derived from `age-key.txt` is:\n\n```\nage1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nUpdate `.sops.yaml`:\n\n```yaml\ncreation_rules:\n  - path_regex: .*\\.yaml$\n    encrypted_regex: ^(data|stringData)$\n    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nRemove any stale recipient entries pointing at other keys.\n\n## Fix 2 \u2014 Re-encrypt the secret\n\n```bash\nexport SOPS_AGE_KEY_FILE=$(pwd)/age-key.txt\n\n# Decrypt with the old key first (if you have it); otherwise re-encrypt from source\nsops --decrypt --in-place secret.yaml 2>/dev/null || true\n\n# Ensure sops metadata is regenerated with the correct recipient\nsops --encrypt --age age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg \\\n     secret.yaml > secret.enc.yaml && mv secret.enc.yaml secret.yaml\n```\n\nThen verify decryption works with the intended key only:\n\n```bash\nSOPS_AGE_KEY_FILE=age-key.txt sops --decrypt secret.yaml\n```\n\n## Fix 3 \u2014 Fix the kustomize patch target\n\nFind the patch in `overlays/dev/` (and `overlays/prod/` if applicable) whose `target.name:` references the old resource name (e.g. `db-password` when the Secret is now `db-password-dev`). Update it:\n\n```yaml\n# overlays/dev/patch.yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-password-dev   # was: db-password (renamed)\n  namespace: infra\n```\n\nOr fix the selector in `kustomization.yaml`:\n\n```yaml\npatches:\n  - path: patch.yaml\n    target:\n      kind: Secret\n      name: db-password-dev   # match the renamed resource\n```\n\n## Verify\n\n```bash\n# Build each overlay (with decryption, as Flux does)\nkustomize build --enable-alpha-plugins overlays/dev \\\n  | kubectl apply --dry-run=client -f -\n\nkustomize build overlays/prod\n\n# Or decrypt-first sanity check\nsops --decrypt secret.yaml | kubectl apply --dry-run=client -f -\n\n# In cluster, once reconciled:\nflux reconcile kustomization myapp-dev --with-source\nflux get kustomizations\n```\n\nExpected: both `myapp-dev` and `myapp-prod` report `True / Ready`, the Secret decrypts to plaintext only in the cluster (acceptance criterion 3: never plaintext in Git), and dev/prod remain independently deployable.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-8xgg63r9/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/knr-ops/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

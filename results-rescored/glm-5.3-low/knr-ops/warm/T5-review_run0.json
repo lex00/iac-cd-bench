@@ -1,0 +1,85 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 580
+  },
+  "content": "# Security Review: PR Diff\n\n## Issues Identified (Ranked by Severity)\n\n### \ud83d\udd34 Critical \u2014 Block merge\n\n**1. Plaintext password in deployment env vars**\n- Violates acceptance criterion #3: \"never stored in plaintext in Git.\"\n- Any repo reader/CI log gets DB credentials; rotation requires a commit.\n- **Fix:** Remove the env var; mount via SOPS-encrypted Secret as `secretKeyRef`, or External Secrets Operator tied to the secret store. Never reference plaintext in `base/` or overlays.\n\n**2. S3 bucket policy grants public read (`Principal: *` / `s3:GetObject`)**\n- Violates acceptance criterion #1: \"no public access.\"\n- Also likely paired with missing `PublicAccessBlock` \u2014 risk of listing/data exposure and surprise egress costs.\n- **Fix:** Remove the public grant. If assets must be public, serve via CloudFront with an Origin Access Control (OAC) restricted bucket policy \u2014 not an open `*` principal. Ensure `aws:s3:public-access-block` (all four flags) is present.\n\n### \ud83d\udfe1 Warning \u2014 Fix before or shortly after merge\n\n**3. Missing resource limits on containers**\n- No `resources.limits` \u2192 containers can exhaust node memory, causing eviction/DoS on shared prod nodes; also blocks any sane PodSecurity/OPA policy.\n- **Fix:** Add requests/limits (e.g., CPU/mem) in `base/`, tune per overlay. Consider enforcing via LimitRange/Kyverno policy so this fails CI next time.\n\n**4. RDS instance class change \u2014 verify blast radius (no direct security issue, but confirm)**\n- Spec compliance: prod should be `db.t3.medium`, multi-AZ, encrypted. Confirm the change doesn't downgrade prod or alter encryption/AZ settings in the diff.\n- Also verify: `publicly_accessible = false`, `deletion_protection = true`, backup retention \u2265 7 days.\n\n### \u2139\ufe0f Info\n\n- Ensure the deployment doesn't use `latest` tag or `imagePullPolicy: Always` with mutable tags (pin digests).\n- Verify Flux/kustomize `overlays/prod` isolation \u2014 changes must not leak dev config into prod overlay.\n\n## Pre-Merge Checklist\n1. \u274c Remove plaintext secret \u2192 SOPS-encrypted Secret + `secretKeyRef`\n2. \u274c Revert public bucket policy \u2192 CloudFront OAC + PublicAccessBlock\n3. \u26a0\ufe0f Add resource requests/limits\n4. \u26a0\ufe0f Confirm RDS change preserves encryption/multi-AZ/deletion protection\n5. \u2139\ufe0f Pin image digest\n\n**Verdict: Do not merge** until items 1 and 2 are resolved; item 3 strongly recommended in the same PR.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "model": "gpt-5.4",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF401 [*] `pulumi` imported but unused\n --> generated_0.py:1:8\n  |\n1 | import pulumi\n  |        ^^^^^^\n2 | import pulumi_kubernetes as k8s\n  |\nhelp: Remove unused import: `pulumi`\n  |\n  - import pulumi\n1 | import pulumi_kubernetes as k8s\n  |\n\nF821 Undefined name `cluster`\n --> generated_1.py:5:18\n  |\n3 | node_group = aws.eks.NodeGroup(\n4 |     \"app-ng\",\n5 |     cluster_name=cluster.name,\n  |                  ^^^^^^^\n6 |     node_role_arn=node_role.arn,\n7 |     subnet_ids=private_subnet_ids,\n  |\n\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 626,
+    "output": 2204
+  },
+  "content": "To add an auto-scaling policy in Pulumi **without replacing existing resources**, the key is:\n\n1. **Reference the existing resource outputs/IDs**\n2. **Create new scaling resources alongside them**\n3. **Do not change immutable properties** on the existing EKS node group / ASG / service\n\nIn Pulumi, adding a new resource usually does **not** replace existing ones unless:\n- you rename the existing resource in code,\n- you change immutable arguments on an existing resource,\n- or Pulumi loses track of the resource identity.\n\n## Typical safe approach\n\nIf you already have an EKS managed node group, add:\n- an **Application Auto Scaling target** or\n- an **AWS Auto Scaling policy** depending on what you\u2019re scaling.\n\nFor **EKS managed node groups**, the usual safe pattern is to update the node group\u2019s `scaling_config` carefully if it\u2019s in-place supported, or attach scaling to the underlying ASG only if appropriate.  \nFor **EKS/Kubernetes workloads**, use **Kubernetes HPA** instead of replacing infra.\n\n---\n\n# Option 1: Auto-scale a Kubernetes workload with HPA\nThis is the safest if your goal is app scaling.\n\n```python\nimport pulumi\nimport pulumi_kubernetes as k8s\n\napp_labels = {\"app\": \"web\"}\n\ndeployment = k8s.apps.v1.Deployment(\n    \"web-deployment\",\n    metadata={\"namespace\": \"default\"},\n    spec={\n        \"replicas\": 2,\n        \"selector\": {\"matchLabels\": app_labels},\n        \"template\": {\n            \"metadata\": {\"labels\": app_labels},\n            \"spec\": {\n                \"containers\": [{\n                    \"name\": \"web\",\n                    \"image\": \"nginx:latest\",\n                    \"resources\": {\n                        \"requests\": {\n                            \"cpu\": \"200m\",\n                            \"memory\": \"256Mi\",\n                        }\n                    }\n                }]\n            }\n        }\n    }\n)\n\nhpa = k8s.autoscaling.v2.HorizontalPodAutoscaler(\n    \"web-hpa\",\n    metadata={\"namespace\": \"default\"},\n    spec={\n        \"scaleTargetRef\": {\n            \"apiVersion\": \"apps/v1\",\n            \"kind\": \"Deployment\",\n            \"name\": deployment.metadata[\"name\"],\n        },\n        \"minReplicas\": 2,\n        \"maxReplicas\": 10,\n        \"metrics\": [{\n            \"type\": \"Resource\",\n            \"resource\": {\n                \"name\": \"cpu\",\n                \"target\": {\n                    \"type\": \"Utilization\",\n                    \"averageUtilization\": 70,\n                },\n            },\n        }],\n    }\n)\n```\n\nThis adds a new HPA resource and does not replace the deployment if the deployment name stays stable.\n\n---\n\n# Option 2: Scale an existing EKS managed node group\nIf you want node-level autoscaling, the recommended production approach is usually **Cluster Autoscaler** or **Karpenter**, not raw ASG policies. But if you only want to add autoscaling-related config without replacing the node group, keep the existing node group resource name and only adjust mutable properties.\n\nExample existing node group:\n\n```python\nimport pulumi_aws as aws\n\nnode_group = aws.eks.NodeGroup(\n    \"app-ng\",\n    cluster_name=cluster.name,\n    node_role_arn=node_role.arn,\n    subnet_ids=private_subnet_ids,\n    scaling_config={\n        \"desired_size\": 2,\n        \"min_size\": 2,\n        \"max_size\": 5,\n    },\n    instance_types=[\"t3.medium\"],\n)\n```\n\nIf this resource already exists in state, updating `scaling_config.max_size` is typically an **in-place update**, not a replacement.\n\n```python\nnode_group = aws.eks.NodeGroup(\n    \"app-ng\",\n    cluster_name=cluster.name,\n    node_role_arn=node_role.arn,\n    subnet_ids=private_subnet_ids,\n    scaling_config={\n        \"desired_size\": 2,\n        \"min_size\": 2,\n        \"max_size\": 10,  # changed\n    },\n    instance_types=[\"t3.medium\"],\n)\n```\n\n## Important\nDo **not** change:\n- Pulumi logical name: `\"app-ng\"`\n- immutable settings like subnet layout, role, or certain launch template bindings unless you\u2019ve confirmed update semantics\n\nThen run:\n\n```bash\npulumi preview\n```\n\nYou want to see:\n- `~ aws:eks/nodeGroup:NodeGroup app-ng update`\nand **not**\n- `-/+ ... replace`\n\n---\n\n# Option 3: Add AWS Auto Scaling policy to an existing Auto Scaling Group\nIf you manage a plain ASG directly, you can add scaling policies as separate resources. This is usually safe because the policy is a new attachment, not a mutation requiring replacement.\n\n```python\nimport pulumi_aws as aws\n\nasg = aws.autoscaling.Group.get(\n    \"existing-asg\",\n    \"my-existing-asg-name\"\n)\n\nscale_out_policy = aws.autoscaling.Policy(\n    \"scale-out-policy\",\n    autoscaling_group_name=asg.name,\n    adjustment_type=\"ChangeInCapacity\",\n    scaling_adjustment=1,\n    cooldown=300,\n)\n\ncpu_alarm = aws.cloudwatch.MetricAlarm(\n    \"high-cpu-alarm\",\n    comparison_operator=\"GreaterThanThreshold\",\n    evaluation_periods=2,\n    metric_name=\"CPUUtilization\",\n    namespace=\"AWS/EC2\",\n    period=120,\n    statistic=\"Average\",\n    threshold=70,\n    alarm_actions=[scale_out_policy.arn],\n    dimensions={\n        \"AutoScalingGroupName\": asg.name,\n    },\n)\n```\n\nThis creates:\n- a scaling policy\n- a CloudWatch alarm\n\nwithout replacing the ASG itself.\n\n---\n\n# How to avoid accidental replacement\n\n## 1. Keep the same Pulumi resource name\nBad:\n```python\nold_ng = aws.eks.NodeGroup(\"nodegroup\", ...)\n# later changed to\nnew_ng = aws.eks.NodeGroup(\"app-nodegroup\", ...)\n```\n\nThat looks like delete/create to Pulumi.\n\n## 2. Don\u2019t change immutable arguments\nFor example, changing some properties on EKS node groups or RDS instances can trigger replacement.\n\nAlways check with:\n\n```bash\npulumi preview --diff\n```\n\n## 3. Import if the resource exists but isn\u2019t in Pulumi state\nIf autoscaling-related AWS resources already exist outside Pulumi, import them first instead of recreating them.\n\nExample:\n\n```python\npolicy = aws.autoscaling.Policy(\n    \"scale-out-policy\",\n    autoscaling_group_name=\"my-existing-asg\",\n    adjustment_type=\"ChangeInCapacity\",\n    scaling_adjustment=1,\n    cooldown=300,\n    opts=pulumi.ResourceOptions(import_=\"scale-out-policy-name\"),\n)\n```\n\n## 4. Use `ignore_changes` only if truly necessary\nIf AWS mutates desired capacity dynamically and you don\u2019t want Pulumi to fight it:\n\n```python\nnode_group = aws.eks.NodeGroup(\n    \"app-ng\",\n    ...,\n    scaling_config={\n        \"desired_size\": 2,\n        \"min_size\": 2,\n        \"max_size\": 10,\n    },\n    opts=pulumi.ResourceOptions(\n        ignore_changes=[\"scaling_config[0].desired_size\"]\n    )\n)\n```\n\nUse this carefully. It helps avoid drift battles, but don\u2019t mask real config issues.\n\n---\n\n# Recommended approach for your scenario\n\nGiven your canonical stack:\n- **stateless web app on EKS**\n- dev/prod via Pulumi stack configs\n\nThe most idiomatic addition is:\n\n1. **HPA for the web deployment**\n2. **Cluster Autoscaler or Karpenter for node scaling**\n3. If staying minimal, update EKS node group `min/max/desired` in-place only\n\nUse stack config for env-specific values:\n\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  app:minReplicas: 2\n  app:maxReplicas: 4\n  app:nodeDesired: 2\n  app:nodeMin: 2\n  app:nodeMax: 4\n```\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  app:minReplicas: 4\n  app:maxReplicas: 10\n  app:nodeDesired: 4\n  app:nodeMin: 4\n  app:nodeMax: 8\n```\n\nPython:\n\n```python\nimport pulumi\nimport pulumi_aws as aws\nimport pulumi_kubernetes as k8s\n\nconfig = pulumi.Config(\"app\")\nnode_desired = config.require_int(\"nodeDesired\")\nnode_min = config.require_int(\"nodeMin\")\nnode_max = config.require_int(\"nodeMax\")\nmin_replicas = config.require_int(\"minReplicas\")\nmax_replicas = config.require_int(\"maxReplicas\")\n\n# existing node group: keep same name\nnode_group = aws.eks.NodeGroup(\n    \"app-ng\",\n    cluster_name=cluster.name,\n    node_role_arn=node_role.arn,\n    subnet_ids=private_subnet_ids,\n    scaling_config={\n        \"desired_size\": node_desired,\n        \"min_size\": node_min,\n        \"max_size\": node_max,\n    },\n    instance_types=[instance_type],\n    opts=pulumi.ResourceOptions(\n        ignore_changes=[\"scaling_config[0].desired_size\"]\n    ),\n)\n\nhpa = k8s.autoscaling.v2.HorizontalPodAutoscaler(\n    \"web-hpa\",\n    metadata={\"namespace\": \"default\"},\n    spec={\n        \"scaleTargetRef\": {\n            \"apiVersion\": \"apps/v1\",\n            \"kind\": \"Deployment\",\n            \"name\": \"web\",\n        },\n        \"minReplicas\": min_replicas,\n        \"maxReplicas\": max_replicas,\n        \"metrics\": [{\n            \"type\": \"Resource\",\n            \"resource\": {\n                \"name\": \"cpu\",\n                \"target\": {\n                    \"type\": \"Utilization\",\n                    \"averageUtilization\": 70,\n                },\n            },\n        }],\n    }\n)\n```\n\n---\n\n# Practical rule\nIf your preview shows:\n- **create** for new autoscaling resources\n- **update** for existing scalable resources\n\nyou\u2019re safe.\n\nIf it shows:\n- **replace** for EKS node group, ASG, RDS, ALB, etc.\n\nstop and inspect which property caused it.\n\n---\n\nIf you want, I can give you a **concrete Pulumi Python patch** for:\n1. **EKS managed node group autoscaling**\n2. **Kubernetes HPA**\n3. **ASG + CloudWatch scaling policy**\n\nbased on your current code structure.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_2.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_3.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_4.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_5.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_6.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9v6k0obr/generated_7.py"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/pulumi-python/warm/T3-modify_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

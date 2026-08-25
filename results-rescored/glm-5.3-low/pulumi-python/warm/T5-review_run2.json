@@ -1,0 +1,92 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 636,
+    "output": 1021
+  },
+  "content": "# Pulumi Preview Security Review\n\n## Findings Summary\n\n| # | Severity | Finding | Resource |\n|---|----------|---------|----------|\n| 1 | \ud83d\udd34 Critical | Database password exposed as plaintext stack output | `Output(\"db_connection_string\")` |\n| 2 | \ud83d\udd34 Critical | Stateful resource (RDS instance) scheduled for **replace**, not update | `aws:rds/Instance` |\n| 3 | \ud83d\udfe0 High | RDS/S3 resources missing `protect: true` \u2014 combined with #2, destroy risk | `aws:rds/Instance`, `aws:s3/Bucket` |\n| 4 | \ud83d\udfe1 Medium | Replacement triggered by immutable `password`/`instance_class` change propagating from #1 | \u2014 |\n\n---\n\n## Finding 1 \u2014 Secret in plaintext output\n\n**Evidence (preview JSON):**\n\n```json\n\"outputs\": {\n  \"db_connection_string\": {\n    \"type\": \"string\",\n    \"value\": \"postgresql://appuser:S3cr3t-P@ss@mydb.abc123.us-east-1.rds.amazonaws.com:5432/appdb\"\n  }\n}\n```\n\n**Problem:** The value appears in the preview output, meaning it will be stored **in plaintext in the Pulumi state file** and visible to anyone with stack read access \u2014 violating Acceptance Criterion 3.\n\n**Fix:** Mark the output as secret so it is encrypted in state and masked in previews:\n\n```python\nconfig = pulumi.Config()\ndb_password = config.require_secret(\"db_password\")  # never require()\n\npulumi.export(\"db_connection_string\",\n    pulumi.Output.secret(f\"postgresql://appuser:{db_password}@{endpoint}:5432/appdb\"))\n```\n\nVerify in preview: output should show `[secret]`.\n\n---\n\n## Finding 2 \u2014 Replacement of stateful resource\n\n**Evidence:**\n\n```json\n{\n  \"urn\": \"urn:pulumi:prod::webapp::aws:rds/instance/Instance:Instance\",\n  \"type\": \"replace\",\n  \"replaceReasons\": [\"resource is being replaced due to a change in an immutable input property\"],\n  \"diffs\": [\"password\", \"instanceClass\"]\n}\n```\n\n**Problem:** Changing the RDS password is an **immutable** input \u2192 Pulumi plans a full destroy-and-recreate. The database (and its storage) will be destroyed when the preview is applied, causing data loss and downtime in prod.\n\n**Fix \u2014 two options:**\n\n1. **Apply password changes out-of-band** (rotate via `modify_db_instance` / Secrets Manager), keeping IaC password stable, or accept a maintenance-window `create_before_destroy` with a final snapshot:\n\n```python\ndb = aws.rds.Instance(\"appdb\",\n    ...,\n    final_snapshot=True,\n    opts=pulumi.ResourceOptions(replace_on_changes=[\"instanceClass\"]))\n```\n\n2. **Sizing change** (`db.t3.medium`) should be reviewed against Criterion 7 \u2014 run against prod in a planned window, not bundled with a secret rotation.\n\n---\n\n## Finding 3 \u2014 Missing `protect` flag\n\n**Evidence:** RDS instance and S3 bucket (with versioned objects, replication config) show no protect metadata; combined with Finding 2's replace plan, the stateful resources are one `pulumi up` away from destruction.\n\n**Fix:**\n\n```python\ndb = aws.rds.Instance(\"appdb\", ..., \n    opts=pulumi.ResourceOptions(protect=True))\n\nbucket = aws.s3.Bucket(\"app-assets\", ...,\n    opts=pulumi.ResourceOptions(protect=True))\n```\n\nNote `protect` will also *block* the replacement in Finding 2 until explicitly acknowledged (`pulumi state unprotect`) \u2014 a useful safety interlock. Verify `deletion_protection=True` is also set on the RDS instance itself (Acceptance Criterion 2).\n\n---\n\n## Recommended Action\n\n1. **Do not apply this preview.** It will destroy the prod database.\n2. Convert the secret to `require_secret` + `Output.secret` (Finding 1), **rotate the exposed credential** \u2014 it is now in state/CI logs and must be considered compromised.\n3. Add `protect=True` to RDS and S3; add `deletion_protection`.\n4. Re-run `pulumi preview --show-secrets=false` and confirm the only remaining diff is the intended instance-class change, applied during a maintenance window.\n\n## What Looks Good\n\n- No wildcard IAM actions observed in the diff (`iam:Role` diffs limited to trust policy).\n- Bucket retains versioning/SSE; no public-access policy changes.\n- EKS node group changes are update-in-place (desired size/instance type via managed node group), not replacement.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-liggvbrm/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-liggvbrm/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-liggvbrm/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-liggvbrm/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-liggvbrm/generated_2.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-python/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

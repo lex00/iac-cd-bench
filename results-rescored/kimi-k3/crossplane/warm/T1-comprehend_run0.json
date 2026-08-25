@@ -1,0 +1,85 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 671,
+    "output": 1540
+  },
+  "content": "Here is the trace of the reconciliation flow when `storageGB` mutates from `20` to `50`, assuming a standard Crossplane v1.x architecture with an XRD exposing `storageGB`, a Composition mapping that field to an RDS `Instance`, and an S3 `Bucket` managed independently.\n\n---\n\n### 1. Trace: Claim \u2192 XRD \u2192 Composition \u2192 Managed Resources\n\n**Step 1: Claim Mutation**\nYou patch the Claim (e.g., `kubectl patch claim my-db-claim --type merge -p '{\"spec\":{\"storageGB\":50}}'`).  \nThe Claim\u2019s `spec.storageGB` is now `50`, but the `status` remains `Ready: True` (for now).\n\n**Step 2: XRD Validation & Composite Creation**\nThe Claim is bound to a Composite Resource (XR) defined by the XRD (`xmydatabase.example.org`).  \nThe XRD\u2019s OpenAPI schema validates the new value (e.g., ensuring `50` is an integer, within maximum constraints if defined).  \nThe XR (`my-db-claim-xrd-abc123`) is updated to reflect `spec.storageGB: 50`.\n\n**Step 3: Composition Selection**\nThe XR references a `Composition` via `compositionRef` or the Claim\u2019s `compositionSelector`.  \nCrossplane evaluates the Composition\u2019s `compositeTypeRef` and `environment` selectors. Assuming a single Composition matches, it is selected.\n\n**Step 4: Resource Template Reconciliation**\nThe Composition controller lists its `resources` array. For each template:\n- **RDS Instance**: The template contains `spec.forProvider.allocatedStorage: 20` (or a patch from `spec.storageGB`).  \n  Crossplane computes the desired state: `allocatedStorage` must become `50`.  \n  It generates a `Managed Resource` (MR) manifest for the RDS Instance and submits it to the API server.\n- **S3 Bucket**: The template does **not** reference `storageGB`.  \n  The desired state for the Bucket is unchanged (versioning, encryption, replication rules remain as defined in the Composition).\n\n**Step 5: Managed Resource Update**\nThe RDS `Instance` MR (kind: `Instance.rds.aws.crossplane.io`) is updated in the cluster.  \nIts `spec.forProvider.allocatedStorage` field now reads `50`.\n\n---\n\n### 2. RDS Instance: In-Place Update\n\n**Updated in-place.**\n\nCrossplane delegates the actual cloud operation to the AWS Provider (specifically, the RDS controller).  \nWhen the RDS controller observes the drift between `spec.forProvider.allocatedStorage: 50` and the actual AWS state (`20`), it invokes the AWS RDS `ModifyDBInstance` API.\n\n- **Behavior**: AWS RDS supports online storage scaling. The instance remains available; storage is expanded in the background (or immediately, depending on storage type).\n- **No Recreation**: The DB instance identifier, endpoint, and data are preserved. The `Instance` MR\u2019s `metadata.uid` does not change; it is the same Kubernetes object, updated.\n- **Status**: The MR enters `Ready: False` (or `Syncing`) while AWS reports `modifying`, then returns to `Ready: True` once the modification completes.\n\n---\n\n### 3. S3 Bucket: Unchanged\n\n**No operation.**\n\nThe S3 Bucket MR (`Bucket.s3.aws.crossplane.io`) is not a function of `storageGB`.  \nIts desired state (from the Composition) is identical to its current state:\n- Versioning: `Enabled`\n- Encryption: `AES256` (or KMS)\n- Public Access Block: `Restricted`\n- Replication: (Prod only) rules pointing to `us-west-2`\n\nCrossplane\u2019s reconciliation loop for the Bucket MR detects **zero drift**. It performs no API calls to AWS S3. The bucket remains untouched.\n\n---\n\n### 4. Role of `ReadinessChecks`\n\n`ReadinessChecks` in the Composition define **when the XR (and thus the Claim) is considered Ready**, but they do **not** block the update of the RDS instance itself.\n\n- **During Update**: While the RDS MR is `modifying`, its `status.conditions` may show `Ready: False`.  \n  If the Composition has a `ReadinessCheck` for the RDS resource (e.g., checking `status.conditions[?type=='Ready'].status == 'True'`), the XR\u2019s `Ready` condition will flip to `False`.\n- **Claim Visibility**: The Claim reflects the XR\u2019s status. During the storage modification, the Claim shows `Ready: False`, signaling to the user/application that the database is not yet fully reconciled to the new specification.\n- **Completion**: Once AWS confirms the modification and the RDS MR reports `Ready: True`, the ReadinessCheck passes, the XR becomes `Ready: True`, and the Claim follows suit.\n\n**Key distinction**: ReadinessChecks gate the *Claim\u2019s* readiness signal, not the underlying cloud resource operation. The RDS instance is modified regardless; the checks merely report when it is safe to consume.\n\n---\n\n### 5. Crossplane Reconciliation Loop\n\nCrossplane operates on a **level-based, declarative reconcile loop** (not edge-based). Here is the specific cycle for this change:\n\n1. **Observe**: The Composition controller watches the XR. It detects the generation change (triggered by the Claim update).\n2. **Diff**: For each resource template in the Composition, Crossplane computes the desired state and compares it to the existing MR in the cluster (via `kubectl get` or cached informers).\n   - RDS: Drift detected (`20` vs `50`).\n   - S3: No drift.\n3. **Apply**: Crossplane uses **server-side apply** (or creates/updates) to sync the MR manifests. It sets `metadata.ownerReferences` to the XR, ensuring garbage collection if the XR is deleted.\n4. **Status Propagation**: The RDS MR controller (AWS Provider) reconciles with AWS. It updates `status.atProvider.allocatedStorage` and `status.conditions`.\n5. **Requeue**: The Composition controller requeues the XR after a short interval (default `1s` exponential backoff, capped) to re-evaluate readiness until all `ReadinessChecks` pass.\n6. **Completion**: Once all MRs are `Ready` and `Synced`, the XR status is updated. The Claim observes the XR status and reports `Ready: True`.\n\n**Idempotency**: If you apply `storageGB: 50` again, the loop detects no drift and performs no cloud API calls.\n\n---\n\n### Summary Table\n\n| Component | Action on `storageGB: 20\u219250` | Cloud Operation |\n|-----------|------------------------------|-----------------|\n| **Claim** | `spec` updated; `status.Ready` flips `False` \u2192 `True` | None |\n| **XR** | Reconciled by Composition controller | None |\n| **RDS MR** | `spec.forProvider.allocatedStorage` updated | `ModifyDBInstance` (in-place) |\n| **S3 MR** | Ignored (no drift) | None |\n| **ReadinessChecks** | Gate XR/Claim `Ready` status during modification | None |\n\n**Isolation Note**: If this Claim is in the `prod` environment (per the spec), the `dev` Composition and its MRs are entirely unaffected, satisfying the environment isolation acceptance criterion.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/crossplane/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 989,
+    "output": 906
+  },
+  "content": "## 1. Which property triggered the replace?\n\nPulumi marks a resource for **replace** when any property that the provider schema flags as **ForceNew** (immutable) changes. For the RDS instance in this scenario, the likely culprits are:\n\n- **`instanceClass` changed** \u2014 e.g., bumping from `db.t3.micro` (dev) to `db.t3.medium` (prod sizing) is normally an in-place update, *but* if it's combined with a `provider`/region change (the spec uses different regions per env), the **region/availability zone change forces replacement**.\n- **`engine` or `engineVersion`** changes \u2014 immutable, forces replace.\n- **`allocatedStorage` decreased** \u2014 RDS can grow but not shrink in place, so a smaller value forces replacement.\n- **Identifier collision pattern**: `identifier` changes also force a new instance.\n\nHow to confirm from the preview itself:\n\n```bash\npulumi preview --diff --show-secrets\n```\n\nThe output will annotate the offending field, e.g.:\n\n```\n~ engineVersion: \"15.3\" => \"15.5\"       (forces replacement)\n```\n\nThe line with `(forces replacement)` is your answer. In this stack, the most probable trigger is the **region/engine mismatch introduced by applying prod sizing/config to what was dev state**, or an immutable field drifting via stack config (`prod.yaml` vs `dev.yaml`).\n\n## 2. What does `pulumi up --target` skip?\n\n```bash\npulumi up --target urn-of-the-db\n```\n\n- Applies changes **only** to the explicitly targeted resource URN(s).\n- **Skips**: every other resource in the program \u2014 the EKS cluster, S3 bucket, IAM role, ALB/CloudFront \u2014 even if they have pending diffs. Those diffs remain in state as pending until a full `pulumi up` runs.\n- **Caveat \u2014 dependencies**: if the targeted resource *depends on* another resource that itself has changes, Pulumi will also apply the minimum necessary upstream changes (`--target-dependents` controls related behavior). Conversely, `--target-replaces` forces replacement of the target without diffs.\n- If a **new** resource would be created that is a dependency of the target, targeting can fail or leave the stack partially applied \u2014 targeted operations are for surgical fixes, not first deployments.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **Declaration**: `config.require_secret(\"db_password\")` returns an `Output` wrapped as a secret. Reading it with plain `require()` stores it in cleartext in both state and preview \u2014 a pitfall the docs call out.\n- **In state**: the value is encrypted using the stack's passphrase or KMS key (`secretsprovider`), never persisted plaintext.\n- **In CLI output / `pulumi export`**: rendered as `[secret]` unless you pass `--show-secrets` (which requires decryption rights).\n- **Propagation**: any Output derived from a secret via `.apply()` or interpolation (e.g., the DB connection string built from password) **retains its secret-ness automatically** \u2014 Pulumi taints the whole derived Output.\n- **Exports**: `pulumi.export(\"conn_string\", conn)` \u2014 if any input was secret, the exported value is `[secret]` in `stack output` listings and encrypted in the state file.\n- **In diffs**: `--diff` shows secret properties as `[secret]` changed, so drift on secret fields is visible without leaking values.\n\nThis maps directly to the acceptance criterion: the DB connection string must never appear in plaintext in Git or state \u2014 `require_secret` + derived-Output tainting satisfies it idiomatically in Pulumi.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-6wmj1f7o/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/pulumi-python/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

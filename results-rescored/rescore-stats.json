@@ -1,0 +1,829 @@
+[
+  {
+    "set": "claude-opus-5",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 58,
+    "num_invalid": 32,
+    "num_scored": 58,
+    "reject_reasons": {
+      "empty_completion": 31,
+      "no_extractable_output": 31,
+      "all_stages_inapplicable": 2,
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6419753086419753,
+    "avg_corrected_composite": 0.44033935413245756,
+    "avg_corrected_composite_no_idiom": 0.5035919540229885,
+    "avg_corrected_composite_zero_filled": 0.2837742504409171,
+    "by_stack_avg_published": {
+      "knr-ops": 0.5987654320987654,
+      "crossplane": 0.6975308641975309,
+      "terraform": 0.6358024691358025,
+      "pulumi-python": 0.654320987654321,
+      "pulumi-typescript": 0.6234567901234568
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.3932980599647266,
+      "crossplane": 0.47619047619047616,
+      "terraform": 0.4669312169312169,
+      "pulumi-python": 0.4497354497354497,
+      "pulumi-typescript": 0.4497354497354497
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "claude-opus-5/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-5/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-5/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-5/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-5/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-5/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "claude-opus-5-low",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 66,
+    "num_invalid": 24,
+    "num_scored": 66,
+    "reject_reasons": {
+      "tool_missing_scored_as_pass": 16,
+      "runner_error": 8,
+      "empty_completion": 8,
+      "no_extractable_output": 2
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 39,
+      "semantic": 27
+    },
+    "avg_published_composite": 0.5971781305114638,
+    "avg_corrected_composite": 0.41422158088824756,
+    "avg_corrected_composite_no_idiom": 0.47357503607503604,
+    "avg_corrected_composite_zero_filled": 0.30376249265138155,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6522633744855967,
+      "crossplane": 0.6234567901234568,
+      "terraform": 0.5455614344503233,
+      "pulumi-python": 0.6522633744855967,
+      "pulumi-typescript": 0.5123456790123456
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.43974132863021753,
+      "crossplane": 0.40828924162257496,
+      "terraform": 0.3982951205173427,
+      "pulumi-python": 0.4497354497354497,
+      "pulumi-typescript": 0.2857142857142857
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "claude-opus-5-low/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-5-low/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-5-low/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "claude-opus-4-8",
+    "total": 75,
+    "num_valid": 0,
+    "num_partial": 57,
+    "num_invalid": 18,
+    "num_scored": 57,
+    "reject_reasons": {
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 30,
+      "static": 30,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6198941798941799,
+    "avg_corrected_composite": 0.35296574770258976,
+    "avg_corrected_composite_no_idiom": 0.406641604010025,
+    "avg_corrected_composite_zero_filled": 0.26825396825396824,
+    "by_stack_avg_published": {
+      "knr-ops": 0.654320987654321,
+      "crossplane": 0.6370370370370371,
+      "terraform": 0.5562610229276896,
+      "pulumi-python": 0.6370370370370371,
+      "pulumi-typescript": 0.6148148148148148
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.3479717813051146,
+      "crossplane": 0.3851851851851852,
+      "terraform": 0.37954144620811286,
+      "pulumi-python": 0.2857142857142857,
+      "pulumi-typescript": 0.2857142857142857
+    },
+    "per_run_composite_increases": []
+  },
+  {
+    "set": "claude-opus-4-8-low",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 72,
+    "num_invalid": 18,
+    "num_scored": 72,
+    "reject_reasons": {
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6502645502645503,
+    "avg_corrected_composite": 0.440108759553204,
+    "avg_corrected_composite_no_idiom": 0.5026868386243386,
+    "avg_corrected_composite_zero_filled": 0.3520870076425632,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6316872427983539,
+      "crossplane": 0.6790123456790123,
+      "terraform": 0.6340388007054674,
+      "pulumi-python": 0.676954732510288,
+      "pulumi-typescript": 0.6296296296296297
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.4134332745443856,
+      "crossplane": 0.4598765432098766,
+      "terraform": 0.43738977072310403,
+      "pulumi-python": 0.4497354497354497,
+      "pulumi-typescript": 0.4497354497354497
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "claude-opus-4-8-low/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-4-8-low/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-4-8-low/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "gpt-5.4",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 69,
+    "num_invalid": 21,
+    "num_scored": 69,
+    "reject_reasons": {
+      "content_too_short": 3,
+      "no_extractable_output": 3,
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6408583186360964,
+    "avg_corrected_composite": 0.42837972548117476,
+    "avg_corrected_composite_no_idiom": 0.48930296756383707,
+    "avg_corrected_composite_zero_filled": 0.328424456202234,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6502057613168725,
+      "crossplane": 0.654320987654321,
+      "terraform": 0.6008230452674898,
+      "pulumi-python": 0.6693121693121693,
+      "pulumi-typescript": 0.6296296296296297
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.43897707231040567,
+      "crossplane": 0.42592592592592593,
+      "terraform": 0.4041740152851264,
+      "pulumi-python": 0.4426807760141094,
+      "pulumi-typescript": 0.4497354497354497
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "gpt-5.4/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "gpt-5.4-low",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 72,
+    "num_invalid": 18,
+    "num_scored": 72,
+    "reject_reasons": {
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.648206937095826,
+    "avg_corrected_composite": 0.4241255144032922,
+    "avg_corrected_composite_no_idiom": 0.4844576719576719,
+    "avg_corrected_composite_zero_filled": 0.33930041152263374,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6584362139917695,
+      "crossplane": 0.6666666666666666,
+      "terraform": 0.5887713109935332,
+      "pulumi-python": 0.6728395061728395,
+      "pulumi-typescript": 0.6543209876543209
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.4216637272192828,
+      "crossplane": 0.42063492063492064,
+      "terraform": 0.40446796002351554,
+      "pulumi-python": 0.4497354497354497,
+      "pulumi-typescript": 0.4497354497354497
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "gpt-5.4-low/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4-low/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4-low/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4-low/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4-low/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.4-low/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "gpt-5.6-sol-low",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 71,
+    "num_invalid": 19,
+    "num_scored": 71,
+    "reject_reasons": {
+      "all_stages_inapplicable": 1,
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6575543797766019,
+    "avg_corrected_composite": 0.43062076160667706,
+    "avg_corrected_composite_no_idiom": 0.49170020120724345,
+    "avg_corrected_composite_zero_filled": 0.33971193415637857,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6604938271604939,
+      "crossplane": 0.6666666666666666,
+      "terraform": 0.6169900058788947,
+      "pulumi-python": 0.6851851851851852,
+      "pulumi-typescript": 0.6584362139917695
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.4187675070028011,
+      "crossplane": 0.42063492063492064,
+      "terraform": 0.4326866549088771,
+      "pulumi-python": 0.4497354497354497,
+      "pulumi-typescript": 0.4497354497354497
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "gpt-5.6-sol-low/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.6-sol-low/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.6-sol-low/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.6-sol-low/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.6-sol-low/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "gpt-5.6-sol-low/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "glm-5.3",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 72,
+    "num_invalid": 18,
+    "num_scored": 72,
+    "reject_reasons": {
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6422692533803644,
+    "avg_corrected_composite": 0.41640946502057613,
+    "avg_corrected_composite_no_idiom": 0.4755291005291006,
+    "avg_corrected_composite_zero_filled": 0.3331275720164609,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6255144032921811,
+      "crossplane": 0.6604938271604939,
+      "terraform": 0.6146384479717812,
+      "pulumi-python": 0.6748971193415638,
+      "pulumi-typescript": 0.6358024691358025
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.3865373309817754,
+      "crossplane": 0.4113756613756614,
+      "terraform": 0.41798941798941797,
+      "pulumi-python": 0.4497354497354497,
+      "pulumi-typescript": 0.4497354497354497
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "glm-5.3/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "glm-5.3-low",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 72,
+    "num_invalid": 18,
+    "num_scored": 72,
+    "reject_reasons": {
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.639564961787184,
+    "avg_corrected_composite": 0.43007789535567315,
+    "avg_corrected_composite_no_idiom": 0.4914021164021164,
+    "avg_corrected_composite_zero_filled": 0.3440623162845385,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6507936507936507,
+      "crossplane": 0.6728395061728395,
+      "terraform": 0.5814226925338036,
+      "pulumi-python": 0.6631393298059964,
+      "pulumi-typescript": 0.6296296296296295
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.414021164021164,
+      "crossplane": 0.4506172839506173,
+      "terraform": 0.40946502057613166,
+      "pulumi-python": 0.4426807760141094,
+      "pulumi-typescript": 0.4497354497354497
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "glm-5.3-low/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6031746031746033,
+        "corrected": 0.7142857142857143,
+        "delta": 0.11111111111111105
+      },
+      {
+        "source_file": "glm-5.3-low/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3-low/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3-low/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3-low/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "glm-5.3-low/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "kimi-k3",
+    "total": 75,
+    "num_valid": 0,
+    "num_partial": 54,
+    "num_invalid": 21,
+    "num_scored": 54,
+    "reject_reasons": {
+      "agent_transcript": 1,
+      "content_too_short": 2,
+      "no_extractable_output": 2,
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 30,
+      "static": 30,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.642962962962963,
+    "avg_corrected_composite": 0.3584656084656085,
+    "avg_corrected_composite_no_idiom": 0.41820987654320985,
+    "avg_corrected_composite_zero_filled": 0.2580952380952381,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6518518518518518,
+      "crossplane": 0.725925925925926,
+      "terraform": 0.5703703703703703,
+      "pulumi-python": 0.6370370370370371,
+      "pulumi-typescript": 0.6296296296296297
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.35714285714285715,
+      "crossplane": 0.4523809523809524,
+      "terraform": 0.32380952380952377,
+      "pulumi-python": 0.2857142857142857,
+      "pulumi-typescript": 0.2857142857142857
+    },
+    "per_run_composite_increases": []
+  },
+  {
+    "set": "qwen 3.8 - local",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 46,
+    "num_invalid": 44,
+    "num_scored": 46,
+    "reject_reasons": {
+      "content_too_short": 37,
+      "no_extractable_output": 37,
+      "all_stages_inapplicable": 6,
+      "tool_missing_scored_as_pass": 18,
+      "agent_transcript": 1
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6774250440917108,
+    "avg_corrected_composite": 0.4772256728778468,
+    "avg_corrected_composite_no_idiom": 0.5436076604554865,
+    "avg_corrected_composite_zero_filled": 0.24391534391534392,
+    "by_stack_avg_published": {
+      "knr-ops": 0.6710758377425043,
+      "crossplane": 0.7222222222222222,
+      "terraform": 0.6781305114638447,
+      "pulumi-python": 0.681657848324515,
+      "pulumi-typescript": 0.6340388007054674
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.4462081128747795,
+      "crossplane": 0.5113378684807256,
+      "terraform": 0.43562610229276894,
+      "pulumi-python": 0.4875283446712018,
+      "pulumi-typescript": 0.4920634920634921
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "qwen 3.8 - local/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6349206349206349,
+        "corrected": 0.746031746031746,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6349206349206349,
+        "corrected": 0.746031746031746,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "qwen 3.8 - local-low",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 72,
+    "num_invalid": 18,
+    "num_scored": 72,
+    "reject_reasons": {
+      "tool_missing_scored_as_pass": 18
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 45,
+      "static": 45,
+      "semantic": 30
+    },
+    "avg_published_composite": 0.6212815990593767,
+    "avg_corrected_composite": 0.4471266901822457,
+    "avg_corrected_composite_no_idiom": 0.5108300264550265,
+    "avg_corrected_composite_zero_filled": 0.35770135214579657,
+    "by_stack_avg_published": {
+      "knr-ops": 0.5946502057613169,
+      "crossplane": 0.6596119929453264,
+      "terraform": 0.6255144032921811,
+      "pulumi-python": 0.6358024691358025,
+      "pulumi-typescript": 0.5908289241622575
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.4196061140505585,
+      "crossplane": 0.4435626102292769,
+      "terraform": 0.47736625514403286,
+      "pulumi-python": 0.4497354497354497,
+      "pulumi-typescript": 0.4462081128747795
+    },
+    "per_run_composite_increases": [
+      {
+        "source_file": "qwen 3.8 - local-low/knr-ops/warm/T6-semantics_run0.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local-low/knr-ops/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local-low/knr-ops/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local-low/pulumi-typescript/warm/T6-semantics_run0.json",
+        "published": 0.6349206349206349,
+        "corrected": 0.746031746031746,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local-low/pulumi-typescript/warm/T6-semantics_run1.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      },
+      {
+        "source_file": "qwen 3.8 - local-low/pulumi-typescript/warm/T6-semantics_run2.json",
+        "published": 0.6666666666666666,
+        "corrected": 0.7777777777777778,
+        "delta": 0.11111111111111116
+      }
+    ]
+  },
+  {
+    "set": "qwen36-local",
+    "total": 90,
+    "num_valid": 0,
+    "num_partial": 61,
+    "num_invalid": 29,
+    "num_scored": 61,
+    "reject_reasons": {
+      "no_extractable_output": 15,
+      "runner_error": 19,
+      "empty_completion": 19,
+      "tool_missing_scored_as_pass": 9,
+      "content_too_short": 1
+    },
+    "retroactively_skipped_stage_counts": {
+      "lint": 36,
+      "static": 27,
+      "semantic": 27
+    },
+    "avg_published_composite": 0.6172839506172839,
+    "avg_corrected_composite": 0.3325526932084309,
+    "avg_corrected_composite_no_idiom": 0.3879781420765027,
+    "avg_corrected_composite_zero_filled": 0.22539682539682537,
+    "by_stack_avg_published": {
+      "knr-ops": 0.662962962962963,
+      "crossplane": 0.7185185185185186,
+      "terraform": 0.5333333333333333,
+      "pulumi-python": 0.4444444444444444,
+      "pulumi-typescript": 0.6814814814814815
+    },
+    "by_stack_avg_corrected": {
+      "knr-ops": 0.31773399014778325,
+      "crossplane": 0.4142857142857143,
+      "terraform": 0.2857142857142857,
+      "pulumi-python": null,
+      "pulumi-typescript": 0.2857142857142857
+    },
+    "per_run_composite_increases": []
+  }
+]

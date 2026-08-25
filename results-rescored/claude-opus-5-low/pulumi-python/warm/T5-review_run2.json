@@ -1,0 +1,90 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1058,
+    "output": 2510
+  },
+  "content": "## Missing artifact\n\nNo preview JSON was attached. I can't report findings on a document I haven't seen, and I'm not going to invent resource URNs or diffs. Paste the output of:\n\n```bash\npulumi preview --stack prod --json > preview-prod.json\n```\n\n(Include `--diff` if you want property-level change detail \u2014 without it, `detailedDiff` is often absent and replacement *causes* can't be attributed.)\n\nIn the meantime, here is the exact review procedure I'll run against it, so you can pre-check or trim the file.\n\n---\n\n## What I look for, and where it lives in the JSON\n\n### 1. Secrets in plaintext outputs\n\nPulumi preview JSON has two leak surfaces:\n\n**a. Stack outputs.** In `steps[]` where `\"type\": \"pulumi:pulumi:Stack\"`, inspect `newState.outputs`. A properly secret-marked output serializes as:\n\n```json\n\"dbConnectionString\": {\n  \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\",\n  \"plaintext\": \"\\\"[secret]\\\"\"\n}\n```\n\nThe sentinel `4dabf18193072939515e22adb298388d` is the secret marker. If the value is a bare string instead \u2014 `\"dbConnectionString\": \"postgres://app:hunter2@...\"` \u2014 that's a **HIGH** finding: the value is in the state file, in CI logs, and readable by anyone with `pulumi stack output`.\n\n**b. Resource inputs.** Even a correctly-marked output doesn't help if the input was never a `Secret`. Check `newState.inputs` on the `aws:rds/instance:Instance` for `password`, and on any `kubernetes:core/v1:Secret` for `stringData`. Per the spec these must come from `config.require_secret()` / `ConfigSecret`, not `config.require()`.\n\nAlso grep for `masterPassword`, `secretString`, `stringData`, `password`, `token`, `apiKey` across the whole file regardless of nesting.\n\nRemediation:\n\n```python\nconfig = pulumi.Config()\ndb_password = config.require_secret(\"dbPassword\")   # not require()\n\npulumi.export(\"db_connection_string\",\n    pulumi.Output.secret(\n        pulumi.Output.concat(\"postgres://app:\", db_password, \"@\", db.address, \":5432/app\")\n    ))\n```\n\nAnd set it encrypted at rest, never in `Pulumi.prod.yaml` plaintext:\n\n```bash\npulumi config set --secret --stack prod dbPassword '...'\n```\n\n### 2. Replacement of stateful resources\n\nScan `steps[]` for `\"op\": \"replace\"`, `\"op\": \"create-replacement\"`, `\"op\": \"delete-replaced\"`. Cross-reference the URN type against the stateful set:\n\n- `aws:rds/instance:Instance` \u2014 **CRITICAL**. Replacement destroys the database. Snapshot restore is not automatic.\n- `aws:s3/bucket:Bucket` / `aws:s3/bucketV2:BucketV2` \u2014 **CRITICAL**. Delete fails if non-empty, or silently drops objects if `forceDestroy=true`. Check that input.\n- `aws:eks/cluster:Cluster` and `aws:eks/nodeGroup:NodeGroup` \u2014 **HIGH**. Full control-plane rebuild, new API endpoint, all workloads down.\n- `aws:iam/user:User` \u2014 **MEDIUM**. Invalidates existing access keys.\n\nThe `detailedDiff` object names the culprit property, e.g. `\"engineVersion\": {\"kind\": \"UPDATE_REPLACE\"}` or `\"availabilityZone\"`. Common accidental triggers in this spec: changing `bucket` name, flipping RDS `multiAz`/`storageEncrypted` (encryption is replace-only on existing instances), changing EKS `name` or subnet ordering.\n\nFor a prod stack, **any** replace step on RDS or S3 should block the deploy, not just be noted.\n\n### 3. Missing `protect`\n\nFor each stateful resource above, check `newState.protect`. Absent or `false` on prod is a finding \u2014 `protect: true` is what turns an accidental `pulumi destroy` or a replace-triggering diff into a hard error rather than data loss.\n\nNote this is distinct from the provider-side flag. Both are required:\n\n```python\ndb = aws.rds.Instance(\"app-db\",\n    deletion_protection=True,          # AWS-side, blocks DeleteDBInstance\n    backup_retention_period=14,        # spec requires >= 7\n    publicly_accessible=False,\n    storage_encrypted=True,\n    multi_az=True,\n    skip_final_snapshot=False,\n    final_snapshot_identifier=\"app-db-final\",\n    opts=pulumi.ResourceOptions(\n        protect=True,                  # Pulumi-side, blocks delete/replace\n        ignore_changes=[\"engineVersion\"],  # if minor-version auto-upgrade is on\n    ))\n```\n\nCorresponding checks the JSON should confirm on inputs, per the acceptance criteria:\n\n| Resource | Input to verify | Expected |\n|---|---|---|\n| S3 | `versioning.enabled` | `true` |\n| S3 | `serverSideEncryptionConfiguration` | AES256 or `aws:kms` |\n| S3 | `aws:s3/bucketPublicAccessBlock` present, all four flags | `true` |\n| RDS | `deletionProtection`, `publiclyAccessible`, `backupRetentionPeriod` | `true`, `false`, `>= 7` |\n| IAM | policy `Statement[].Action` | no `\"*\"` on prod |\n| EKS | `instanceTypes`, `scalingConfig.desiredSize` | `t3.large`/4 prod, `t3.medium`/2 dev |\n| ALB/CF | listener `port`, `certificateArn` | `443`, non-empty |\n\n### 4. Cross-stack contamination\n\nSince dev and prod must be independently deployable: confirm the preview's `config` block shows only the target stack's namespace, and that no `pulumi:pulumi:StackReference` reads *write* into the other environment. A prod preview showing any dev URN in its step list is an isolation failure.\n\n---\n\n## Output format you'll get\n\nOnce you paste the JSON, findings come back as:\n\n| # | Severity | URN | Field | Issue | Fix |\n|---|---|---|---|---|---|\n\nplus a **go / no-go** on applying the preview to prod.\n\n**One caveat on scope:** `pulumi preview --json` shows only *diffs and declared inputs*. It cannot tell me whether the encryption provider is a real KMS key vs. the default passphrase, whether `Pulumi.prod.yaml` has a plaintext secret that simply isn't diffed this run, or what's already in the historical state file. If you want those covered, also send `Pulumi.prod.yaml` and the output of `pulumi stack export --stack prod | jq '.deployment.secrets_providers'`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-f06n2vg7/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-f06n2vg7/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-f06n2vg7/generated_0.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/pulumi-python/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 783
+  },
+  "content": "## Security review summary\n\n| Severity | Finding | Risk | Required action |\n|---|---|---|---|\n| **Critical** | S3 bucket policy grants public read access | Any bucket objects may be anonymously retrieved, causing data exposure and violating the \u201cno public access\u201d requirement. | Remove the public `Principal`/read grant and enable S3 Block Public Access. Grant only the application or CloudFront identity the minimum required permissions. |\n| **Critical** | Plaintext password in Deployment environment variables | The credential is committed to Git, exposed in repository history and rendered manifests, and visible to users/processes that can inspect the Pod specification. | Remove it from Git, rotate/revoke it immediately, store it as a SOPS-encrypted Kubernetes Secret, and reference it with `secretKeyRef`. |\n| **Warning** | Containers have no resource limits | A compromised or malfunctioning container can exhaust node CPU/memory, causing denial of service or impacting neighboring workloads. | Define appropriate `resources.requests` and `resources.limits`, especially a memory limit, for every application container. |\n| **Info** | RDS instance class change | No security issue is apparent from the described change. | No security-specific change required, but confirm existing deletion protection, backup retention \u22657 days, encryption where required, and `publiclyAccessible: false` remain unchanged. |\n\n## Required changes before merge\n\n### 1. Remove public S3 access\n\nDelete policy statements equivalent to:\n\n```yaml\nPrincipal: \"*\"\nAction: s3:GetObject\n```\n\nEnsure account/bucket public-access blocking is enabled:\n\n- `BlockPublicAcls: true`\n- `IgnorePublicAcls: true`\n- `BlockPublicPolicy: true`\n- `RestrictPublicBuckets: true`\n\nIf assets must be delivered publicly, keep the bucket private and serve them through CloudFront using an Origin Access Control/Origin Access Identity with a narrowly scoped bucket policy.\n\n### 2. Remove and rotate the plaintext password\n\nDo not merely move the value into a plain Kubernetes `Secret`; base64 encoding is not encryption. For this stack:\n\n1. Remove the password from the Deployment and repository.\n2. Rotate the database/application credential because the committed value must be treated as compromised.\n3. Commit only a SOPS-encrypted Secret.\n4. Reference it from the Deployment:\n\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: app-db\n        key: password\n```\n\nIf the commit was pushed, consider repository-history cleanup according to organizational policy, but rotation is mandatory regardless.\n\n### 3. Add resource controls\n\nFor example:\n\n```yaml\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi\n```\n\nValues should be based on workload measurements and environment-specific overlays where appropriate.\n\n## Merge recommendation\n\n**Block the PR** until public S3 access is removed and the exposed password is rotated and replaced with a SOPS-managed secret reference. Resource limits should also be added before merge unless an explicitly documented policy provides them elsewhere, such as through namespace-level admission/defaulting.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/knr-ops/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 1263
+  },
+  "content": "# Security Review: PR Diff\n\n## Summary\n\nThis PR contains **2 critical** and **2 warning/info** level security issues that violate the canonical scenario acceptance criteria. **Do not merge** until the critical items are resolved.\n\n---\n\n## Issues Ranked by Severity\n\n### \ud83d\udd34 CRITICAL 1 \u2014 Public S3 bucket policy\n**What:** The new bucket policy grants `s3:GetObject` (public read) to `Principal: \"*\"`.\n\n**Why it's critical:**\n- Directly violates **Acceptance Criterion #1** (\"no public access\").\n- Exposes application assets to anyone on the internet \u2014 data leakage and a common breach vector.\n- Public buckets are frequently indexed/scanned; this is exploitable immediately on merge.\n\n**Fix before merge:**\n- Remove the wildcard `Principal` policy entirely.\n- Serve assets via CloudFront + Origin Access Control (OAC/OAI) instead of public reads.\n- Enable/keep the account + bucket-level **Block Public Access** settings so a stray policy can't re-open it.\n\n---\n\n### \ud83d\udd34 CRITICAL 2 \u2014 Plaintext DB password in deployment env vars\n**What:** The app Deployment sets the DB credential as a plaintext value in `env:`.\n\n**Why it's critical:**\n- Violates **Acceptance Criterion #3** (\"secret never stored in plaintext in Git\").\n- Committing secrets to Git means they live in history forever, visible to anyone with repo read access.\n- In this stack the idiomatic mechanism is **SOPS-encrypted secrets**.\n\n**Fix before merge:**\n- Move the credential into a **SOPS-encrypted Kubernetes Secret** and reference it via `envFrom`/`secretKeyRef`.\n- **Rotate the exposed password** \u2014 once committed it must be considered compromised, even after removal.\n- Scrub the value from Git history if already pushed.\n\n---\n\n### \ud83d\udfe1 WARNING \u2014 Missing resource limits on containers\n**What:** Containers have no `resources.limits` (and likely no `requests`).\n\n**Why it's a warning (not critical):**\n- Not a direct data-exposure issue, but it's a **denial-of-service / noisy-neighbor** risk: a runaway container can starve the node and take down co-located workloads.\n- Enables resource-exhaustion as an availability attack surface.\n\n**Fix before merge:**\n- Add `requests` and `limits` for CPU and memory.\n- Consider a namespace `LimitRange`/`ResourceQuota` to enforce defaults.\n\n---\n\n### \ud83d\udd35 INFO \u2014 RDS instance class change\n**What:** Instance class was modified.\n\n**Assessment:** No security impact on its own. Two things worth verifying while touching RDS config:\n- Confirm the change respects env sizing (dev `db.t3.micro`, prod `db.t3.medium`).\n- Confirm this diff didn't silently drop **deletion protection, backup retention \u2265 7 days, encryption, or `publiclyAccessible: false`** (Acceptance Criterion #2). If those are untouched, this is pure info.\n\n---\n\n## Merge Recommendation\n\n| # | Issue | Severity | Blocking? |\n|---|-------|----------|-----------|\n| 1 | Public S3 bucket policy | Critical | \u2705 Yes |\n| 2 | Plaintext DB password | Critical | \u2705 Yes |\n| 3 | Missing resource limits | Warning | \u26a0\ufe0f Recommended before merge |\n| 4 | RDS instance class change | Info | No |\n\n**Verdict: BLOCK.** Resolve both criticals (including secret rotation), add resource limits, and verify RDS guardrails weren't dropped, then re-review.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/knr-ops/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

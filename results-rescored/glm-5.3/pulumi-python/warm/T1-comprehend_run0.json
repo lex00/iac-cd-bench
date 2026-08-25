@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 989,
+    "output": 654
+  },
+  "content": "## Answers\n\n### 1. Which property triggered the replace?\n\nA **replace** happens when a **provider-assigned, force-new property** changes. For the RDS instance in this scenario, the typical culprit is **`instanceClass`** (e.g., `db.t3.micro` \u2192 `db.t3.medium` when promoting dev config to prod sizing). Other force-new RDS properties include `engine`, `engineVersion`, `allocatedStorage` (shrinks/changes), `identifier`/`name`, `storageType`, and `password` (unless `applyImmediately`/managed rotation handles it).\n\nNon-force-new properties like `multiAz`, `backupRetentionPeriod`, `deletionProtection`, or `publiclyAccessible` produce **in-place updates**, not replaces.\n\nTo identify it definitatively: read the preview diff \u2014 the property line marked with `~` under the resource with the `+replaced` flag, e.g.:\n\n```\n~ rds:index:Instance: (replace)\n    ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n```\n\nAlso note Pulumi shows `*forced replacement` annotations for properties flagged by the provider as requiring replacement.\n\n### 2. What does `pulumi up --target` skip?\n\n`--target` applies **only to the explicitly listed resources** (by URN, or via `--target urn:... --target-dependents`). Everything else in the program is skipped:\n\n- Resources **not in the target list are not created, updated, or deleted** \u2014 but they are still evaluated during preview.\n- Pending **deletions** of resources not targeted are skipped.\n- Critically, `--target` **does not skip dependency evaluation**: if a targeted resource depends on untarged resources, you must also pass `--target-dependents` (or target them too), or the operation can fail / create drift.\n- State for untargeted resources is left untouched \u2014 so the stack can drift from the program if you rely on `--target` repeatedly.\n\n### 3. How does Pulumi handle secrets in outputs?\n\n- Created via `config.require_secret(...)` (as this stack does for the DB connection string), `Output.secret(...)`, or `pulumi.secret(...)` \u2014 the value is **encrypted client-side with the stack's passphrase/KMS key** before ever leaving the process.\n- **In state:** stored encrypted; never plaintext.\n- **In `pulumi preview`/`pulumi up` logs and diffs:** rendered as `[secret]` \u2014 the actual value never appears.\n- **Secret-ness propagates:** any Output derived from a secret via `.apply()` or used in resource properties remains a secret (contagion), including in `pulumi.export()` stack outputs (shown as `[secret]`).\n- Caveat: if a secret flows into a property the cloud provider echoes back in plaintext (e.g., a `user_data` script), the value may be visible in the provider console/state outside Pulumi's control \u2014 so the connection string should be assembled as a secret Output, never concatenated as a plain string.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qli_jcg8/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/pulumi-python/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

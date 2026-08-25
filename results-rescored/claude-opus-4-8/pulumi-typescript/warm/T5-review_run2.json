@@ -1,0 +1,94 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 2321
+  },
+  "content": "I'll review a Pulumi preview JSON for the three security issue categories. Since no JSON was provided in the task, let me give you a review framework with a representative example, then the exact findings to look for.\n\n## Review Framework\n\nFor a Pulumi `preview --json` output, the relevant structures are:\n\n- `steps[]` \u2014 each has `op` (`create`, `update`, `replace`, `delete`, `same`), `oldState`, `newState`, `detailedDiff`\n- `steps[].newState.outputs` \u2014 resource outputs (secrets check)\n- `steps[].newState.additionalSecretOutputs` \u2014 which outputs Pulumi masks\n- `config` \u2014 stack config, secrets appear as `{\"secure\": \"...\"}` when encrypted\n\n---\n\n## Sample Preview JSON (representative of the scenario)\n\n```json\n{\n  \"config\": {\n    \"aws:region\": \"us-east-1\",\n    \"app:dbConnectionString\": \"postgresql://admin:P@ssw0rd@prod-db.xxxx.rds.amazonaws.com:5432/app\"\n  },\n  \"steps\": [\n    {\n      \"op\": \"replace\",\n      \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::appDb\",\n      \"oldState\": { \"type\": \"aws:rds/instance:Instance\",\n        \"outputs\": { \"deletionProtection\": false, \"identifier\": \"prod-app-db\" } },\n      \"newState\": { \"inputs\": { \"instanceClass\": \"db.t3.medium\", \"deletionProtection\": false } },\n      \"detailedDiff\": { \"engineVersion\": { \"kind\": \"UPDATE_REPLACE\" } }\n    },\n    {\n      \"op\": \"update\",\n      \"urn\": \"urn:pulumi:prod::app::aws:s3/bucket:Bucket::assets\",\n      \"newState\": {\n        \"inputs\": { \"bucket\": \"prod-app-assets\", \"versioning\": { \"enabled\": true } },\n        \"outputs\": { \"dbPassword\": \"P@ssw0rd\" }\n      },\n      \"additionalSecretOutputs\": []\n    }\n  ]\n}\n```\n\n---\n\n## Findings\n\n### \ud83d\udd34 CRITICAL \u2014 Secret in plaintext (config + output)\n\n**1. `app:dbConnectionString` stored as plaintext config**\n```json\n\"app:dbConnectionString\": \"postgresql://admin:P@ssw0rd@...\"\n```\n- **Problem:** A real secret must appear as `{\"secure\": \"v1:...\"}`. Plaintext here means it's committed to `Pulumi.prod.yaml` in Git \u2014 violates AC #3.\n- **Fix:** `pulumi config set --secret app:dbConnectionString ...`. In code, mark with `pulumi.secret()` and read via `config.requireSecret()`.\n\n**2. `dbPassword` output not marked secret**\n```json\n\"outputs\": { \"dbPassword\": \"P@ssw0rd\" }, \"additionalSecretOutputs\": []\n```\n- **Problem:** Value appears in plaintext because it's not in `additionalSecretOutputs`. Any secret-derived output must be tracked so it's masked in state and CLI output.\n- **Fix:** Ensure the value flows from a `pulumi.Output` marked secret, OR add `additionalSecretOutputs: [\"dbPassword\"]` on the resource. Better: don't export password as a stack output at all.\n\n### \ud83d\udd34 CRITICAL \u2014 Replacement of stateful resource\n\n**3. RDS instance replacement (`op: \"replace\"`)**\n```json\n\"op\": \"replace\", \"detailedDiff\": { \"engineVersion\": { \"kind\": \"UPDATE_REPLACE\" } }\n```\n- **Problem:** Replacing an RDS instance destroys the database (data loss). The `UPDATE_REPLACE` diff on `engineVersion` indicates a change that forces new. This is a stateful resource \u2014 must never silently replace in prod (violates spirit of AC #7 stability + #2 durability).\n- **Fix:**\n  - If intentional (major version upgrade), use an in-place `allowMajorVersionUpgrade` path or a snapshot/restore migration \u2014 not a raw replace.\n  - Guard with `protect: true` (see below) so replace/delete is blocked until deliberately unprotected.\n\n### \ud83d\udfe0 HIGH \u2014 Missing `protect` flag\n\n**4. RDS has no `protect` and `deletionProtection: false`**\n```json\n\"oldState\": { \"outputs\": { \"deletionProtection\": false } }\n```\n- **Problem:** Two layers of protection missing:\n  - Pulumi-level: no `protect: true` in `resourceOptions` \u2192 Pulumi will happily delete/replace.\n  - AWS-level: `deletionProtection: false` \u2192 violates **AC #2** (deletion protection must be on).\n- **Fix:**\n```typescript\nnew aws.rds.Instance(\"appDb\", {\n  instanceClass: \"db.t3.medium\",\n  multiAz: true,\n  storageEncrypted: true,\n  deletionProtection: true,      // AC #2\n  backupRetentionPeriod: 7,      // AC #2 (>=7)\n  publiclyAccessible: false,     // AC #2\n}, {\n  protect: true,                 // Pulumi guard on stateful resource\n});\n```\n\n**5. S3 assets bucket should also be protected**\n- The stateful assets bucket (versioned, holds data) should carry `protect: true` in prod. Not flagged as replacing here, but absence of protect is a latent risk.\n\n---\n\n## Summary Table\n\n| # | Severity | Category | Resource | Issue | AC |\n|---|----------|----------|----------|-------|-----|\n| 1 | Critical | Plaintext secret | config | `dbConnectionString` not `secure:` | #3 |\n| 2 | Critical | Plaintext secret | S3 output | `dbPassword` not in `additionalSecretOutputs` | #3 |\n| 3 | Critical | Stateful replace | RDS | `op: replace` \u2192 data loss | #2/#7 |\n| 4 | High | Missing protect | RDS | no `protect`, `deletionProtection:false` | #2 |\n| 5 | Medium | Missing protect | S3 | no `protect` on stateful bucket | \u2014 |\n\n---\n\n**To run a real review, paste your `pulumi preview --json` output** and I'll map each `step`, `config` entry, and `additionalSecretOutputs` array against these three checks and produce exact line-level findings.\n\nTwo quick programmatic checks you can automate in CI:\n\n```bash\n# Fail if any prod stateful resource is being replaced\npulumi preview --json | jq -e '\n  .steps[] | select(.op==\"replace\") |\n  select(.urn | test(\"Instance|Bucket|dbinstance\"))' && echo \"BLOCK: stateful replace\"\n\n# Fail if any config secret is plaintext\ngrep -E \"(password|secret|connectionString)\" Pulumi.prod.yaml | grep -v \"secure:\"\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-67dcrcoa/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-67dcrcoa/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-67dcrcoa/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-67dcrcoa/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-67dcrcoa/generated_3.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-67dcrcoa/generated_0.ts"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/pulumi-typescript/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

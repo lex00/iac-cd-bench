@@ -1,0 +1,95 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF401 [*] `pulumi` imported but unused\n --> generated_0.py:2:8\n  |\n1 | # infra/autoscaling.py\n2 | import pulumi\n  |        ^^^^^^\n3 | import pulumi_aws as aws\n4 | from pulumi import ResourceOptions\n  |\nhelp: Remove unused import: `pulumi`\n  |\n1 | # infra/autoscaling.py\n  - import pulumi\n2 | import pulumi_aws as aws\n  |\n\nF821 Undefined name `cluster`\n  --> generated_2.py:18:27\n   |\n17 | # ... cluster, role, subnets defined elsewhere ...\n18 | ng = make_node_group(env, cluster, node_role, private_su"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1043,
+    "output": 2708
+  },
+  "content": "# Adding Auto-Scaling Policy Without Resource Replacement\n\nThe key concern here is **avoiding replacement** of the existing EKS node group. In Pulumi, replacement is triggered by changes to immutable properties or, more subtly, by adding resources incorrectly (e.g., replacing a static `desiredCapacity` with an autoscaling policy that fights the node group).\n\n## Strategy\n\n1. Add the autoscaling policy as a **new resource** targeting the existing node group's ASG \u2014 don't modify immutable fields of the node group.\n2. Use `ignore_changes` on `desiredCapacity`/`scaling_config` so the autoscaler owns capacity and Pulumi doesn't fight it (this prevents drift-induced updates, not replacement, but is essential when adding scaling).\n3. Register the policy against the ASG that the managed node group already created.\n\n## Implementation\n\n```python\n# infra/autoscaling.py\nimport pulumi\nimport pulumi_aws as aws\nfrom pulumi import ResourceOptions\n\ndef add_node_group_autoscaling(\n    node_group: aws.eks.NodeGroup,\n    env: str,\n    min_size: int,\n    max_size: int,\n    target_cpu: float = 70.0,\n):\n    \"\"\"\n    Attach target-tracking autoscaling to the ASG created by an existing\n    managed node group WITHOUT replacing the node group itself.\n    \"\"\"\n\n    # The managed node group creates and owns its ASG. We look it up by the\n    # tag EKS applies, rather than creating a new ASG (which would be a replace).\n    asg_name = node_group.resources.apply(\n        lambda res: res[0].autoscaling_groups[0].name\n    )\n\n    # Target-tracking policy is a NEW child resource. Adding it does not\n    # touch the node group's immutable fields (subnet_ids, ami_type, etc.).\n    policy = aws.autoscaling.Policy(\n        f\"{env}-nodegroup-cpu-target\",\n        autoscaling_group_name=asg_name,\n        policy_type=\"TargetTrackingScaling\",\n        target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n            predefined_metric_specification=(\n                aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n                    predefined_metric_type=\"ASGAverageCPUUtilization\",\n                )\n            ),\n            target_value=target_cpu,\n        ),\n        opts=ResourceOptions(\n            parent=node_group,\n            # Policy references the ASG by name; a name change would replace it,\n            # but the ASG name is stable for a managed node group.\n        ),\n    )\n\n    return policy\n```\n\n### Critical: protect the node group from replacement\n\nThe most important part \u2014 declare the node group with `ignore_changes` so that the min/max/desired capacity managed by scaling doesn't drift Pulumi into an update or replace:\n\n```python\n# infra/cluster.py\nimport pulumi_aws as aws\nfrom pulumi import ResourceOptions\n\ndef make_node_group(env: str, cluster, role, subnets, spec: dict):\n    ng = aws.eks.NodeGroup(\n        f\"{env}-ng\",\n        cluster_name=cluster.name,\n        node_role_arn=role.arn,\n        subnet_ids=subnets,\n        instance_types=[spec[\"instance_type\"]],   # e.g. t3.medium / t3.large\n        scaling_config=aws.eks.NodeGroupScalingConfigArgs(\n            desired_size=spec[\"nodes\"],\n            min_size=spec[\"min_nodes\"],\n            max_size=spec[\"max_nodes\"],\n        ),\n        opts=ResourceOptions(\n            # Let the autoscaler own desired_size. Without this Pulumi would\n            # try to reset desired_size back to the config value on every up,\n            # fighting the scaling policy.\n            ignore_changes=[\"scaling_config.desired_size\"],\n        ),\n    )\n    return ng\n```\n\n### Wiring it up per environment\n\n```python\n# __main__.py\nimport pulumi\nfrom infra.cluster import make_node_group\nfrom infra.autoscaling import add_node_group_autoscaling\n\nconfig = pulumi.Config()\nenv = pulumi.get_stack()          # \"dev\" or \"prod\"\n\n# spec values come from dev.yaml / prod.yaml (stack config)\nspec = {\n    \"instance_type\": config.require(\"nodeInstanceType\"),\n    \"nodes\":         config.require_int(\"nodeCount\"),\n    \"min_nodes\":     config.require_int(\"nodeMin\"),\n    \"max_nodes\":     config.require_int(\"nodeMax\"),\n}\n\n# ... cluster, role, subnets defined elsewhere ...\nng = make_node_group(env, cluster, node_role, private_subnet_ids, spec)\n\nadd_node_group_autoscaling(\n    node_group=ng,\n    env=env,\n    min_size=spec[\"min_nodes\"],\n    max_size=spec[\"max_nodes\"],\n    target_cpu=config.get_float(\"targetCpu\") or 70.0,\n)\n```\n\n### Stack config (environment isolation)\n\n```yaml\n# dev.yaml\nconfig:\n  aws:region: us-east-1\n  myapp:nodeInstanceType: t3.medium\n  myapp:nodeCount: \"2\"\n  myapp:nodeMin: \"2\"\n  myapp:nodeMax: \"5\"\n  myapp:targetCpu: \"70\"\n```\n\n```yaml\n# prod.yaml\nconfig:\n  aws:region: us-east-1\n  myapp:nodeInstanceType: t3.large\n  myapp:nodeCount: \"4\"\n  myapp:nodeMin: \"4\"\n  myapp:nodeMax: \"10\"\n  myapp:targetCpu: \"60\"\n```\n\n## Verify before applying\n\nAlways preview to confirm the plan shows `+ create` for the policy and **not** `+-replace` / `-+replace` for the node group:\n\n```bash\npulumi preview --stack dev --diff\n```\n\nLook for:\n\n```\n    + aws:autoscaling/policy:Policy  dev-nodegroup-cpu-target  create\n```\n\nAnd confirm the node group line shows **no** change or only an in-place update:\n\n```\n    ~ aws:eks/nodeGroup:NodeGroup    dev-ng   update   [diff: ~scalingConfig]   # OK\n    # NOT:  +-aws:eks/nodeGroup:NodeGroup ... replace\n```\n\n## Why this avoids replacement\n\n| Action | Replacement risk | Mitigation |\n|---|---|---|\n| Adding `aws.autoscaling.Policy` | None \u2014 it's a new independent resource | Reference existing ASG by name via `.apply()` |\n| Modifying node group `instance_types` | **High** (immutable) | Don't touch it |\n| Modifying node group `subnet_ids` | **High** (immutable) | Don't touch it |\n| Changing `desired_size` in config | Update loop / drift | `ignore_changes=[\"scaling_config.desired_size\"]` |\n| Adding `min_size`/`max_size` | In-place update only | Safe |\n\n## Notes / caveats\n\n- **`ignore_changes` must be added in the same or a prior `up` as the policy.** If you add the policy first and let it scale, then later add `ignore_changes`, no replacement occurs either way \u2014 `ignore_changes` never causes replacement.\n- If you were previously using **EKS-native managed node group autoscaling** vs. **Cluster Autoscaler**, target-tracking on the ASG is appropriate for simple CPU-based scaling. For pod-driven scaling, prefer Cluster Autoscaler / Karpenter (deployed as a k8s workload, not an ASG policy) \u2014 that path also adds *zero* replacement risk to the node group.\n- Adding `min_size`/`max_size` to a node group that previously omitted them is an in-place update, not a replace \u2014 safe to include.\n\nWould you like the Cluster Autoscaler (Helm-based) variant instead, which is the more common idiom for EKS pod-driven scaling?",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ttgnhfcu/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ttgnhfcu/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ttgnhfcu/generated_2.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ttgnhfcu/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ttgnhfcu/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ttgnhfcu/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ttgnhfcu/generated_1.txt"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/pulumi-python/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

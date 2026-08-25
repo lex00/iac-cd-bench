@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1424,
+    "output": 2957
+  },
+  "content": "\n\n# Delivery Behavior Prediction \u2014 PR #42 on knr-ops\n\n## 1. What Reconciles and in What Order?\n\nWhen PR #42 merges, the Git push triggers a Flux reconciliation cycle. The `GitRepository` source detects the new commit, and all `Kustomization` resources begin reconciling **in dependency order** defined by `dependsOn` in `flux/kustomizations.yaml`.\n\nThe typical dependency chain for this repo:\n\n```\nclusters/eksa (CAPI)  \u2500\u2500\u25ba  infra (ACK: S3, RDS, IAM)  \u2500\u2500\u25ba  app (Deployment)\n       [no change]              [CHANGED]                       [CHANGED: prod]\n```\n\n**Concretely, for each environment (dev and prod independently):**\n\n| Step | Kustomization | What changes | Action |\n|------|--------------|--------------|--------|\n| 1 | `clusters/eksa` | None | Skipped (no drift) |\n| 2 | `infra` (dev) | New S3 bucket manifest | ACK creates the S3 bucket + associated CRs |\n| 2 | `infra` (prod) | New S3 bucket manifest + RDS `instanceClass` change | ACK creates new bucket; ACK calls `ModifyDBInstance` on RDS |\n| 3 | `app` (dev) | None | Skipped (no drift) |\n| 3 | `app` (prod) | Overlay patch: `replicas: 4` | Deployment scaled to 4 replicas |\n\n> **Key point:** Dev and prod are independently reconcilable. A change in the prod overlay does not trigger reconciliation in dev (acceptance criterion #7).\n\n---\n\n## 2. Does the RDS Instance Get Recreated?\n\n**No. It is resized in-place.**\n\nIn ACK (AWS Controllers for Kubernetes), the `Instance` CRD's `instanceClass` field is **mutable**. Changing it from `db.t3.micro` to `db.t3.medium` causes the ACK RDS controller to:\n\n1. Call the `ModifyDBInstance` AWS API with `DBInstanceClass=db.t3.medium`\n2. RDS performs an in-place resize (the instance may briefly reboot)\n3. The same DB identifier, ARN, endpoint, and data are preserved\n\nThis is **not** a delete-and-recreate. The controller recognizes that `instanceClass` is a field it can modify via the AWS API without destroying the resource. The CR's `metadata.uid` remains the same.\n\n**Contrast with fields that DO trigger recreation:**\n- Changing `allocatedStorage` downward \u2192 not allowed by RDS (ACK will error)\n- Changing `engine` \u2192 would require deletion and recreation\n- Changing `availabilityZone` \u2192 in-place (RDS handles the move)\n\n---\n\n## 3. What Happens if the S3 Bucket Manifest Is Deleted from Git?\n\nFlux performs **pruning** by default. The sequence:\n\n```\nGit manifest removed\n       \u2502\n       \u25bc\nFlux re-renders the overlay \u2192 Bucket CR is absent\n       \u2502\n       \u25bc\nFlux diffs rendered state vs. cluster state\n       \u2502\n       \u25bc\nFlux issues DELETE for the Bucket CR (and any dependent CRs:\n  BucketVersioning, BucketPolicy, BucketEncryption, etc.)\n       \u2502\n       \u25bc\nACK S3 controller sees CR deletion \u2192 calls s3:DeleteBucket\n       \u2502\n       \u25bc\nS3 bucket deleted in AWS\n```\n\n**Caveats:**\n- If the bucket is **not empty**, the `s3:DeleteBucket` call will fail with `BucketNotEmpty`. The ACK controller will leave the CR in a `Finalizing` state and retry on subsequent reconciliation cycles.\n- Any **cross-region replication** (prod spec) must be disabled first; otherwise the delete will also fail until replication is torn down.\n- `BucketVersioning` must be suspended or the controller handles the ordering via `dependsOn` / `ownedReferences`.\n\nIn short: **Git deletion \u2192 cluster CR deletion \u2192 AWS resource deletion**, gated by the ACK controller's finalizer logic.\n\n---\n\n## 4. How Does Flux Handle the Prod-Only Replica Change?\n\nThe prod overlay's `kustomization.yaml` contains a strategic-merge patch:\n\n```yaml\n# overlays/prod/kustomization.yaml\nresources:\n  - ../../infra/app\npatches:\n  - target:\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n```\n\n**What happens:**\n\n1. Flux renders the prod overlay: `kubectl apply -k overlays/prod/` (conceptually)\n2. The rendered `Deployment` manifest has `replicas: 4`\n3. Flux applies this to the **prod cluster only** (the prod kustomization points at the prod cluster)\n4. The Kubernetes Deployment controller sees the replica count change and **creates 2 additional pods** (assuming it was previously at 2)\n5. The dev cluster is **completely unaffected** \u2014 its overlay has no such patch, so its rendered manifest retains the base replica count\n\nThis is the mechanism by which **environment isolation** (acceptance criterion #7) is maintained: each environment's kustomization is an independent rendering pipeline applied to an independent cluster.\n\n---\n\n## 5. What Role Does `dependsOn` Play?\n\nIn `flux/kustomizations.yaml`, the `dependsOn` field creates a **directed acyclic graph (DAG)** of reconciliation:\n\n```yaml\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: prod-infra\n  namespace: flux-system\nspec:\n  dependsOn:\n    - name: prod-cluster   # \u2190 wait for this to succeed\n  path: ./overlays/prod/infra\n  interval: 10m\n  prune: true\n```\n\n**Effects:**\n\n| Behavior | Explanation |\n|----------|-------------|\n| **Ordering** | `prod-app` will not begin reconciliation until `prod-infra` has completed successfully |\n| **Failure gating** | If `prod-infra` fails (e.g., RDS modification times out), `prod-app` is **not attempted** \u2014 preventing the app from starting against unready infrastructure |\n| **Drift detection scope** | A failed dependency means downstream resources are stale; Flux logs the dependency failure and skips |\n| **Idempotency** | Re-running a reconciliation that already succeeded is a no-op for dependencies |\n\n**In PR #42 specifically:**\n- The `infra` kustomization must succeed (S3 created, RDS resize initiated) before `app` is reconciled\n- This ensures the app deployment doesn't try to scale to 4 replicas while the RDS resize is still in progress (reducing the window where pods get `ConnectionRefused` to the DB)\n\n> Without `dependsOn`, Flux would reconcile all kustomizations in parallel (or arbitrary order), creating a race condition where the app could be scaled before its backing infrastructure is ready.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zqkp_kt7/flux/kustomizations.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-zqkp_kt7/kustomization.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/knr-ops/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

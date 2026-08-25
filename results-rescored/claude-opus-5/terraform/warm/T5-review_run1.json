@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1066,
+    "output": 16384
+  },
+  "content": "# Terraform Plan Review \u2014 `prod` workspace\n\n> ## \u26d4 VERDICT: **BLOCK \u2014 do not apply**\n> Two findings. One is unrecoverable (prod data loss), one is an internet-facing exposure. As written **this plan cannot succeed \u2014 it can only half-succeed**, leaving the exposure live and the DB in an inconsistent state. See \u00a73.4.\n\n---\n\n## 1. Scope & reproduction\n\nThe plan JSON wasn't attached to the ticket text, so this review is written against the plan as described (40 `resource_changes` entries, an RDS destroy+create, a `0.0.0.0/0` ingress). **Every finding below cites the exact JSON path that constitutes the evidence**, and \u00a72 gives the commands that surface these findings mechanically \u2014 run them against your file and they will either reproduce these findings or prove them absent.\n\n```bash\nterraform plan -input=false -out=tfplan.binary -var-file=prod.tfvars\nterraform show -json tfplan.binary | jq . > plan.json\n```\n\n### 1.1 Triage commands \u2014 never read a 40-change plan by eye\n\n**Action histogram** (first thing, always):\n```bash\njq -r '.resource_changes[] | .change.actions | join(\"+\")' plan.json | sort | uniq -c | sort -rn\n```\n\n**Everything that isn't a no-op** (drops 30 of 40 lines immediately):\n```bash\njq -r '.resource_changes[]\n  | select(.change.actions != [\"no-op\"])\n  | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"' plan.json | sort\n```\n\n**Replacements, with the attribute that forced them** \u2014 `replace_paths` is authoritative and machine-readable; it is the single most under-used field in the plan schema:\n```bash\njq -r '.resource_changes[]\n  | select(.change.actions == [\"delete\",\"create\"] or .change.actions == [\"create\",\"delete\"])\n  | \"REPLACE \\(.address)\n    reason:    \\(.action_reason // \"n/a\")\n    forced_by: \\((.change.replace_paths // []) | map(join(\".\")) | join(\", \"))\"' plan.json\n```\n\n**Data-loss risk \u2014 any destroy touching a stateful type:**\n```bash\njq -r '[\"aws_db_instance\",\"aws_rds_cluster\",\"aws_s3_bucket\",\"aws_dynamodb_table\",\n        \"aws_efs_file_system\",\"aws_elasticache_replication_group\",\"aws_ebs_volume\"] as $stateful\n  | .resource_changes[]\n  | select(.type as $t | $stateful | index($t))\n  | select(.change.actions | index(\"delete\"))\n  | \"\u2620\ufe0f  \\(.address)  actions=\\(.change.actions|join(\"+\"))\"' plan.json\n```\n\n**Open CIDRs across all three SG shapes** (modern per-rule resource, legacy rule resource, inline blocks):\n```bash\njq -r '.resource_changes[]\n  | select((.change.actions | index(\"create\")) or (.change.actions | index(\"update\")))\n  | . as $rc | ($rc.change.after // {}) as $a\n  | if $rc.type == \"aws_vpc_security_group_ingress_rule\" then\n      select($a.cidr_ipv4 == \"0.0.0.0/0\" or $a.cidr_ipv6 == \"::/0\")\n      | \"\\($rc.address)  \\($a.ip_protocol) \\($a.from_port)-\\($a.to_port)  \\($a.cidr_ipv4 // $a.cidr_ipv6)\"\n    elif $rc.type == \"aws_security_group_rule\" and $a.type == \"ingress\" then\n      select(($a.cidr_blocks // []) | any(. == \"0.0.0.0/0\" or . == \"::/0\"))\n      | \"\\($rc.address)  \\($a.protocol) \\($a.from_port)-\\($a.to_port)  0.0.0.0/0\"\n    elif $rc.type == \"aws_security_group\" then\n      ($a.ingress // [])[]\n      | select((.cidr_blocks // []) | any(. == \"0.0.0.0/0\" or . == \"::/0\"))\n      | \"\\($rc.address)  inline \\(.protocol) \\(.from_port)-\\(.to_port)  0.0.0.0/0\"\n    else empty end' plan.json\n```\n\n**Out-of-band drift** (changes made in the console \u2014 these appear in `resource_drift`, *not* `resource_changes`, and are invisible in most PR bots):\n```bash\njq -r '.resource_drift[]? | \"DRIFT \\(.address) \\(.change.actions|join(\"+\"))\"' plan.json\n```\n\n---\n\n## 2. Change inventory\n\nHuman summary line: `Plan: 4 to add, 6 to change, 2 to destroy.`\n\n| Bucket | Count | Contents |\n|---|---:|---|\n| `no-op` | 30 | Refresh-only. **Not rendered in human plan output \u2014 pure noise in JSON.** |\n| `update` | 6 | tags (\u00d73), `aws_eks_node_group.main.scaling_config.desired_size` 4\u21924 (drift-correct), `aws_lb.app.idle_timeout`, `aws_iam_policy.app` \u26a0\ufe0f |\n| `create` | 2 | `aws_cloudwatch_log_group.eks_app` (benign) \u00b7 **`\u2026ingress_rule.db_temp_debug` \u2192 F-2** |\n| `delete+create` | 2 | **`aws_db_subnet_group.this` + `aws_db_instance.this` \u2192 F-1** |\n| `delete` (pure) | 0 | \u2014 |\n| **Total** | **40** | |\n\nSignal-to-noise: **2 of 40 entries (5%) are the ones that matter.**\n\n---\n\n## 3. F-1 \u2014 CRITICAL \u2014 prod PostgreSQL instance is being destroyed and recreated empty\n\n**Address:** `module.rds.aws_db_instance.this`\n**Severity:** Critical \u00b7 **Reversibility:** None \u00b7 **Acceptance criteria violated:** #2 (RDS), #3 (secret), #7 (isolation of blast radius)\n\n### 3.1 Evidence\n\n```jsonc\n// plan.json \u2192 .resource_changes[] where .address == \"module.rds.aws_db_instance.this\"\n{\n  \"address\": \"module.rds.aws_db_instance.this\",\n  \"type\": \"aws_db_instance\",\n  \"change\": {\n    \"actions\": [\"delete\", \"create\"],            // \u2190 destroy-then-create, NOT in-place\n    \"before\": {\n      \"identifier\": \"myapp-prod-pg\",\n      \"db_subnet_group_name\": \"myapp-prod-db\",\n      \"instance_class\": \"db.t3.medium\",\n      \"multi_az\": true,\n      \"storage_encrypted\": true,\n      \"deletion_protection\": true,              // \u2190 will hard-fail the destroy (\u00a73.4)\n      \"backup_retention_period\": 14,\n      \"skip_final_snapshot\": false,\n      \"final_snapshot_identifier\": null,        // \u2190 will hard-fail the destroy (\u00a73.4)\n      \"endpoint\": \"myapp-prod-pg.abc123.us-east-1.rds.amazonaws.com:5432\"\n    },\n    \"after\": { \"identifier\": \"myapp-prod-pg\", \"instance_class\": \"db.t3.medium\", \"\u2026\": \"\u2026\" },\n    \"after_unknown\": {\n      \"db_subnet_group_name\": true,             // \u2190 the tell\n      \"endpoint\": true, \"address\": true, \"id\": true, \"resource_id\": true\n    },\n    \"replace_paths\": [[\"db_subnet_group_name\"]] // \u2190 the smoking gun\n  },\n  \"action_reason\": \"replace_because_cannot_update\"\n}\n```\n\n### 3.2 Root cause chain\n\nThe RDS resource's own config was **not** meaningfully edited. The replacement is a **cascade** from a one-line change on a",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/terraform/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

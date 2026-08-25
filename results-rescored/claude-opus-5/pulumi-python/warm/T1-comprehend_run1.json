@@ -1,0 +1,92 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1676,
+    "output": 8717
+  },
+  "content": "## Preamble\n\nThe program itself wasn't attached, so I'm answering against the canonical spec's RDS resource (dev `db.t3.micro`/single-AZ \u2192 prod `db.t3.medium`/multi-AZ/encrypted) plus the deterministic way to confirm the answer from any preview.\n\n---\n\n## 1. Which property triggered the replace?\n\n### How to get the authoritative answer\n\nThe engine tells you; don't guess from the summary line.\n\n```bash\npulumi preview --diff --show-replacement-steps\n# or, machine-readable:\npulumi preview --json | jq '.steps[]\n  | select(.op==\"replace\" or .op==\"create-replacement\")\n  | {urn, detailedDiff}'\n```\n\n`detailedDiff` marks each changed property with a kind. Anything ending in `_REPLACE` is the culprit:\n\n```json\n{\n  \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::app-db\",\n  \"detailedDiff\": {\n    \"storageEncrypted\": { \"kind\": \"UPDATE_REPLACE\" },\n    \"instanceClass\":    { \"kind\": \"UPDATE\" }\n  }\n}\n```\n\nText mode shows the same thing:\n\n```\n    +-aws:rds/instance:Instance: (replace)\n        [id=app-prod]\n      ~ storageEncrypted: false => true\n      ~ instanceClass   : \"db.t3.micro\" => \"db.t3.medium\"\n```\n\n### Most likely culprit in this scenario: `storage_encrypted` (and/or `kms_key_id`)\n\nThe AWS provider is bridged from the Terraform schema, so replacement = `ForceNew`. For `aws.rds.Instance`:\n\n| Replaces (ForceNew) | Updates in place |\n|---|---|\n| `storage_encrypted`, `kms_key_id` | `instance_class` |\n| `db_name`, `username` | `multi_az` |\n| `identifier` / `identifier_prefix` | `allocated_storage` (increase only), `storage_type` |\n| `availability_zone` | `engine_version`, `parameter_group_name` |\n| `engine`, `character_set_name`, `timezone` | `password`, `port`, `vpc_security_group_ids` |\n| `snapshot_identifier`, `db_subnet_group_name`\u00b9 | `backup_retention_period`, `deletion_protection`, `publicly_accessible` |\n\n\u00b9 ForceNew in older provider versions; modifiable in recent ones.\n\nThe common misread here is blaming the sizing change. **`instance_class` and `multi_az` are in-place modifies** \u2014 they'd never show `+-`. The prod-only requirements that *do* force a new instance are encryption (`storage_encrypted: false => true`) and the KMS key. AWS cannot encrypt an existing unencrypted RDS instance; the only real path is snapshot \u2192 copy snapshot with the KMS key \u2192 restore. That's why the provider marks it ForceNew.\n\nOther things worth checking in the diff before concluding:\n\n- `db_name` / `username` parameterized per-env (e.g. `f\"app_{env}\"`) \u2014 silent ForceNew.\n- `identifier` changed by a naming/prefix refactor.\n- **Not a property at all:** if you renamed the *logical* resource in code (`aws.rds.Instance(\"app-db\", \u2026)` \u2192 `\"db\"`), the URN changes and you get a create + delete pair, not a replace. Fix with `pulumi.ResourceOptions(aliases=[pulumi.Alias(name=\"app-db\")])`.\n\n### Two traps if you let the replace run\n\n1. **Ordering.** Default replace order is create-new-then-delete-old. With an explicit `identifier`, the create fails with `DBInstanceAlreadyExists`. You need `delete_before_replace=True` \u2014 which means downtime and, unless `final_snapshot_identifier` is set, data loss.\n2. **`deletion_protection=True`** (required by AC #2) makes the delete step fail mid-update, leaving you with two instances. Combine with `pulumi.ResourceOptions(protect=True)` so a preview *errors* instead of quietly planning a replacement of a prod database.\n\n```python\ndb = aws.rds.Instance(\n    \"app-db\",\n    storage_encrypted=True,\n    kms_key_id=key.arn,\n    deletion_protection=True,\n    backup_retention_period=7,\n    publicly_accessible=False,\n    password=cfg.require_secret(\"dbPassword\"),\n    opts=pulumi.ResourceOptions(\n        protect=True,\n        ignore_changes=[\"engineVersion\"],  # allow AWS minor-version auto-upgrade\n    ),\n)\n```\n\n---\n\n## 2. What does `pulumi up --target` skip?\n\n```bash\npulumi up --target 'urn:pulumi:prod::app::aws:rds/instance:Instance::app-db'\n```\n\n**It skips *steps*, not *program execution*.** Your Python still runs top to bottom: every constructor, every `.apply`, every `aws.get_*` invoke. The engine then filters which steps it executes.\n\nSkipped:\n\n- **Create/Update/Delete for every non-targeted resource.** They're recorded as `same` even when the program computed different inputs. Drift is preserved, not corrected.\n- **Deletions of resources you removed from the program** \u2014 they stay in state until an untargeted run.\n- **Dependents of the target**, unless you pass `--target-dependents`. This is the one that bites here: replacing the DB produces a new `endpoint`, but the K8s Secret / app Deployment consuming the connection string is *not* targeted, so your workload keeps pointing at the old (now-deleted) instance.\n\nNot skipped: provider configuration, policy packs, and program-level side effects.\n\nOther behaviors:\n\n- Errors if a targeted resource depends on something that doesn't exist yet (`resource ... has not been created`) \u2014 you must target the dependency too.\n- **Stack outputs become untrustworthy.** Outputs are recomputed from a mix of new (targeted) and stale (untargeted) state, so they can be internally inconsistent. Pulumi warns about this; treat exports as unreliable until a full `pulumi up`.\n- `pulumi destroy --target` refuses to delete a resource that still has dependents unless `--target-dependents` is given.\n- Recent CLIs accept URN globs (`--target 'urn:pulumi:prod::app::**db**'`) and the inverse `--exclude` / `--exclude-dependents`.\n\n`--target` is a break-glass tool for unsticking a partially-failed update. It is **not** the mechanism for AC #7 (environment isolation) \u2014 that's separate stacks (`dev.yaml` / `prod.yaml`), each with its own state and its own encryption key. Always follow a targeted update with a full untargeted `pulumi up` to reconcile.\n\n---\n\n## 3. How does Pulumi handle secrets in outputs?\n\n### Lifecycle\n\n**At rest in Git (AC #3):**\n\n```bash\npulumi config set --secret dbPassword 'S3cr3t' --stack prod\n```\n\n`Pulumi.prod.yaml` gets ciphertext, never plaintext:\n\n```yaml\nconfig:\n  app:dbPassword:\n    secure: AAABANRb...==\n```\n\n**In the program:**\n\n```python\ncfg      = pulumi.Config()\npassword = cfg.require_secret(\"dbPassword\")     # Output[str], secret=True\n\nconn = pulumi.Output.all(db.address, db.port, password).apply(\n    lambda a: f\"postgresql://appuser:{a[2]}@{a[0]}:{a[1]}/app\"\n)                                                # still secret \u2014 secretness is viral\n\npulumi.export(\"dbConnectionString\", conn)\n```\n\nKey property: **secretness propagates.** Any `Output` derived via `.apply()`, `Output.all`, or `Output.concat` from a secret input is itself secret. You cannot accidentally launder it through a transformation.\n\n**In state:** the checkpoint stores the ciphertext, encrypted by the stack's secrets provider \u2014 Pulumi Cloud per-stack key by default, or `--secrets-provider` of `passphrase`, `awskms://`, `gcpkms://`, `azurekeyvault://`, `hashivault://`. Dev and prod stacks have independent keys.\n\n**In CLI output:** previews, diffs, and `pulumi stack output` render `[secret]`. Retrieve deliberately:\n\n```bash\npulumi stack output dbConnectionString --show-secrets\n```\n\n### Related APIs\n\n- `pulumi.Output.secret(value)` \u2014 mark a plain value secret.\n- `pulumi.unsecret(output)` \u2014 strip the marker (rare; needs justification).\n- `ResourceOptions(additional_secret_outputs=[\"result\"])` \u2014 mark provider outputs the schema didn't know were sensitive (e.g. `random.RandomPassword.result`, a rendered user-data script).\n- `StackReference.get_output()` preserves secretness for callers who can decrypt; `get_output_details()` gives `{value, secret_value}` explicitly.\n\n### Caveats\n\n- **Secrets are plaintext inside `.apply()`.** `password.apply(print)` or `pulumi.log.info` leaks to CI logs. The encryption boundary is state and config, not your process.\n- **Only known-sensitive properties are auto-marked.** `aws.rds.Instance.password` is; a password you interpolated into an unrelated string field is not \u2014 use `additional_secret_outputs`.\n- **Secrets are not access control.** Anyone who can run `pulumi up` on the stack can decrypt it. Prod stack permissions are the real control.\n- Changing `password` on RDS is an in-place update, not a replace \u2014 rotating the config secret won't rebuild the database.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gmgtovb8/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gmgtovb8/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gmgtovb8/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gmgtovb8/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gmgtovb8/generated_0.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/pulumi-python/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

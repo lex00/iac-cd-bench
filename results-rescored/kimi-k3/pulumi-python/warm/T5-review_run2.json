@@ -1,0 +1,94 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 621,
+    "output": 1086
+  },
+  "content": "I'll review this Pulumi preview JSON for the three security issues you specified. Since you haven't pasted the actual JSON, I'll provide a comprehensive review framework with concrete examples of what each vulnerability looks like in Pulumi preview output, and how to remediate them.\n\n## 1. Secret in Plaintext Outputs\n\n**What to look for in the JSON:**\n```json\n\"outputs\": {\n  \"dbConnectionString\": \"postgres://admin:supersecret123@prod-db.xyz.us-east-1.rds.amazonaws.com:5432/app\",\n  \"password\": \"plaintext-value-here\"\n}\n```\n\nOr in resource properties:\n```json\n\"diff\": {\n  \"password\": {\n    \"old\": \"plain-text-password\",\n    \"new\": \"new-plain-text-password\"\n  }\n}\n```\n\n**Security Risk:** Pulumi preview output is often logged to CI/CD systems, stored in state files, or displayed in PR comments. Plaintext secrets here leak credentials to anyone with log access.\n\n**Remediation:**\n```python\n# \u274c BAD - Plaintext output\npulumi.export(\"db_url\", db.connection_string)\n\n# \u2705 GOOD - Use ConfigSecret or mark as secret\nfrom pulumi import Config, Output\n\nconfig = Config()\ndb_password = config.require_secret(\"dbPassword\")  # Returns Output[secret]\n\n# If you must output it, use pulumi.secret()\npulumi.export(\"db_url\", Output.secret(db.connection_string))\n```\n\n**Validation:** In the JSON, look for `\"secret\": true` flags on outputs, or values wrapped in `\"[secret]\"` markers.\n\n---\n\n## 2. Replacement of Stateful Resource\n\n**What to look for in the JSON:**\n```json\n\"steps\": [\n  {\n    \"op\": \"replace\",\n    \"urn\": \"urn:pulumi:prod::myproject::aws:rds/instance:Instance::app-db\",\n    \"provider\": \"urn:pulumi:prod::myproject::pulumi:providers:aws::default\",\n    \"oldState\": { ... },\n    \"newState\": { ... }\n  }\n]\n```\n\nOr `delete-replace` operations on:\n- `aws:rds/instance:Instance`\n- `aws:s3/bucket:Bucket` (if data exists)\n- `aws:eks/cluster:Cluster`\n- Any resource with persistent data\n\n**Security Risk:** Replacement destroys the existing resource before creating the new one. For RDS, this means **data loss** unless snapshots are manually managed. For S3, versioning history is lost.\n\n**Remediation:**\n```python\n# For RDS - prevent replacement on changes that shouldn't recreate\ndb = aws.rds.Instance(\"app-db\",\n    instance_class=\"db.t3.medium\",\n    # ... other config ...\n    opts=pulumi.ResourceOptions(\n        protect=True,  # Prevents accidental deletion\n        ignore_changes=[\"engine_version\"],  # Prevent replacement on minor version bumps\n        delete_before_replace=False  # Create new before deleting old (blue/green)\n    )\n)\n\n# For S3 - retain on delete\nbucket = aws.s3.Bucket(\"assets\",\n    versioning={\"enabled\": True},\n    opts=pulumi.ResourceOptions(\n        retain_on_delete=True  # Keep bucket if removed from Pulumi\n    )\n)\n```\n\n**Red flags in preview:** Look for `replace` or `delete-replace` operations on resources containing stateful data, especially if `protect` is not set to `true` in the resource options.\n\n---\n\n## 3. Missing Protect Flag\n\n**What to look for in the JSON:**\n```json\n\"newState\": {\n  \"type\": \"aws:rds/instance:Instance\",\n  \"protect\": false,  // or missing entirely\n  \"customTimeouts\": { ... }\n}\n```\n\n**Security Risk:** Without `protect: true`, a `pulumi destroy` or accidental code deletion immediately terminates production databases and buckets. This violates the \"deletion protection\" acceptance criteria.\n\n**Remediation:**\n```python\n# Production resources should always have protect=True\nprod_db = aws.rds.Instance(\"prod-db\",\n    instance_class=\"db.t3.medium\",\n    multi_az=True,\n    deletion_protection=True,  # AWS-level protection\n    opts=pulumi.ResourceOptions(\n        protect=True  # Pulumi-level protection\n    )\n)\n\nprod_bucket = aws.s3.Bucket(\"prod-assets\",\n    versioning={\"enabled\": True},\n    opts=pulumi.ResourceOptions(protect=True)\n)\n```\n\n**Validation:** Check that all production resources (RDS, S3, EKS clusters) have `\"protect\": true` in their resource options within the preview JSON.\n\n---\n\n## Quick Checklist for Your JSON\n\nWhen reviewing your actual preview output, search for:\n\n| Issue | JSON Pattern | Risk Level |\n|-------|-------------|------------|\n| **Plaintext Secret** | `\"outputs\": { \".*password.*\": \"[^[]\" }` (not starting with `[secret]`) | Critical |\n| **Stateful Replacement** | `\"op\": \"replace\"` on `rds`, `s3`, or `eks` resources | High |\n| **Missing Protection** | `\"protect\": false` or absent on production resources | High |\n\n**Next step:** Paste your actual Pulumi preview JSON, and I'll identify the specific line numbers and provide exact remediation code for your stack.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qk7t55l4/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qk7t55l4/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qk7t55l4/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qk7t55l4/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qk7t55l4/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qk7t55l4/generated_3.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-qk7t55l4/generated_2.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-python/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

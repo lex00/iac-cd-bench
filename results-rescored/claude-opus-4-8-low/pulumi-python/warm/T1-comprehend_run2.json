@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1676,
+    "output": 1225
+  },
+  "content": "# Pulumi Preview Behavior: DB Replace\n\n## 1. Which property triggered the replace?\n\nFor an RDS instance in this scenario, a **replace** is triggered by a change to an **immutable property**. The preview output marks these explicitly:\n\n```\n    ~ aws:rds/instance:Instance: (replace)\n        [id=dev-postgres]\n      ~ engineVersion: \"14.7\" => \"15.3\"   # example\n```\n\nLook for the property annotated with a **`(replaces)`** marker or listed under **\"replace\" reasons**. Common replace-triggering RDS properties:\n\n- **`name` / identifier** (renaming the DB)\n- **`engine`** (e.g., postgres \u2192 mysql)\n- **`storageEncrypted`** (toggling encryption \u2014 requires new instance)\n- **`kmsKeyId`** (changing encryption key)\n- **`availabilityZone`** (for single-AZ placement)\n- **`dbSubnetGroupName`** in some cases\n\nIn this spec, moving dev \u2192 prod-style config (**enabling `storageEncrypted`** or changing the identifier) is the classic replace trigger. The `[diff: ~property]` line plus `=> This resource will be replaced` in the preview tells you exactly which one.\n\n> Note: Pulumi shows this *before* applying. To see the reason clearly, run `pulumi preview --diff`.\n\n## 2. What does `pulumi up --target` skip?\n\n`pulumi up --target <urn>` performs a **targeted update**:\n\n- **Only the specified resource(s)** (and, by default, resources they strictly depend on) are updated.\n- It **skips all other resources** in the stack \u2014 they are left untouched even if they have pending diffs.\n- With `--target-dependents`, it also includes downstream resources; without it, dependents are skipped.\n- It does **not** delete resources not in the target set (no \"orphan\" cleanup).\n\n\u26a0\ufe0f Caveat: targeted updates can leave your stack in a partially-converged state \u2014 outputs and dependent resources may be stale. Pulumi warns that `--target` is meant for surgical fixes, not routine deploys.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **Encrypted at rest**: Values from `config.require_secret()` (or `pulumi.Output.secret(...)`) are tracked as **secret Outputs**. They are encrypted in the stack's state file using the stack's encryption provider (Pulumi Service, KMS, passphrase, etc.).\n- **Taint propagation**: Secretness is **contagious** \u2014 any Output derived via `.apply()` from a secret remains a secret. So a DB connection string built from a secret password stays encrypted.\n- **In outputs (`pulumi.export`)**: Exported secret values are stored **encrypted** in state and displayed as `[secret]` in CLI output.\n- **Reading back**: Use `pulumi stack output --show-secrets` to reveal them (requires decryption access).\n\nIdiomatic pattern for this scenario:\n\n```python\nimport pulumi\n\nconfig = pulumi.Config()\ndb_password = config.require_secret(\"dbPassword\")  # encrypted\n\nconn_str = pulumi.Output.all(host, db_password).apply(\n    lambda args: f\"postgresql://admin:{args[1]}@{args[0]}:5432/app\"\n)  # stays secret because it derives from a secret\n\npulumi.export(\"dbConnectionString\", conn_str)  # stored encrypted, shown as [secret]\n```\n\nThis satisfies acceptance criterion #3 (secret never in plaintext in Git \u2014 it lives encrypted in `Pulumi.<stack>.yaml` and in state).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-isl8ywpy/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-isl8ywpy/generated_0.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-python/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

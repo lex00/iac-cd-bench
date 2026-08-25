@@ -1,0 +1,91 @@
+{
+  "model": "claude-opus-5",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "n    name: aws-web-service\\n---\\n# claims/prod.yaml\\napiVersion: app.example.com/v1alpha1\\nkind: AWSWebService\\nmetadata:\\n  name: web-prod\\n  namespace: prod\\nspec:\\n  parameters:\\n    environment: prod\\n    region: us-east-1\\n    instanceSize: medium\\n    multiAZ: true\\n    storageEncrypted: true\\n    backupRetentionPeriod: 14\\n    providerConfigName: aws-prod\\n  compositionRef:\\n    name: aws-web-service\\n'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:8: AssertionError: Should use spec.parameters.instanceClass instead of spec.parameters.storageClass\nE   AssertionError: Composition should have ReadinessChecks defined\n    assert ('readiness' in '# claims/dev.yaml\\napiVersion: app.example.com/v1alpha1\\nkind: AWSWebService\\nmetadata:\\n  name: web-dev\\n  namespace: dev\\nspec:\\n  parameters:\\n    environment: dev\\n    region: us-east-1\\n    instanceSize: micro\\n    multiAZ: false\\n    providerConfigName: aws-dev\\n  compositionRef:\\n    name: aws-web-service\\n---\\n# claims/prod.yaml\\napiVersion: app.example.com/v1alpha1\\nkind: AWSWebService\\nmetadata:\\n  name: web-prod\\n  namespace: prod\\nspec:\\n  parameters:\\n    environment: prod\\n    region: us-east-1\\n    instanceSize: medium\\n    multiAZ: true\\n    storageEncrypted: true\\n    backupRetentionPeriod: 14\\n    providerConfigName: aws-prod\\n  compositionRef:\\n    name: aws-web-service\\n')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:15: AssertionError: Composition should have ReadinessChecks defined\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks\n============================== 2 failed in 0.00s ===============================\n",
+      "passed_count": 0,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1854,
+    "output": 4051
+  },
+  "content": "## Root cause\n\nTwo independent defects, both in `composition.yaml`:\n\n1. **`fromFieldPath: spec.parameters.storageClass`** \u2014 that path doesn't exist in the XRD schema. Crossplane patching is *silent* on missing source paths (the patch is skipped, not errored), so `spec.forProvider.instanceClass` is never set \u2192 the RDS `Instance` is rejected by the provider or created with a nil field \u2192 composed resource never goes `Synced=True`.\n2. **`readiness: {}`** \u2014 not a valid field, and with no `readinessChecks` the default is `MatchCondition: Ready`, which the upbound RDS `Instance` never publishes (it publishes `Ready` on the *managed resource*, but only after `Available`). Combined with defect 1 the XR sits at `Ready=False` forever.\n\nAlso fixed while in there: the Composition was using `mode: Pipeline` with a top-level `resources:` array and a stray `spec.group` \u2014 that combination is invalid; `resources:` belongs to `mode: Resources`, and the composite type is declared via `compositeTypeRef`.\n\n## `xrd.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  names:\n    kind: XAWSWebService\n    plural: xawswebservices\n  claimNames:\n    kind: AWSWebService\n    plural: awswebservices\n  connectionSecretKeys:\n    - username\n    - password\n    - endpoint\n    - port\n  versions:\n    - name: v1alpha1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                parameters:\n                  type: object\n                  properties:\n                    environment:\n                      type: string\n                      enum: [dev, prod]\n                    region:\n                      type: string\n                      default: us-east-1\n                    instanceSize:\n                      type: string\n                      description: RDS size suffix, rendered as db.t3.<size>\n                      enum: [micro, medium]\n                      default: micro\n                    allocatedStorage:\n                      type: integer\n                      default: 20\n                    multiAZ:\n                      type: boolean\n                      default: false\n                    storageEncrypted:\n                      type: boolean\n                      default: true\n                    backupRetentionPeriod:\n                      type: integer\n                      minimum: 7\n                      default: 7\n                    deletionProtection:\n                      type: boolean\n                      default: true\n                    providerConfigName:\n                      type: string\n                      default: default\n                  required:\n                    - environment\n                    - instanceSize\n              required:\n                - parameters\n            status:\n              type: object\n              properties:\n                dbEndpoint:\n                  type: string\n```\n\nNote `parameters` is now a real object in the schema \u2014 the patch source path exists, and `backupRetentionPeriod` has `minimum: 7` so AC #2 is enforced at admission time rather than by convention.\n\n## `composition.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  compositeTypeRef:\n    apiVersion: app.example.com/v1alpha1\n    kind: XAWSWebService\n  mode: Resources\n  writeConnectionSecretsToNamespace: crossplane-system\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: rds.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            engine: postgres\n            engineVersion: \"16.1\"\n            username: appuser\n            autoGeneratePassword: true\n            passwordSecretRef:\n              namespace: crossplane-system\n              name: rds-master-password\n              key: password\n            publiclyAccessible: false\n            skipFinalSnapshot: false\n            applyImmediately: false\n          writeConnectionSecretToRef:\n            namespace: crossplane-system\n      patches:\n        # FIX 1: source path now exists in the XRD schema.\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.instanceSize\n          toFieldPath: spec.forProvider.instanceClass\n          policy:\n            fromFieldPath: Required        # fail loudly instead of silently skipping\n          transforms:\n            - type: string\n              string:\n                type: Format\n                fmt: \"db.t3.%s\"\n\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.region\n          toFieldPath: spec.forProvider.region\n          policy: { fromFieldPath: Required }\n\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.providerConfigName\n          toFieldPath: spec.providerConfigRef.name\n          policy: { fromFieldPath: Required }\n\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.allocatedStorage\n          toFieldPath: spec.forProvider.allocatedStorage\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.multiAZ\n          toFieldPath: spec.forProvider.multiAz\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.storageEncrypted\n          toFieldPath: spec.forProvider.storageEncrypted\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.backupRetentionPeriod\n          toFieldPath: spec.forProvider.backupRetentionPeriod\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.deletionProtection\n          toFieldPath: spec.forProvider.deletionProtection\n\n        - type: FromCompositeFieldPath\n          fromFieldPath: metadata.uid\n          toFieldPath: spec.writeConnectionSecretToRef.name\n          transforms:\n            - type: string\n              string:\n                type: Format\n                fmt: \"%s-rds\"\n\n        - type: ToCompositeFieldPath\n          fromFieldPath: status.atProvider.endpoint\n          toFieldPath: status.dbEndpoint\n\n      # FIX 2: explicit readiness gate. `readiness: {}` was not a schema field;\n      # the correct key is readinessChecks, and the upbound RDS Instance signals\n      # usability via status.atProvider.instanceStatus == \"available\".\n      readinessChecks:\n        - type: MatchString\n          fieldPath: status.atProvider.instanceStatus\n          matchString: available\n        - type: NonEmpty\n          fieldPath: status.atProvider.endpoint\n\n      connectionDetails:\n        - name: endpoint\n          type: FromFieldPath\n          fromFieldPath: status.atProvider.endpoint\n        - name: port\n          type: FromFieldPath\n          fromFieldPath: status.atProvider.port\n        - name: username\n          type: FromFieldPath\n          fromFieldPath: spec.forProvider.username\n        - name: password\n          type: FromConnectionSecretKey\n          fromConnectionSecretKey: attribute.password\n```\n\n`policy.fromFieldPath: Required` is the durable fix for defect class #1 \u2014 with it, a typo'd source path surfaces as `Synced=False` with a `cannot resolve` message on the XR instead of a resource that quietly renders without the field. Worth applying to every patch whose value is non-optional.\n\n## Environment separation\n\nTwo claims, two `ProviderConfig`s (each with its own IRSA-bound credentials, which is what actually gives you the \"changing prod does not modify dev\" isolation \u2014 separate provider credentials and separate external-name namespaces):\n\n```yaml\n# claims/dev.yaml\napiVersion: app.example.com/v1alpha1\nkind: AWSWebService\nmetadata:\n  name: web-dev\n  namespace: dev\nspec:\n  parameters:\n    environment: dev\n    region: us-east-1\n    instanceSize: micro\n    multiAZ: false\n    providerConfigName: aws-dev\n  compositionRef:\n    name: aws-web-service\n---\n# claims/prod.yaml\napiVersion: app.example.com/v1alpha1\nkind: AWSWebService\nmetadata:\n  name: web-prod\n  namespace: prod\nspec:\n  parameters:\n    environment: prod\n    region: us-east-1\n    instanceSize: medium\n    multiAZ: true\n    storageEncrypted: true\n    backupRetentionPeriod: 14\n    providerConfigName: aws-prod\n  compositionRef:\n    name: aws-web-service\n```\n\n## Verifying the fix\n\n```bash\n# Render offline before applying \u2014 catches both defect classes without a cluster.\ncrossplane beta render claims/prod.yaml composition.yaml functions.yaml\n\nkubectl apply -f xrd.yaml -f composition.yaml -f claims/\nkubectl wait --for=condition=Ready awswebservice/web-prod -n prod --timeout=25m\n\n# If it hangs, the composed resource tells you which check is failing:\nkubectl get instance.rds -o custom-columns=\\\nNAME:.metadata.name,SYNCED:.status.conditions[?\\(@.type==\\\"Synced\\\"\\)].status,\\\nREADY:.status.conditions[?\\(@.type==\\\"Ready\\\"\\)].status,\\\nSTATUS:.status.atProvider.instanceStatus\n```\n\nExpect ~10\u201320 min to `available` for a multi-AZ instance; the `MatchString` check is doing real work there, not just papering over the missing block.\n\n## Caveats worth flagging\n\n- **`skipFinalSnapshot: false` + `deletionProtection: true`** means deleting the prod claim will *not* tear down the DB \u2014 the managed resource will block on the provider. That's intentional per AC #2, but it means prod teardown is a deliberate two-step (flip `deletionProtection`, then delete). Make sure that's understood before anyone tries to `kubectl delete` a prod claim.\n- **`rds.aws.upbound.io`, not `database.aws.upbound.io`** \u2014 the seed's API group was also wrong; the provider would have 404'd on the composed resource regardless of the patch fix.\n- The spine calls for EKS, S3 (with prod cross-region replication), IAM, and CloudFront/ACM as well. Those are additional entries in `resources:` and should each get their own `readinessChecks` \u2014 the S3 `Bucket` and the ACM `Certificate` in particular, since an ACM cert pending DNS validation will otherwise report ready and let a CloudFront distribution reference an unvalidated cert. I've scoped this answer to the two reported defects; say the word and I'll write out the remaining resources.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-39gc7ecc/composition.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-39gc7ecc/xrd.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-39gc7ecc/composition.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.3888888888888889
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/crossplane/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.3888888888888889
+    },
+    "corrected_composite_no_idiom": 0.4375,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

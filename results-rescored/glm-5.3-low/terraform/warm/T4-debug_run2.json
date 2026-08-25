@@ -1,0 +1,91 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mVariable declaration in .tfvars file\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on terraform.tfvars line 45:\n\u001b[31m\u2502\u001b[0m \u001b[0m  45: \u001b[4mvariable\u001b[0m \"region\" {\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mA .tfvars file is used to assign values to variables that have already been\n\u001b[31m\u2502\u001b[0m \u001b[0mdeclared in .tf files, not to declare new variables. To declare variable\n\u001b[31m\u2502\u001b[0m \u001b[0m\"region\", place this block in one of your .tf files, such as variables.t\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mVariable declaration in .tfvars file\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on terraform.tfvars line 45:\n\u001b[31m\u2502\u001b[0m \u001b[0m  45: \u001b[4mvariable\u001b[0m \"region\" {\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mA .tfvars file is used to assign values to variables that have already been\n\u001b[31m\u2502\u001b[0m \u001b[0mdeclared in .tf files, not to declare new variables. To declare variable\n\u001b[31m\u2502\u001b[0m \u001b[0m\"region\", place this block in one of your .tf files, such as variables.t"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 3 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_no_circular_dependency PASSED [ 33%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_deletion_protection_in_prod PASSED [ 66%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_for_each_or_count_consistent PASSED [100%]\n\n============================== 3 passed in 0.00s ===============================\n",
+      "passed_count": 3,
+      "total_count": 3,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1050,
+    "output": 1062
+  },
+  "content": "# Diagnosis\n\nTwo real problems, plus a spec violation:\n\n1. **Circular dependency** \u2013 the output placement/comment pattern (`db_endpoint` referencing `aws_db_instance.main[0].endpoint` while the resource itself is declared with `count` keyed off `var.envs`, and identifiers mixing `var.env` and `var.envs`) creates index instability. When `envs` changes, `count` reindexes instances \u2192 destroy/recreate churn and plan errors.\n2. **count vs for_each** \u2013 `count = length(var.envs)` on a list fails type checks when switching to for_each (requires a map/set), and gives meaningless resource addresses (`main[0]`, `main[1]`).\n3. **Spec violation** \u2013 `deletion_protection = false` and `skip_final_snapshot = true` on prod violate acceptance criteria #2.\n\n# Fix\n\nUse `for_each` with a map (stable keys), env-scoped input via `terraform.tfvars` per env, and correct lifecycle flags.\n\n```hcl\n# main.tf\nterraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n\nprovider \"aws\" {\n  region = var.region\n}\n\nresource \"aws_db_instance\" \"main\" {\n  for_each = var.databases   # map, not list \u2192 stable addresses like main[\"dev\"]\n\n  identifier     = \"${each.key}-db\"\n  engine         = \"postgres\"\n  engine_version = \"16.1\"\n  instance_class = each.value.instance_class\n  allocated_storage = each.value.allocated_storage\n\n  db_name  = var.db_name\n  username = var.db_user\n  password = var.db_password   # supply via -var-file / SOPS; never commit\n\n  multi_az            = each.value.multi_az\n  storage_encrypted   = each.value.storage_encrypted\n  publicly_accessible = false\n  backup_retention_period = 7   # >= 7 days per acceptance criteria\n  deletion_protection = each.value.deletion_protection\n\n  # skip_final_snapshot only in dev; prod must snapshot\n  skip_final_snapshot = each.key == \"dev\"\n  final_snapshot_identifier = each.key == \"dev\" ? null : \"${each.key}-db-final\"\n}\n\n# Outputs declared AFTER resources \u2014 no ordering ambiguity\noutput \"db_endpoints\" {\n  value     = { for k, db in aws_db_instance.main : k => db.endpoint }\n  sensitive = false\n}\n\nvariable \"region\" {\n  type    = string\n  default = \"us-east-1\"\n}\n\nvariable \"databases\" {\n  type = map(object({\n    instance_class      = string\n    allocated_storage   = number\n    multi_az            = bool\n    storage_encrypted   = bool\n    deletion_protection = bool\n  }))\n}\n\nvariable \"db_name\" {\n  type    = string\n  default = \"appdb\"\n}\n\nvariable \"db_user\" {\n  type    = string\n  default = \"app-user\"\n}\n\nvariable \"db_password\" {\n  type      = string\n  sensitive = true\n}\n```\n\n```hcl\n# dev.tfvars\nregion = \"us-east-1\"\ndatabases = {\n  dev = {\n    instance_class      = \"db.t3.micro\"\n    allocated_storage   = 20\n    multi_az            = false\n    storage_encrypted   = false\n    deletion_protection = false\n  }\n}\n```\n\n```hcl\n# prod.tfvars\nregion = \"us-east-1\"\ndatabases = {\n  prod = {\n    instance_class      = \"db.t3.medium\"\n    allocated_storage   = 50\n    multi_az            = true\n    storage_encrypted   = true\n    deletion_protection = true\n  }\n}\n```\n\nApply: `terraform apply -var-file=prod.tfvars`\n\n# Why this works\n\n- **No circular dependency**: outputs are declared after resources and reference `for_each` keys \u2014 Terraform resolves `main[\"dev\"]` without index ambiguity, and adding/removing an env never reindexes other instances (only `count` does).\n- **count/for_each resolved**: `var.databases` is a `map(...)`, the correct type for `for_each`. You'll need a one-time `terraform state mv` if state has old `main[0]` addresses: `terraform state mv 'aws_db_instance.main[0]' 'aws_db_instance.main[\"dev\"]'`.\n- **Spec compliance**: prod gets `deletion_protection = true`, multi-AZ, encryption, 7-day backups, final snapshot; dev stays cheap. Environments are independently deployable via separate tfvars/state (criteria #7).\n\n**Note**: for full environment isolation, use separate state per env (`terraform workspaces` or distinct backends keyed by env), not just tfvars files.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kdz4pq_f/terraform.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kdz4pq_f/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kdz4pq_f/generated_1.tf"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5555555555555556
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/terraform/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5555555555555556
+    },
+    "corrected_composite_no_idiom": 0.625,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

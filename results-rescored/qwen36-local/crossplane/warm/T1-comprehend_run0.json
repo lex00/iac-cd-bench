@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 713,
+    "output": 4324
+  },
+  "content": "\n\nHere is a precise, idiomatic Crossplane trace and breakdown of the `storageGB: 20 \u2192 50` change against your canonical scenario.\n\n---\n\n### 1. Trace: XRD \u2192 Composition \u2192 Managed Resources\n1. **Claim Update**: User applies `kubectl edit claim` (or GitOps sync) changing `spec.parameters.storageGB: 20` \u2192 `50`.\n2. **Informer Watch**: The Crossplane `composition` controller detects the `Update` event on the Claim/CompositeResource via Kubernetes informers.\n3. **Composition Rendering**: \n   - The Composition controller evaluates the XRD + Composition definition.\n   - Using `patches` or a Composition `function`, it maps `spec.parameters.storageGB` to the RDS base resource template: `spec.forProvider.allocatedStorage: 50`.\n   - The S3 bucket template receives no patch for this field; its desired state remains unchanged.\n   - The controller writes the rendered base resources into the composite's `spec.resources` (or passes them to the composition function pipeline).\n4. **Resource Controller Diff**: The `provider-aws` (or `provider-terraform-aws`) RDS controller compares the desired state (`allocatedStorage: 50`) against the current cloud state (`status.atProvider.allocatedStorage: 20`).\n5. **Cloud Mutation**: Controller calls AWS `modify-db-instance` with `AllocatedStorage=50`. AWS acknowledges and begins async scaling.\n6. **Status Propagation**: \n   - RDS controller updates the managed resource status: `status.conditions[0].type=Ready`, `status=InProgress`.\n   - Composition controller aggregates base resource statuses into the composite `status`.\n   - Claim reflects `status.ready=false` while RDS scales, then flips to `status.ready=true` + `status.parameters.storageGB=50` once complete.\n\n---\n\n### 2. Is the RDS instance updated in-place or recreated?\n**Updated in-place.**  \nCrossplane delegates this decision to the provider's resource schema. For `DBInstance` (`rds.aws.crossplane.io` or terraform-backed), `allocatedStorage` is marked `UpdateInPlace` (not `ForceNew`). Crossplane's diff logic detects this and calls the AWS `modify_db_instance` API. No new DB identifier is created; AWS performs an inline storage expansion (typically requiring a brief maintenance window/reboot, but preserving the endpoint, data, and IAM roles).\n\n---\n\n### 3. What happens to the S3 bucket?\n**Nothing. It is skipped.**  \nCrossplane uses a **least-change reconciliation** model. The S3 base resource's desired state was not modified by the composition patch/function pipeline. Its controller diffs desired vs. actual, finds zero changes, and takes no action. No `PutBucketVersioning`, `PutBucketEncryption`, or `PutBucketReplication` calls are made. This prevents unnecessary drift checks and API throttling.\n\n---\n\n### 4. What role do `ReadinessChecks` play?\n`ReadinessChecks` (defined in the XRD or Composition) act as **status gates and dependency orchestrators**:\n- **Base Resource Level**: The RDS readiness check watches `status.atProvider.dbInstanceStatus` or `status.conditions`. Until AWS reports `available`/`ready`, the RDS managed resource remains `ready=false`.\n- **Composite/Claim Level**: The composition readiness check aggregates child readiness. If RDS is scaling, the composite (and claim) stays `ready=false`. This prevents downstream resources (e.g., EKS node groups, app deployments, or secret provisioning) from attempting to connect to an unready database.\n- **Composition Functions**: Modern functions can use readiness checks to gate sequential resource creation (e.g., wait for RDS `ready` before patching a `Secret` with connection strings or creating a `db.user`).\n\nReadiness checks ensure infrastructure is **functionally usable** before signaling success, not just that the cloud API call succeeded.\n\n---\n\n### 5. How does Crossplane handle the reconciliation loop?\nCrossplane's reconciliation loop follows the standard Kubernetes controller-runtime pattern, adapted for cloud infrastructure:\n\n| Phase | Mechanism |\n|---|---|\n| **Observe** | Informer caches watch `Claim`, `CompositeResource`, and provider `Managed` resources. Events trigger `Reconcile()` requests in work queues. |\n| **Render** | Composition controller evaluates XRD + Composition \u2192 produces desired state for all base resources. |\n| **Diff** | Resource controllers compare `spec.forProvider` (desired) vs `status.atProvider` (cloud truth). Only divergent fields trigger mutation. |\n| **Act** | Idempotent cloud API calls (`Create`, `Modify`, `Delete`). Crossplane relies on provider-level retry/backoff and AWS/Terraform idempotency tokens. |\n| **Observe/Update** | Controllers poll or watch cloud webhooks/events, sync `status.atProvider`, evaluate `ReadinessChecks`, and set `status.ready`. |\n| **Backoff/Retry** | On API failures, exponential backoff with jitter. Transient errors (e.g., `ThrottlingException`) are retried; terminal errors set `status.conditions` with `type=Failed`. |\n| **Stable** | When desired == actual and all readiness checks pass, the loop idle-watches for new events. |\n\n**Key properties:**\n- **Event-driven, not polling**: Reconciles only on Kubernetes events or explicit requeue timers.\n- **Idempotent & Safe**: Cloud APIs are called only when diff exists; retries are safe.\n- **Status Aggregation**: Base \u2192 Composite \u2192 Claim status propagation is explicit and observable via `kubectl get/describe`.\n- **Compositional Isolation**: Each base resource has its own controller loop; failure in one (e.g., RDS scaling) doesn't poison the reconciliation of others (e.g., S3).\n\n---\n\n### Operational Verification (Idiomatic Crossplane)\n```bash\n# Watch claim status transition\nkubectl get claim -w -n <env>\n\n# Inspect composition pipeline & patch mapping\nkubectl describe claim <name> -n <env>\n\n# View base resource diff & cloud state\nkubectl get dbinstance -o yaml -n <env> | grep -A5 allocatedStorage\nkubectl get dbinstance <rds-name> -o jsonpath='{.status.conditions}'\n\n# Composition function logs (if using functions)\nkubectl logs -l control-plane=composition-functions-controller -n crossplane-system\n```\n\nThis trace assumes an idiomatic Crossplane deployment using the AWS provider (native or terraform-backed), modern Composition Functions, and standard readiness aggregation. The behavior is deterministic, least-change, and fully observable via Kubernetes status fields.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/crossplane/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

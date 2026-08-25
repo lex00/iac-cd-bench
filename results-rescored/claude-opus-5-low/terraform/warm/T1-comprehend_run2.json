@@ -1,0 +1,95 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1517,
+    "output": 4082
+  },
+  "content": "# Terraform Plan Behavior: The Four Questions\n\n## Setup\n\nTake the canonical spine's RDS instance, parameterized per environment:\n\n```hcl\nvariable \"db_instance_class\" {\n  type = string\n}\n\nvariable \"db_multi_az\" {\n  type    = bool\n  default = false\n}\n\nresource \"aws_db_instance\" \"app\" {\n  identifier              = \"${var.env}-app-db\"\n  engine                  = \"postgres\"\n  engine_version          = \"15.5\"\n  instance_class          = var.db_instance_class\n  allocated_storage       = 20\n  multi_az                = var.db_multi_az\n  storage_encrypted       = var.env == \"prod\"\n  deletion_protection     = true\n  backup_retention_period = 7\n  publicly_accessible     = false\n  # ...\n}\n```\n\n`dev.tfvars`: `db_instance_class = \"db.t3.micro\"`\n`prod.tfvars`: `db_instance_class = \"db.t3.medium\"`\n\nNow flip `db_instance_class` in `dev.tfvars` from `db.t3.micro` to `db.t3.small`.\n\n---\n\n## 1. What does the next plan show?\n\nTerraform reads three inputs \u2014 the **configuration** (`.tf` + `.tfvars`), the **state** (`terraform.tfstate`), and \u2014 if not using `-refresh=false` \u2014 the **live provider API**. It refreshes state against reality first, then diffs config against the refreshed state.\n\n```\nTerraform will perform the following actions:\n\n  # aws_db_instance.app will be updated in-place\n  ~ resource \"aws_db_instance\" \"app\" {\n        id                      = \"db-ABCDEF1234567890\"\n        identifier              = \"dev-app-db\"\n      ~ instance_class          = \"db.t3.micro\" -> \"db.t3.small\"\n        # (41 unchanged attributes hidden)\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\nKey points about this output:\n\n- **`~` means update-in-place.** The resource keeps its identity \u2014 same `id`, same ARN, same endpoint DNS name. No downstream resource that references `aws_db_instance.app.endpoint` will be disturbed.\n- **Only the changed attribute is shown.** The \"41 unchanged attributes hidden\" line is Terraform suppressing noise. `-no-color` plus `terraform show -json` gives the machine-readable full picture.\n- **Nothing else changes.** Flipping only `db_instance_class` in `dev.tfvars` touches exactly one resource. The EKS node group, the S3 bucket, the IAM role \u2014 all unchanged, because their inputs did not move.\n- **Environment isolation holds.** `prod.tfvars` was not touched and prod uses a separate state (separate workspace or separate backend key). A dev plan cannot show prod changes because the prod state is not even loaded.\n\nIf the change had been to an attribute marked `ForceNew` in the provider schema \u2014 say `engine` from `postgres` to `mysql`, or `identifier` \u2014 the plan would instead read:\n\n```\n  # aws_db_instance.app must be replaced\n-/+ resource \"aws_db_instance\" \"app\" {\n      ~ engine = \"postgres\" -> \"mysql\" # forces replacement\n```\n\nThe `# forces replacement` comment is the provider telling you the API has no in-place mutation for that field. And note: with `deletion_protection = true`, that replacement plan will **apply-fail** at destroy time. Terraform plans it happily; AWS refuses. This is a real trap \u2014 plan success does not imply apply success.\n\n---\n\n## 2. What happens if the state file is deleted?\n\nState is not a cache. It is the **only** record Terraform has of which real-world objects it owns.\n\nDelete `terraform.tfstate` and the next plan shows:\n\n```\nPlan: 47 to add, 0 to change, 0 to destroy.\n```\n\nTerraform now believes **nothing exists**. Every resource in the configuration is a create. Apply that and you get one of two failure modes:\n\n| Resource type | Failure mode |\n|---|---|\n| Named/unique resources (S3 bucket, RDS identifier, IAM user) | Apply **errors**: `BucketAlreadyOwnedByYou`, `DBInstanceAlreadyExists`, `EntityAlreadyExists` |\n| Anonymous resources (security groups w/ generated names, ENIs, some node groups) | Apply **succeeds** \u2014 you now have duplicate infrastructure and pay for both |\n\nThe second row is the dangerous one. Orphaned resources are still running, still billed, and no longer managed by anything. Terraform will never destroy them because it does not know they exist.\n\n**Recovery paths, in order of preference:**\n\n1. **Restore from backend versioning.** This is why the state backend should be S3 with `versioning = true` and a DynamoDB lock table. Roll back to the previous object version. Recovery time: seconds.\n2. **Use `terraform.tfstate.backup`.** Terraform writes this automatically on each apply for local state. One generation only.\n3. **Re-import everything.** For each resource: `terraform import aws_db_instance.app dev-app-db`. Slow, error-prone, and imports do not restore `for_each` keys or module addressing without care. With Terraform 1.5+ you can use `import` blocks in config and generate the addresses with `-generate-config-out`, which is less awful.\n\nThe structural lesson: **local state is a single point of catastrophic failure.** The canonical spine should specify a remote backend:\n\n```hcl\nterraform {\n  backend \"s3\" {\n    bucket         = \"acme-tfstate\"\n    key            = \"app/dev/terraform.tfstate\"\n    region         = \"us-east-1\"\n    dynamodb_table = \"tf-locks\"\n    encrypt        = true\n  }\n}\n```\n\nNote the `key` includes the environment. That is what makes dev and prod independently deployable \u2014 separate state objects, separate locks, no chance a dev apply touches prod.\n\nThis is also the sharpest contrast with the declarative-controller stacks. Delete a Crossplane `ProviderConfig`'s managed resource records and the controller re-reconciles from the Kubernetes API, which *is* the state store and is itself backed by etcd with its own HA story. Terraform's state is a file you can `rm`.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\nTerraform itself does very little. It emits an `ModifyDBInstance` API call and polls. **AWS** does the work, and the behavior depends on `apply_immediately`:\n\n**Default (`apply_immediately = false`):**\nThe modification is queued to the next maintenance window. `terraform apply` returns quickly and reports success, but `instance_class` in AWS is still `db.t3.micro` until the window opens. State now records `db.t3.small`. **State and reality have diverged, and Terraform reports success.** Next plan may show a drift back, depending on refresh timing.\n\n**With `apply_immediately = true`:**\nAWS begins the modification now. For a single-AZ instance (dev), this is a **stop-modify-start** cycle \u2014 the instance is unavailable for several minutes. Terraform blocks until the instance returns to `available`, respecting the `timeouts` block:\n\n```hcl\nresource \"aws_db_instance\" \"app\" {\n  # ...\n  apply_immediately = var.env != \"prod\"\n\n  timeouts {\n    update = \"80m\"\n  }\n}\n```\n\nFor prod with `multi_az = true`, AWS modifies the standby first, then fails over, then modifies the former primary. Downtime is reduced to the failover window (~60\u2013120s) rather than a full restart. This is a real operational argument for multi-AZ beyond durability.\n\n**What Terraform does *not* do:**\n- It does not know the change is disruptive. There is no \"this will cause downtime\" warning in plan output. `~ instance_class` looks identical in the plan whether it is a no-op-ish scale-up or a multi-minute outage.\n- It does not sequence around dependents. If an EKS workload holds connections, they drop. Terraform has no concept of draining.\n- It does not roll back. If the modify fails halfway, apply errors and state may be partially updated. You re-run and hope.\n\nThe honest summary: for mutable-attribute changes, Terraform is a thin RPC wrapper with a diff engine in front of it. The interesting semantics live in the provider's schema (which fields are `ForceNew`) and in the cloud API (what a modify actually does).\n\n---\n\n## 4. What is the difference between state and configuration?\n\n| | Configuration | State |\n|---|---|---|\n| **Lives in** | `.tf`, `.tfvars` files | `terraform.tfstate` (JSON) |\n| **Authored by** | Humans, in Git | Terraform, on apply |\n| **Represents** | Desired state | Last-known actual state |\n| **Contains** | Types, expressions, references, unresolved variables | Concrete IDs, resolved attributes, computed values, dependency edges |\n| **Secrets** | Should never contain plaintext secrets | **Does** contain them, in plaintext |\n| **Lost if deleted** | Recoverable from Git | Catastrophic without backend versioning |\n\n**Plan is the function of these two:**\n\n```\nplan = diff(refresh(state, cloud_api), configuration)\n```\n\nThree distinct concepts, often conflated:\n\n- **Configuration vs. state** \u2192 the plan diff. \"You said t3.small, state says t3.micro.\"\n- **State vs. cloud reality** \u2192 drift, surfaced during refresh. \"State says t3.micro, AWS says t3.large \u2014 someone used the console.\"\n- **Configuration vs. cloud reality** \u2192 what you actually care about, but Terraform can only see it *through* state.\n\nThat third row is the crux. Terraform cannot diff config against reality directly, because it does not know which cloud objects correspond to which config blocks. **State is the mapping table** from `aws_db_instance.app` to `db-ABCDEF1234567890`. Without it, Terraform is blind \u2014 which is exactly why deleting it produces \"47 to add.\"\n\n### The secrets consequence\n\nThe canonical spine has a DB connection string secret. Whatever you do at the config layer:\n\n```hcl\n# Even with SOPS-encrypted tfvars, or a sops provider data source:\nresource \"aws_secretsmanager_secret_version\" \"db\" {\n  secret_id     = aws_secretsmanager_secret.db.id\n  secret_string = data.sops_file.secrets.data[\"db_connection_string\"]\n}\n```\n\n\u2026the resolved plaintext connection string is written to `terraform.tfstate`. Marking a variable `sensitive = true` only redacts it from **CLI output**; it does not encrypt state. Therefore:\n\n- The state backend must have `encrypt = true` (SSE) plus a restrictive bucket policy.\n- Access to the state bucket is equivalent to access to every secret in the stack.\n- `terraform show -json` on a CI runner will happily print them.\n\nThe idiomatic mitigation is to keep secrets *out* of Terraform's dataflow entirely \u2014 have Terraform create an empty `aws_secretsmanager_secret` and let an out-of-band process (or the application's own IRSA-authenticated fetch) populate the value. Terraform manages the container; something else manages the contents. This costs you the ability to express the secret declaratively, which is the trade.\n\n---\n\n## Summary\n\n1. **Flipping `db_instance_class`** yields a one-line `~` update-in-place; identity and downstream references are preserved. Only a `ForceNew` field would show `-/+`, and `deletion_protection = true` would then break the apply.\n2. **Deleting state** makes Terraform forget it owns anything \u2014 the plan becomes all-creates, apply either errors on name collisions or silently duplicates infrastructure. Remote backend with versioning is not optional.\n3. **The instance class change** is delegated to AWS. Terraform issues `ModifyDBInstance` and waits; downtime depends on `apply_immediately` and `multi_az`, and the plan output gives you no warning about either.\n4. **Configuration is desired state in Git; state is last-known reality plus the identity mapping.** Plan is their diff. State holds secrets in plaintext, which makes the backend a top-tier security boundary.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/dev.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/dev.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/terraform.tfstate",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/dev.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/terraform.tfstate",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-m8zxp3gu/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

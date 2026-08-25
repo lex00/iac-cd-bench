@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1049,
+    "output": 1635
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Summary\n\n**Verdict: REQUEST CHANGES** \u2014 Both changes violate acceptance criteria and introduce data-loss risk.\n\n---\n\n## Issue 1: `deletionPolicy: Delete` added provider-wide \ud83d\udd34 BLOCKER\n\n### The problem\n\nSetting `deletionPolicy: Delete` at the provider/composition-wide level means **deleting the claim or composite deletes the underlying cloud resource**. Applied blanket-wide, this hits your S3 bucket and RDS instance.\n\nThis directly violates **AC #2** (RDS deletion protection on) and creates severe data-loss risk.\n\n### Why \"provider-wide\" is the specific danger\n\n```yaml\n# \u274c What this diff likely looks like \u2014 blanket application\nresources:\n  - name: bucket\n    base:\n      spec:\n        deletionPolicy: Delete   # bucket gone on claim delete\n  - name: rdsInstance\n    base:\n      spec:\n        deletionPolicy: Delete   # DATABASE gone on claim delete\n```\n\nA single `kubectl delete claim` \u2014 or an ArgoCD/Flux prune, or a namespace teardown \u2014 now **destroys production data**. GitOps controllers prune aggressively; this is not a hypothetical.\n\n### Required changes\n\nStateful resources must **not** be `Delete`, especially in prod:\n\n```yaml\n# \u2705 Stateful resources: retain\n  - name: rdsInstance\n    base:\n      spec:\n        deletionPolicy: Orphan          # or Retain via provider\n        forProvider:\n          deletionProtection: true      # AC #2 \u2014 must stay on\n          backupRetentionPeriod: 7       # AC #2 \u2014 >= 7 days\n\n  - name: bucket\n    base:\n      spec:\n        deletionPolicy: Orphan\n```\n\n**Guidance by resource type:**\n\n| Resource | deletionPolicy | Rationale |\n|---|---|---|\n| RDS instance | `Orphan` (prod), review for dev | Data loss is unrecoverable |\n| S3 bucket | `Orphan` | Asset loss; also fails delete if non-empty |\n| IAM user/role | `Delete` acceptable | Recreatable |\n| EKS node group | `Delete` acceptable | Stateless |\n\nIf you genuinely need `Delete` on ephemeral resources, apply it **per-resource**, not provider-wide. Ask the author: **what problem is this solving?** Usually it's \"cleanup of dev stacks\" \u2014 which should be scoped to the dev composition/environment only.\n\n---\n\n## Issue 2: Bucket versioning dropped \ud83d\udd34 BLOCKER\n\n### The problem\n\nThis directly violates **AC #1** (bucket versioning enabled). Combined with Issue 1, this is a compounding failure:\n\n- Versioning off \u2192 no recovery from overwrites/deletes\n- `deletionPolicy: Delete` \u2192 bucket itself can be destroyed\n\nTogether they remove **every** layer of protection on application assets.\n\n### Required change\n\n```yaml\n  - name: bucketVersioning\n    base:\n      apiVersion: s3.aws.upbound.io/v1beta1\n      kind: BucketVersioning\n      spec:\n        forProvider:\n          versioningConfiguration:\n            - status: Enabled          # must be restored\n```\n\nAlso confirm the following weren't silently dropped in the same diff (please paste the full diff):\n- `BucketServerSideEncryptionConfiguration` (AES-256/KMS) \u2014 **AC #1**\n- `BucketPublicAccessBlock` (all four flags `true`) \u2014 **AC #1**\n- Prod: cross-region replication to `us-west-2` (requires versioning on **both** buckets \u2014 dropping versioning breaks CRR entirely)\n\n---\n\n## Additional questions for the author\n\n1. **Was this intended for dev only?** If so, it must live in the dev-specific composition/`Composition` selector or environment config \u2014 not applied where prod resolves. Confirm prod is unaffected (**AC #7**, environment isolation).\n2. **What triggered the versioning removal?** If it was an accidental revert, restore it. If intentional (cost?), that's not a valid tradeoff against AC #1.\n3. Show the `CompositionRevision` impact \u2014 existing composites may reconcile toward `Delete` on next drift correction.\n\n---\n\n## What I need to approve\n\n- [ ] `deletionPolicy` reverted to `Orphan`/`Retain` for RDS and S3 (per-resource, not blanket)\n- [ ] Bucket versioning restored to `Enabled`\n- [ ] Confirmation encryption + public access block are intact\n- [ ] Confirmation prod composition/environment is unaffected if change was dev-scoped\n- [ ] RDS `deletionProtection: true` and `backupRetentionPeriod >= 7` verified present\n\nHappy to re-review once these are addressed.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-rzkuz___/generated_0.yaml"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/crossplane/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

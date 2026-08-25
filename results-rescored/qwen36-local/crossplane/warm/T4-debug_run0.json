@@ -1,0 +1,86 @@
+{
+  "model": "qwen36-local",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 660,
+    "output": 4234
+  },
+  "content": "\n\nHere\u2019s the targeted fix for your Crossplane Composition. It addresses both defects while aligning with the canonical scenario and acceptance criteria.\n\n### \ud83d\udd27 Corrected Composition Snippet (RDS Resource)\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: webapp-infra-composition\nspec:\n  compositeTypeRef:\n    apiVersion: infra.example.com/v1alpha1\n    kind: WebAppInfra\n  resources:\n    - name: rds-postgres\n      base:\n        apiVersion: database.aws.crossplane.io/v1beta1\n        kind: RDSInstance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            storageEncrypted: true\n            publiclyAccessible: false\n            deletionProtection: true\n            backupRetentionPeriod: 7\n            allocatedStorage: 20\n      patches:\n        # FIX 1: Corrected fromFieldPath to match XR spec schema\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.multiAZ\n          toFieldPath: spec.forProvider.multiAZ\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.engineVersion\n          toFieldPath: spec.forProvider.engineVersion\n        - type: CombineFromComposite\n          combine:\n            variables:\n              - fromFieldPath: metadata.name\n              - fromFieldPath: spec.parameters.env\n            strategy: String\n            string:\n              fmt: \"%s-%s-rds\"\n          toFieldPath: spec.forProvider.dbInstanceIdentifier\n      # FIX 2: Added readiness check so Composition tracks RDS provisioning state\n      readinessChecks:\n        - type: FieldPath\n          fieldPath: status.atProvider.status\n          status: \"available\"\n```\n\n---\n\n### \ud83d\udcd6 Defect Breakdown\n\n| Defect | Root Cause | Fix Applied |\n|--------|------------|-------------|\n| **Incorrect `fromFieldPath`** | Patch referenced a non-existent field (e.g., `spec.instanceClass` or `spec.spec.instanceClass`) instead of the XR's parameter namespace (`spec.parameters.*`). Crossplane silently fails to patch, blocking MR creation. | Changed to `spec.parameters.instanceClass` (and aligned `multiAZ`/`engineVersion`). Ensure your XR CRD schema declares these under `spec.parameters`. |\n| **Missing `ReadinessChecks`** | Without a readiness check, Crossplane doesn't know when the underlying RDS instance finishes provisioning. The Composition either hangs indefinitely or marks the XR `Ready` prematurely, causing downstream resources (Secrets, ALB, etc.) to fail. | Added `readinessChecks` watching `status.atProvider.status == \"available\"`, which is the canonical signal from the `database-aws` provider. |\n\n---\n\n### \u2705 Validation Steps\n\n1. **Apply/Update Composition:**\n   ```bash\n   kubectl apply -f composition.yaml\n   ```\n2. **Watch Composition Progress:**\n   ```bash\n   kubectl get xr -w\n   kubectl describe xr <your-xr-name> -n <namespace>\n   ```\n3. **Verify RDS Readiness Signal:**\n   ```bash\n   kubectl get rdsinstance <xr-name>-rds-postgres -o yaml | yq '.status.atProvider.status'\n   # Should return: available\n   ```\n4. **Confirm XR Status:**\n   ```bash\n   kubectl get xr <your-xr-name> -o jsonpath='{.status.conditions[?(@.type==\"Ready\")].reason}'\n   # Should return: Ready\n   ```\n\n---\n\n### \ud83c\udfaf Alignment with Acceptance Criteria\n\n| Criterion | How This Fix Satisfies It |\n|-----------|---------------------------|\n| **RDS deletion protection & backup** | Explicitly set in `base.spec.forProvider` (`deletionProtection: true`, `backupRetentionPeriod: 7`) |\n| **No publicly accessible** | `publiclyAccessible: false` enforced in base spec |\n| **Encryption at rest** | `storageEncrypted: true` (uses AWS default KMS or can be overridden via parameter) |\n| **Environment isolation** | `instanceClass` and `multiAZ` are driven by XR parameters. Dev sets `db.t3.micro`/`false`, Prod sets `db.t3.medium`/`true`. Compositions remain identical; environments differ only in XR manifests. |\n| **Composition Ready state** | Restored by fixing patch resolution + explicit RDS readiness gate |\n\n---\n\n### \ud83d\udca1 Pro Tips for This Stack\n- **XR Parameter Validation:** Add `x-kubernetes-validations` to your CRD to reject invalid `instanceClass` or `engineVersion` values at admission time.\n- **Secret Handling:** Pass the DB connection string via a `ProviderConfigReference` + `SecretStore` reference, never inline. Crossplane will fetch it securely and patch it into RDS master credentials.\n- **Prod `multiAZ: true`**: Note that enabling multi-AZ on an existing RDS instance requires a rolling update. Crossplane handles this gracefully, but expect a brief maintenance window.\n\nApply this patch and your Composition will resolve, provision RDS, and transition to `Ready` predictably across both `dev` and `prod` environments.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-ha_1r19s/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/crossplane/warm/T4-debug_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

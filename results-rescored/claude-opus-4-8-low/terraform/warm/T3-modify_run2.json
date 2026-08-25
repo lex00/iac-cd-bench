@@ -1,0 +1,93 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T3-modify",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\n\u001b[0m\u001b[1mInitializing modules...\u001b[0m\n- env in\n\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mUnreadable module directory\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0mUnable to evaluate directory symlink: lstat modules: no such file or\n\u001b[31m\u2502\u001b[0m \u001b[0mdirectory\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mUnreadable module directory\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0mThe directory  could not be read for module \"env\" at environments.tf:1.\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mModule not installed\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on environments.tf line 1:\n\u001b[31m\u2502\u001b[0m \u001b[0m   1: \u001b[4mmodule \"env\"\u001b[0m {\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mThis module is not yet installed. Run \"terraform init\" to install all\n\u001b[31m\u2502\u001b[0m \u001b[0mmodules required by this configuration.\n\u001b[31m\u2575\u001b[0m\u001b[0m\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1043,
+    "output": 3293
+  },
+  "content": "# Refactoring Duplicated Dev/Prod Blocks \u2192 Single Module with `for_each`\n\n## The Problem\n\nYou likely have something like this today \u2014 two near-identical top-level blocks:\n\n```hcl\n# BEFORE: main.tf (duplicated)\nresource \"aws_s3_bucket\" \"dev_assets\" {\n  bucket = \"myapp-assets-dev\"\n}\nresource \"aws_s3_bucket\" \"prod_assets\" {\n  bucket = \"myapp-assets-prod\"\n}\n# ... plus dev/prod copies of RDS, EKS, IAM, CloudFront ...\n```\n\nThe goal: **one module**, instantiated per environment via `for_each`, with **zero-diff** state moves (no destroy/recreate).\n\n---\n\n## Step 1: Extract the Module\n\n```\n.\n\u251c\u2500\u2500 modules/\n\u2502   \u2514\u2500\u2500 environment/\n\u2502       \u251c\u2500\u2500 variables.tf\n\u2502       \u251c\u2500\u2500 s3.tf\n\u2502       \u251c\u2500\u2500 rds.tf\n\u2502       \u251c\u2500\u2500 eks.tf\n\u2502       \u251c\u2500\u2500 iam.tf\n\u2502       \u251c\u2500\u2500 cloudfront.tf\n\u2502       \u2514\u2500\u2500 outputs.tf\n\u251c\u2500\u2500 environments.tf     # the for_each call\n\u251c\u2500\u2500 locals.tf           # per-env config map\n\u2514\u2500\u2500 providers.tf\n```\n\n### `locals.tf` \u2014 the single source of per-env differences\n\n```hcl\nlocals {\n  environments = {\n    dev = {\n      region              = \"us-east-1\"\n      eks_node_count      = 2\n      eks_instance_type   = \"t3.medium\"\n      rds_instance_class  = \"db.t3.micro\"\n      rds_multi_az        = false\n      rds_encrypted       = false\n      s3_replication      = false\n      iam_wildcard_ok     = true   # dev only\n    }\n    prod = {\n      region              = \"us-east-1\"\n      eks_node_count      = 4\n      eks_instance_type   = \"t3.large\"\n      rds_instance_class  = \"db.t3.medium\"\n      rds_multi_az        = true\n      rds_encrypted       = true\n      s3_replication      = true\n      s3_replica_region   = \"us-west-2\"\n      iam_wildcard_ok     = false  # least privilege enforced\n    }\n  }\n}\n```\n\n### `environments.tf` \u2014 the `for_each` call\n\n```hcl\nmodule \"env\" {\n  source   = \"./modules/environment\"\n  for_each = local.environments\n\n  env_name           = each.key\n  region             = each.value.region\n  eks_node_count     = each.value.eks_node_count\n  eks_instance_type  = each.value.eks_instance_type\n  rds_instance_class = each.value.rds_instance_class\n  rds_multi_az       = each.value.rds_multi_az\n  rds_encrypted      = each.value.rds_encrypted\n  s3_replication     = each.value.s3_replication\n  iam_wildcard_ok    = each.value.iam_wildcard_ok\n}\n```\n\n### Module resource (spec-compliant example)\n\n```hcl\n# modules/environment/s3.tf\nresource \"aws_s3_bucket\" \"assets\" {\n  bucket = \"myapp-assets-${var.env_name}\"\n}\n\nresource \"aws_s3_bucket_versioning\" \"assets\" {\n  bucket = aws_s3_bucket.assets.id\n  versioning_configuration { status = \"Enabled\" }        # AC #1\n}\n\nresource \"aws_s3_bucket_server_side_encryption_configuration\" \"assets\" {\n  bucket = aws_s3_bucket.assets.id\n  rule {\n    apply_server_side_encryption_by_default { sse_algorithm = \"AES256\" }\n  }\n}\n\nresource \"aws_s3_bucket_public_access_block\" \"assets\" {\n  bucket                  = aws_s3_bucket.assets.id\n  block_public_acls       = true\n  block_public_policy     = true\n  ignore_public_acls      = true\n  restrict_public_buckets = true                          # AC #1\n}\n\n# Prod-only cross-region replication, gated by the flag\nresource \"aws_s3_bucket_replication_configuration\" \"assets\" {\n  count  = var.s3_replication ? 1 : 0\n  bucket = aws_s3_bucket.assets.id\n  role   = aws_iam_role.replication[0].arn\n  # ...rule to us-west-2...\n}\n```\n\n```hcl\n# modules/environment/rds.tf (AC #2)\nresource \"aws_db_instance\" \"postgres\" {\n  identifier              = \"myapp-${var.env_name}\"\n  engine                  = \"postgres\"\n  instance_class          = var.rds_instance_class\n  multi_az                = var.rds_multi_az\n  storage_encrypted       = var.rds_encrypted\n  deletion_protection     = true          # AC #2\n  backup_retention_period = 7             # AC #2\n  publicly_accessible     = false         # AC #2\n  # ...\n}\n```\n\n---\n\n## Step 2: The Critical Part \u2014 Zero-Diff State Moves\n\n**Do not `terraform apply` first.** Moving addresses changes the state, not the infrastructure. Two ways:\n\n### Option A \u2014 `moved` blocks (preferred, declarative, reviewable in PR)\n\nTerraform 1.1+. These live in code, are self-documenting, and safe in CI:\n\n```hcl\n# moves.tf\nmoved {\n  from = aws_s3_bucket.dev_assets\n  to   = module.env[\"dev\"].aws_s3_bucket.assets\n}\nmoved {\n  from = aws_s3_bucket.prod_assets\n  to   = module.env[\"prod\"].aws_s3_bucket.assets\n}\n\nmoved {\n  from = aws_db_instance.dev_postgres\n  to   = module.env[\"dev\"].aws_db_instance.postgres\n}\nmoved {\n  from = aws_db_instance.prod_postgres\n  to   = module.env[\"prod\"].aws_db_instance.postgres\n}\n\n# ...one moved block per resource, per env...\n```\n\nThen:\n\n```bash\nterraform plan   # MUST show \"0 to add, 0 to change, 0 to destroy\"\n                 # and a list of moves under \"Terraform will perform...\"\n```\n\n### Option B \u2014 `terraform state mv` (imperative, if you can't use `moved`)\n\n```bash\nterraform state mv 'aws_s3_bucket.dev_assets'  'module.env[\"dev\"].aws_s3_bucket.assets'\nterraform state mv 'aws_s3_bucket.prod_assets' 'module.env[\"prod\"].aws_s3_bucket.assets'\nterraform state mv 'aws_db_instance.dev_postgres'  'module.env[\"dev\"].aws_db_instance.postgres'\n# ...\n```\n\n> \u26a0\ufe0f Quote the brackets: `module.env[\"dev\"]`. In some shells/OSes the CLI needs escaping or single-quotes to survive `[` `]` `\"`.\n\n---\n\n## Step 3: Verify Zero-Diff\n\nThe whole point of the refactor. Gate it in CI:\n\n```bash\nterraform plan -detailed-exitcode\n# exit 0 = no changes  \u2705  (what you want)\n# exit 2 = changes present \u274c  (a move is missing or a resource arg drifted)\n```\n\nAny `~ change` or `-/+ replace` means a mismatch between the old inline config and your module (often a defaulted argument, a `bucket` name typo, or a nested config resource like versioning that has a different address). Fix the module until the plan is clean **before** merging.\n\n---\n\n## Note on Environment Isolation (AC #7)\n\n`for_each` in one state file **couples dev and prod into one state** \u2014 a `terraform apply` touching prod plans dev too, which technically violates strict isolation.\n\nTwo idiomatic resolutions \u2014 pick based on your risk posture:\n\n| Approach | Isolation | Notes |\n|---|---|---|\n| **Single root + `for_each`** (above) | Logical | One state; use `-target` or targeted plans. Simpler, but blast radius is shared. |\n| **Module + per-env root/backend** (recommended for prod) | Physical | Same `./modules/environment`, but a thin root per env with its own backend/`*.tfvars`. Independent state = true isolation. |\n\nFor the spec's **\"changing prod does not modify dev state\"**, the physical split is the safer read:\n\n```\n\u251c\u2500\u2500 modules/environment/     # the shared module (dedup achieved here)\n\u251c\u2500\u2500 live/\n\u2502   \u251c\u2500\u2500 dev/  { main.tf \u2192 module \"env\", backend \"dev/terraform.tfstate\", dev.tfvars }\n\u2502   \u2514\u2500\u2500 prod/ { main.tf \u2192 module \"env\", backend \"prod/terraform.tfstate\", prod.tfvars }\n```\n\nDedup still lives in the module; `for_each` can be used *inside* a single env for repeated sub-resources. State moves then use per-env `moved` blocks against per-env backends.\n\n---\n\n## Summary Checklist\n\n- [ ] All shared logic in `modules/environment`, differences in a config map / tfvars\n- [ ] Spec-compliant defaults baked into module (versioning, encryption, deletion protection, 443 listener, least-privilege IAM gated by `iam_wildcard_ok`)\n- [ ] One `moved` block per resource per env\n- [ ] `terraform plan` shows **0 add / 0 change / 0 destroy**\n- [ ] `plan -detailed-exitcode` returns `0` in CI before merge\n- [ ] Decide single-state `for_each` vs per-env backend for AC #7 isolation\n\nWant me to generate the complete module (EKS + IAM/OIDC + CloudFront/ACM + SOPS secret wiring) or the exhaustive `moved` block list for a specific existing resource set? Share your current `main.tf` addresses and I'll produce the exact move mapping.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/locals.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/environments.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/*.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/generated_3.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/generated_4.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-g53sx34a/generated_5.tf"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/terraform/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

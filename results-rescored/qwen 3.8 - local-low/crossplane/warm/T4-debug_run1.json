@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1199,
+    "output": 1401
+  },
+  "content": "\n\n# Fixed `composition.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n          providerConfigRef:\n            name: default\n      patches:\n        # FIX 1: correct fromFieldPath to spec.parameters.instanceClass\n        - fromFieldPath: spec.parameters.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n          transforms:\n            - type: String\n              string:\n                type: Format\n                format: \"db.t3.%s\"\n      # FIX 2: add ReadinessChecks so the Composition can reach Ready\n      readiness:\n        type: AllOf\n        checks:\n          - type: ConditionCheck\n            conditionType: Ready\n            conditionStatus: \"True\"\n          - type: ConditionCheck\n            conditionType: Synced\n            conditionStatus: \"True\"\n```\n\n## Summary of Changes\n\n| Defect | Root Cause | Fix |\n|--------|-----------|-----|\n| Wrong `fromFieldPath` | Patch referenced `spec.parameters.storageClass` \u2014 a field that does not exist in the XRD's parameter schema. The XRD defines `instanceClass` as the parameter name. | Changed to `spec.parameters.instanceClass` so the patch correctly reads the user-specified instance class and formats it into `db.t3.<size>` for the RDS `instanceClass` field. |\n| Missing `ReadinessChecks` | The `readiness` field was an empty object `{}`, which means the pipeline has no criteria for when the child resource is \"ready.\" Crossplane cannot determine the composite's Ready condition, so the Composition stays perpetually in a non-Ready state. | Added an `AllOf` readiness check requiring both the `Ready` and `Synced` conditions to be `True` on the RDS Instance. The `Synced` check ensures the managed resource has been reconciled against the provider, and `Ready` confirms the RDS instance has reached the `available` status in AWS. |\n\n### Why both conditions matter\n\n- **`Synced: True`** \u2014 Confirms the Crossplane provider has successfully reconciled the spec (no API errors, no pending updates).\n- **`Ready: True`** \u2014 Confirms the underlying AWS RDS instance has transitioned to the `available` state (engine is running, connections accepted).\n\nWithout both, you either get a false positive (reconciled but instance still creating) or miss drift/termination signals.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-ab6tvkwp/composition.yaml"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 2,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7777777777777778
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/crossplane/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 2,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7777777777777778
+    },
+    "corrected_composite_no_idiom": 0.875,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,86 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 684,
+    "output": 8192
+  },
+  "content": "\n\nHere is a complete, idiomatic Pulumi TypeScript implementation that meets your canonical scenario specification.\n\n### 1. Component Resource (`app-infrastructure.ts`)\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\n/**\n * Arguments for the AppInfrastructure component.\n * Network dependencies are injected to promote composition and reuse.\n */\nexport interface AppInfrastructureArgs extends pulumi.ComponentResourceOptions {\n    /** Explicitly override environment detection (defaults to pulumi.getStack()) */\n    env?: \"dev\" | \"prod\";\n    /** VPC ID for RDS and Security Groups */\n    vpcId: pulumi.Input<string>;\n    /** Subnet IDs for the RDS subnet group */\n    subnetIds: pulumi.Input<string[]>;\n    /** OIDC Provider ARN (required for prod) */\n    oidcProviderArn?: pulumi.Input<string>;\n    /** K8s Namespace for service account (required for prod) */\n    serviceAccountNamespace?: pulumi.Input<string>;\n    /** K8s Service Account name (required for prod) */\n    serviceAccountName?: pulumi.Input<string>;\n}\n\nexport class AppInfrastructure extends pulumi.ComponentResource {\n    readonly bucket: aws.s3.Bucket;\n    readonly dbInstance: aws.rds.Instance;\n    readonly iamRole: aws.iam.Role;\n    readonly dbEndpoint: pulumi.Output<string>;\n\n    constructor(name: string, args: AppInfrastructureArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"myorg:infra:AppInfrastructure\", name, {}, opts);\n\n        const config = new pulumi.Config(\"app\");\n        const env = args.env ?? (pulumi.getStack() as \"dev\" | \"prod\");\n        const isProd = env === \"prod\";\n\n        // ---------------------------------------------------------------------\n        // 1. S3 Bucket (Assets)\n        // ---------------------------------------------------------------------\n        this.bucket = new aws.s3.Bucket(`${name}-assets`, {\n            versioning: { enabled: true }, // AC-1: Versioning enabled\n            serverSideEncryptionConfiguration: {\n                rule: { applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" } } // AC-1: AES-256 encryption\n            },\n            publicAccessBlock: { // AC-1: No public access\n                blockPublicAcls: true,\n                blockPublicPolicy: true,\n                ignorePublicAcls: true,\n                restrictPublicBuckets: true\n            }\n        }, { parent: this });\n\n        // Prod-only: Cross-region replication (AC-1 extension from spec)\n        if (isProd) {\n            new aws.s3.BucketReplicationConfiguration(`${name}-replication`, {\n                bucket: this.bucket.id,\n                role: config.require(\"s3ReplicationRoleArn\"), // ARN of role with s3:Replicate* permissions\n                rules: [{\n                    status: \"Enabled\",\n                    priority: 1,\n                    destination: {\n                        bucket: \"arn:aws:s3:::prod-assets-replica-us-west-2\",\n                        region: \"us-west-2\",\n                        encryptionConfiguration: {\n                            replicatingSseKmsKeyId: config.require(\"replicationKmsKeyId\")\n                        }\n                    }\n                }]\n            }, { parent: this });\n        }\n\n        // ---------------------------------------------------------------------\n        // 2. RDS PostgreSQL Instance\n        // ---------------------------------------------------------------------\n        const dbSubnetGroup = new aws.rds.SubnetGroup(`${name}-db-subnet`, {\n            subnetIds: args.subnetIds\n        }, { parent: this });\n\n        const dbSecurityGroup = new aws.ec2.SecurityGroup(`${name}-db-sg`, {\n            vpcId: args.vpcId,\n            ingress: [{\n                protocol: \"tcp\",\n                fromPort: 5432,\n                toPort: 5432,\n                cidrBlocks: [\"10.0.0.0/8\"] // Internal VPC traffic only\n            }],\n            egress: [{ protocol: \"-1\", fromPort: 0, toPort: 0, cidrBlocks: [\"0.0.0.0/0\"] }]\n        }, { parent: this });\n\n        this.dbInstance =",
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T2-generate_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "no_extractable_output: the task's enabled stages act on files the model was to produce, and the completion contains no code block \u2014 lint and static would have nothing to check and would pass vacuously",
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

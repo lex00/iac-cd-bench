@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 789,
+    "output": 2318
+  },
+  "content": "\n\nBased on the provided PR diff preview and the `knr-ops` acceptance criteria, here is the security review:\n\n### \ud83d\udd34 Critical Issues\n1. **S3 Bucket Policy Grants Public Read Access**\n   - **Risk:** Direct violation of acceptance criterion `#1` (`no public access`). Exposes application assets to the internet, enabling data exfiltration, hotlinking, or unauthorized consumption.\n   - **Spec Mapping:** Violates \"Bucket: no public access\".\n\n2. **Plaintext Password in Deployment Env Vars**\n   - **Risk:** Direct violation of acceptance criterion `#3` (`never stored in plaintext in Git`). Commits secrets to version control history, enabling credential theft, replay attacks, and compliance failures.\n   - **Spec Mapping:** Violates \"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism\".\n\n### \ud83d\udfe1 Warning Issues\n3. **Missing Container Resource Limits**\n   - **Risk:** Unbounded CPU/memory usage can lead to noisy-neighbor effects, node OOMKills, or resource exhaustion DoS. While not a direct data leak, it violates Kubernetes security/stability best practices and can mask or trigger outages.\n   - **Spec Mapping:** Implicitly supports cluster stability & least-privilege resource allocation.\n\n### \ud83d\udfe2 Info / Non-Issue\n4. **RDS Instance Class Change**\n   - **Note:** Acknowledged as configuration tuning. Ensure it aligns with the spec (`db.t3.medium` for prod, `db.t3.micro` for dev) and doesn't bypass cost guardrails.\n\n---\n\n### \ud83d\udee0 What Must Change Before Merge?\n\n| Issue | Required Fix | `knr-ops` (Flux/Kustomize) Implementation |\n|-------|--------------|-------------------------------------------|\n| **S3 Public Policy** | Remove `\"Principal\": \"*\"` or `\"Effect\": \"Allow\"` for `s3:GetObject`. Enforce `BlockPublicAccess` at account/bucket level. | Delete the public-read bucket policy manifest. If cross-account/role access is needed, use IAM policies or S3 Access Points with explicit trust principals. |\n| **Plaintext Env Vars** | Remove plaintext values. Encrypt secrets using SOPS (per spec). | Use `sops -e -i <secret-file>` to encrypt. Reference in deployment via `envFrom` or `valueFrom.secretKeyRef`. Ensure Flux's `SOPS decryption` or `external-secrets` operator is configured in your Kustomize `base/` or overlay. |\n| **Missing Limits** | Add `resources.limits` (CPU/Memory) and `requests` to all containers. | Append to container spec in Kustomize `base/` or env overlays:\\n```yaml\\nresources:\\n  requests:\\n    cpu: \"250m\"\\n    memory: \"256Mi\"\\n  limits:\\n    cpu: \"500m\"\\n    memory: \"512Mi\"\\n``` |\n\n### \u2705 Pre-Merge Checklist\n- [ ] Run `sops -d` locally to verify no plaintext secrets slip through\n- [ ] Validate Kustomize overlays do not accidentally promote prod configs to dev (env isolation)\n- [ ] Re-run PR policy checks (OPA/Gatekeeper, Conftest, or `kubesec`) to catch the limit & public-access violations automatically\n- [ ] Confirm S3 Block Public Access is enforced via Terraform/Pulumi or AWS SCP to prevent future drift\n\n**Recommendation:** **Block merge** until Critical items are resolved. Warnings should be addressed in the same PR to maintain deployment stability.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/knr-ops/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

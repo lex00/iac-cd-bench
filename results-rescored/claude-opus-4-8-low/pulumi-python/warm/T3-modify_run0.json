@@ -1,0 +1,92 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `cluster`\n  --> generated_0.py:10:13\n   |\n 8 | node_group = eks.ManagedNodeGroup(\n 9 |     \"app-nodes\",\n10 |     cluster=cluster.core,\n   |             ^^^^^^^\n11 |     node_group_name=\"app-nodes\",\n12 |     instance_types=[config.require(\"nodeInstanceType\")],  # unchanged\n   |\n\nE501 Line too long (89 > 88)\n  --> generated_0.py:18:89\n   |\n16 |         desired_size=config.require_int(\"nodeDesired\"),\n17 |     ),\n18 |     # DO NOT change ami_type, capacity_type, disk_size, subnet"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1043,
+    "output": 2132
+  },
+  "content": "# Adding an Auto-Scaling Policy Without Resource Replacement\n\nThe critical goal here is **avoiding replacement** of your existing EKS node group / RDS / cluster. Let me walk through the safe approach.\n\n## Why Replacement Happens\n\nPulumi replaces a resource when you change a property marked as `ForceNew` (immutable) in the provider schema. For auto-scaling, the danger zones are:\n\n- Changing `scalingConfig` on a node group is usually **updatable in place** \u2705\n- Adding a **separate** `aws.autoscaling.Policy` resource never touches existing resources \u2705\n- Modifying the launch template / instance types **does** force replacement \u274c\n\nThe safest pattern is to **add new resources** (scaling policies, CloudWatch alarms) rather than mutate immutable fields.\n\n## Recommended Implementation\n\n### 1. Adjust the managed node group scaling config (in-place update)\n\n```python\n# eks.py \u2014 existing node group, only min/max/desired change (mutable)\nimport pulumi\nimport pulumi_eks as eks\n\nconfig = pulumi.Config()\nenv = pulumi.get_stack()  # \"dev\" or \"prod\"\n\nnode_group = eks.ManagedNodeGroup(\n    \"app-nodes\",\n    cluster=cluster.core,\n    node_group_name=\"app-nodes\",\n    instance_types=[config.require(\"nodeInstanceType\")],  # unchanged\n    scaling_config=eks.ManagedNodeGroupScalingConfigArgs(\n        min_size=config.require_int(\"nodeMin\"),\n        max_size=config.require_int(\"nodeMax\"),\n        desired_size=config.require_int(\"nodeDesired\"),\n    ),\n    # DO NOT change ami_type, capacity_type, disk_size, subnet_ids, etc. \u2014 those ForceNew\n)\n```\n\n`scaling_config` values are **update-in-place**, so bumping max_size will not replace the node group.\n\n### 2. Add a target-tracking auto-scaling policy (pure addition)\n\nManaged node groups expose an underlying ASG. Reference it and attach a policy\u2014**this adds a resource, replaces nothing**:\n\n```python\nimport pulumi_aws as aws\n\n# The ASG name is exported by the managed node group resources\nasg_name = node_group.resources.apply(\n    lambda res: res[0].autoscaling_groups[0].name\n)\n\ncpu_scaling_policy = aws.autoscaling.Policy(\n    \"app-nodes-cpu-tracking\",\n    autoscaling_group_name=asg_name,\n    policy_type=\"TargetTrackingScaling\",\n    target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n        predefined_metric_specification=(\n            aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n                predefined_metric_type=\"ASGAverageCPUUtilization\",\n            )\n        ),\n        target_value=70.0,\n    ),\n    opts=pulumi.ResourceOptions(depends_on=[node_group]),\n)\n```\n\n### 3. Per-environment sizing via stack config\n\n**`Pulumi.dev.yaml`**\n```yaml\nconfig:\n  app:nodeInstanceType: t3.medium\n  app:nodeMin: \"2\"\n  app:nodeMax: \"4\"\n  app:nodeDesired: \"2\"\n  app:scaleTargetCpu: \"70\"\n```\n\n**`Pulumi.prod.yaml`**\n```yaml\nconfig:\n  app:nodeInstanceType: t3.large\n  app:nodeMin: \"4\"\n  app:nodeMax: \"10\"\n  app:nodeDesired: \"4\"\n  app:scaleTargetCpu: \"60\"\n```\n\nThis keeps **environment isolation** (Acceptance Criterion 7): editing `Pulumi.prod.yaml` cannot affect the dev stack's state.\n\n## Verify Before Applying \u2014 This Is the Whole Point\n\nAlways run a preview with **detailed diff** so you catch a `replace` before it happens:\n\n```bash\npulumi preview --stack dev --diff\n```\n\nLook for the operation prefix in the output:\n\n| Symbol | Meaning | Safe? |\n|---|---|---|\n| `~` | update in-place | \u2705 yes |\n| `+` | create | \u2705 yes (new policy) |\n| `+-` | **replace** | \u274c STOP |\n| `-+` | replace (delete-before-create) | \u274c STOP |\n\nIf you see `+-` on the node group, expand the diff to find the offending property (e.g. `instance_types`, `disk_size`) and revert that change\u2014the scaling policy itself should only ever show `+`.\n\n## If You Must Change an Immutable Field\n\nIf a replacement is genuinely unavoidable but you want to preserve state, use targeted options:\n\n```python\n# Ignore drift on a field you manage out-of-band (e.g. desired_size set by autoscaler)\nopts=pulumi.ResourceOptions(\n    ignore_changes=[\"scaling_config.desired_size\"],\n)\n```\n\n`ignore_changes` on `desired_size` is **strongly recommended** once a target-tracking policy is live\u2014otherwise Pulumi and the autoscaler will fight over `desired_size` on every `up`.\n\n## Summary Checklist\n\n- [ ] Auto-scaling added as a **new** `aws.autoscaling.Policy`, not by mutating immutable node group fields\n- [ ] Only `scaling_config` (min/max/desired) touched on the existing node group\n- [ ] `ignore_changes=[\"scaling_config.desired_size\"]` set so the autoscaler owns desired count\n- [ ] Sizing driven by `Pulumi.<env>.yaml` \u2014 dev and prod independent\n- [ ] `pulumi preview --diff` shows only `~` and `+`, never `+-` or `-+`\n- [ ] Ran against **dev first**, confirmed, then prod\n\nWant me to extend this with CloudWatch alarm-based step scaling, or an RDS storage auto-scaling / read-replica scaling variant instead?",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-m0mb8szh/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-m0mb8szh/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-m0mb8szh/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-m0mb8szh/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-m0mb8szh/generated_1.py"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-python/warm/T3-modify_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

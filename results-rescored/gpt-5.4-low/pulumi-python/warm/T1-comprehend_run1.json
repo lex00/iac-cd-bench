@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 991,
+    "output": 766
+  },
+  "content": "1. **Which property triggered the replace?**  \n   The property shown in the preview as **requiring replacement** did. In Pulumi preview, look for the DB diff line marked like `replace` or \u201cforces replacement.\u201d  \n   For an RDS instance, a common trigger is an immutable field such as **storage encryption**, **identifier/name**, or another provider-defined ForceNew property.\n\n   So the answer is: **the specific DB input flagged in the preview diff as replacement-causing**.\n\n2. **What does `pulumi up --target` skip?**  \n   It applies changes only to the **targeted resource(s)** and the **dependencies required** to operate on them. It skips:\n\n   - unrelated resources\n   - non-targeted updates elsewhere in the stack\n   - dependent resources that are not explicitly targeted\n\n   In practice, it is a partial update, not a full stack reconciliation.\n\n3. **How does Pulumi handle secrets in outputs?**  \n   Pulumi preserves secret-ness automatically:\n\n   - values loaded with `config.require_secret()` are treated as **secrets**\n   - if an `Output` is derived from a secret, the resulting output is also a **secret**\n   - secrets are **encrypted in state**\n   - secrets are **redacted in CLI/display output**\n\n   So if you `pulumi.export()` a secret or a value derived from one, Pulumi keeps it protected rather than printing plaintext.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/pulumi-python/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

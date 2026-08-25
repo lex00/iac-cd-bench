@@ -1,0 +1,85 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 750
+  },
+  "content": "# Pulumi Preview Behavior Analysis\n\n## 1. Which property triggered the replace?\n\nA `replace` on the DB happens when a **non-updateable RDS property** changes. In the canonical scenario, the properties on `aws.rds.Instance` that force replacement include:\n\n- **`identifier`** \u2014 renaming the instance always replaces (most common trigger in two-env setups if names aren't fully parameterized)\n- **`engine` / `engine_version`** (major version bumps can replace)\n- **`username`** (master username changes)\n- **`password`** (if not using `manageMasterUserPassword`, password changes force replace \u2014 this is a classic accidental replace when secrets rotate)\n- **`storageType`**, **`allocatedStorage`** (shrinking), **`licenseModel`**, **`iamDatabaseAuthenticationEnabled`**, **`name`** (initial DB name)\n\nProperties like `instanceClass`, `multiAZ`, `backupRetentionPeriod`, `deletionProtection` are **updateable in place** \u2014 they would show `updated`, not `replaced`.\n\n**Most likely culprit in this scenario:** the DB password (rotated secret) or instance `identifier`. Check the diff lines in `pulumi preview --diff` \u2014 the property marked with `~` and flagged `forces replacement` identifies it.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target` deploys **only the URNs you explicitly list**. Everything else is skipped:\n\n- All other resources show as **skipped** in the preview and are not touched, even if they depend on changes\n- **Critical caveat:** it also skips *dependents*. If you target the RDS instance but a `pulumi.secret` or SecurityGroup depends on it, those aren't updated \u2014 this can leave drift\n- Conversely, `--target-dependents` includes downstream dependencies; plain `--target` does not\n- Skipped resources are not refreshed, not checked, and their state is untouched \u2014 useful for isolating a prod DB change without cascading effects (e.g., avoiding an accidental replace propagating to secrets or the connection string output)\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **`config.getSecret()` / `requireSecret()`** marks the value as a `Secret<T>` \u2014 it's encrypted in the state file (using the stack's passphrase or KMS-backed `secretsprovider`), never written plaintext\n- **`Output.secret(...)`** wraps computed values similarly\n- In `pulumi preview`/`up` diffs, secret values render as `[secret]`\n- **Secrets are tracked through the dataflow graph:** any Output derived from a secret (e.g., a DB connection string built from `password`) is automatically itself secret \u2014 this satisfies the \"DB connection string\" requirement without manual marking\n- **Caveat:** secret-ness propagates through Pulumi Outputs, but if you `.apply()` a secret into a resource property, that property in state is encrypted. Raw resource outputs from a provider are *not* automatically secret unless the provider marks them \u2014 wrap risky ones (`rds.Instance.masterPassword`, connection strings) explicitly\n- Stack config with `pulumi config set --secret` stores ciphertext in `dev.yaml`/`prod.yaml`, so no plaintext hits Git (Acceptance Criterion 3)\n\n**Practical tip for the replace:** to avoid password-driven replaces, use `manageMasterUserPassword: true` (RDS-managed rotation) or `applyImmediately: true` + `lifecycle.ignoreChanges = [\"password\"]` where appropriate.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-typescript/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

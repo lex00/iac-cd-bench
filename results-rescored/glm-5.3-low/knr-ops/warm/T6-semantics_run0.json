@@ -1,0 +1,89 @@
+{
+  "model": "glm-5.3",
+  "task": "T6-semantics",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "ult_deletion_policy_deletes FAILED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q4_retain_annotation_orphans PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q5_suspended_kustomization_applies_nothing PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q6_dependency_gate_blocks_apps_dev FAILED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q7_reconcile_order PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q3: expected deleted, got 'exists'\n    assert 'delet' in 'exists'\n     +  where 'exists' = _norm('exists')\n     +    where 'exists' = <built-in method get of dict object at 0x108aca700>('q3', '')\n     +      where <built-in method get of dict object at 0x108aca700> = {'q1': 'updated-in-place', 'q2': {'kustomization': 'infra-aws', 'outcome': 'pruned'}, 'q3': 'exists', 'q4': 'retained', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py:76: AssertionError: q3: expected deleted, got 'exists'\nE   AssertionError: q6 apps_dev_reconciles: expected false, got True\n    assert True is False\n/Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py:103: AssertionError: q6 apps_dev_reconciles: expected false, got True\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q3_default_deletion_policy_deletes\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T6-semantics/tests/test_task.py::test_q6_dependency_gate_blocks_apps_dev\n========================= 2 failed, 5 passed in 0.01s ==========================\n",
+      "passed_count": 5,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 2086,
+    "output": 172
+  },
+  "content": "```json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\"kustomization\": \"infra-aws\", \"outcome\": \"pruned\"},\n  \"q3\": \"exists\",\n  \"q4\": \"retained\",\n  \"q5\": {\"changes\": false, \"reason\": \"apps-prod is suspended, so Flux skips reconciliation entirely\"},\n  \"q6\": {\"apps_dev_reconciles\": true, \"reason\": \"healthChecks affect infra-aws readiness; dependsOn gates apps-dev only while infra-aws is not ready, but infra-aws can still become ready... actually health check failure marks infra-aws not-ready, so apps-dev is blocked and does not reconcile\"},\n  \"q7\": [\"infra-controllers\", \"infra-aws\", \"apps-dev\"]\n}\n```",
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.7142857142857143,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7142857142857143
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T6-semantics_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.7142857142857143,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6031746031746033
+    },
+    "published_composite_no_idiom": 0.6785714285714286,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.7142857142857143,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7142857142857143
+    },
+    "corrected_composite_no_idiom": 0.8035714285714286,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 637,
+    "output": 784
+  },
+  "content": "# Pulumi Preview Review \u2014 Security Findings\n\n## 1. Secret in plaintext outputs \ud83d\udd34 Critical\n\n**Finding:** The DB connection string appears as a plaintext stack output. In Pulumi, only `pulumi.secret()` / `Output.secret()` values are encrypted in state and masked in preview.\n\n**Bad:**\n```ts\nexport const dbConnectionString = db.endpoint; // plaintext in state\n```\n\n**Fix:**\n```ts\nexport const dbConnectionString = pulumi.secret(\n    pulumi.interpolate`postgresql://app:${dbPassword}@${db.endpoint}/app`\n);\n```\n\nAlso verify the stack config uses `pulumi config set --secret dbPassword` (spec: `ConfigSecret`), and ensure `pulumi refresh`/state file access is locked down since pre-existing plaintext values remain in state history.\n\n**Acceptance criterion violated:** #3 \u2014 Secret never stored in plaintext.\n\n---\n\n## 2. Replacement of stateful resource \ud83d\udd34 Critical\n\n**Finding:** Preview shows a **replace** on the RDS instance or S3 bucket. Check the `~` \u2192 `+/-` diff and the `~provider`, `~region`, or property change forcing it (e.g., changing region for replication, or engine version).\n\n**Risk:** Unencrypted-at-rest or public flag changes, or accidental DB destroy \u2192 data loss. Acceptance criteria require deletion protection on RDS; replacement should be blocked or gated.\n\n**Fix:**\n- Review the diff: `pulumi preview --diff --show-secrets=false`\n- If the change is intentional, sequence it: snapshot RDS \u2192 create replacement \u2192 restore \u2192 delete old.\n- For buckets, changing properties that force replacement (name, region) requires explicit data migration \u2014 never accept blindly.\n- Consider `retainOnDelete: true` for RDS/bucket as a safety net.\n\n---\n\n## 3. Missing protect flag \ud83d\udfe0 High\n\n**Finding:** RDS instance and S3 bucket lack `protect: true`. A `pulumi destroy` or replacement would destroy stateful data with no prompt.\n\n**Fix:**\n```ts\nconst db = new aws.rds.Instance(\"app-db\", {\n    // ...\n    deletionProtection: true,          // criterion #2\n    backupRetentionPeriod: 7,\n    publiclyAccessible: false,\n}, { protect: true });\n\nconst bucket = new aws.s3.Bucket(\"assets\", {\n    versioning: { enabled: true },\n    serverSideEncryptionConfiguration: {...},\n}, { protect: true });\n```\n\n---\n\n## Spec-compliance spot checks (against preview)\n\n| Criterion | Status |\n|---|---|\n| #1 Bucket versioning + SSE, no public access | Verify `aws:s3/bucketPublicAccessBlock` present |\n| #2 RDS deletion protection, backups \u22657d, not public | Required fix above |\n| #3 Secret handling | **Fail \u2014 finding 1** |\n| #4 IAM least privilege, no wildcards on prod | Grep diff for `\"Action\": \"*\"` \u2014 flag any prod IAM policy |\n| #5 Cluster sizing (dev: 2\u00d7t3.medium / prod: 4\u00d7t3.large) | Confirm node group diff matches env config, no cross-env leakage |\n| #6 HTTPS 443 listener + ACM cert | Confirm listener port/certificateArn in diff |\n| #7 Env isolation | Confirm preview targets only one stack (`pulumi preview -s prod` shows no dev URNs) \u2014 any dev URNs in prod diff = config bleed, critical |\n\n## Priority order\n1. Stop the deploy; fix the plaintext secret output first (state already may contain it \u2014 rotate the DB password).\n2. Investigate the replacement; snapshot before proceeding.\n3. Add `protect: true` + deletion protection to stateful resources before the next preview.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-n0po6rg2/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-n0po6rg2/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-n0po6rg2/generated_2.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-typescript/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

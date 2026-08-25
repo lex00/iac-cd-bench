@@ -1,0 +1,83 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\n# SEED REPO: .sops.yaml with WRONG age key (defect)\n# The correct age key is in age-key.txt but this file references a different key\ncreation_rules:\n  - path: '*.yaml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n  - path: '*.yml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n---\n# SEED REPO: knr-ops with SOPS age key defect\n# The defect: .sops.yaml references a different age key than the one in age-key.txt\n# This causes Flux kustomizations to fail to decrypt\n\napiVersion: v1\nkind: Secret\nme\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ybqm0wpq/.sops.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 2 resources found in 2 files - Valid: 1, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 930,
+    "output": 858
+  },
+  "content": "# Fixing the knr-ops SOPS + kustomize defect\n\n## 1. Diagnose the SOPS config issue\n\nThe repository's `.sops.yaml` creation rule references an age public key that does **not** match the key in `age-key.txt`:\n\n```yaml\n# .sops.yaml (BROKEN)\ncreation_rules:\n  - path_regex: .*\\.yaml$\n    encrypted_regex: ^(data|stringData)$\n    age: age1XXXXXXXXXXXXXXXXXXXX  # wrong recipient \u2014 doesn't match age-key.txt\n```\n\nExtract the actual public key that corresponds to `age-key.txt`:\n\n```bash\n# age-key.txt normally holds a private key (AGE-SECRET-KEY-...); derive the public key:\ngrep -o 'age1[a-z0-9]*' age-key.txt\n# \u2192 age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nSince SOPS decrypts with the private key but the file was **encrypted to a different recipient**, decryption fails \u2014 Flux's kustomize controller gets garbage/failure output when merging, producing the misleading `yaml: line 1: did not find expected key` error.\n\n## 2. Fix the age key reference\n\n```yaml\n# .sops.yaml (FIXED)\ncreation_rules:\n  - path_regex: .*\\.yaml$\n    encrypted_regex: ^(data|stringData)$\n    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\n## 3. Fix the kustomize patch target\n\nThe overlay patch (e.g. `overlays/dev/patch.yaml`) targets a resource name that was renamed. Update the `target` selector in `kustomization.yaml` to the current resource name:\n\n```yaml\n# overlays/dev/kustomization.yaml\npatches:\n  - path: patch.yaml\n    target:\n      kind: Deployment\n      name: myapp        # \u2190 was e.g. \"web\" (old name); must match base resource\n```\n\n## 4. Re-encrypt and verify\n\n```bash\nexport SOPS_AGE_KEY_FILE=$(pwd)/age-key.txt\n\n# Re-encrypt the secret with the corrected recipient\nsops --encrypt --in-place secret.yaml\n\n# Sanity check: decrypt cleanly\nsops --decrypt secret.yaml > /dev/null && echo OK\n\n# Verify kustomize build for both overlays\nkustomize build overlays/dev  | kubeconform -strict -\nkustomize build overlays/prod | kubeconform -strict -\n\n# Or with kubectl\nkubectl kustomize overlays/dev > /dev/null && echo \"dev OK\"\nkubectl kustomize overlays/prod > /dev/null && echo \"prod OK\"\n```\n\n## 5. Reconcile with Flux\n\n```bash\ngit add -A && git commit -m \"fix: correct SOPS age recipient and kustomize patch target\"\ngit push\n\nflux reconcile kustomization myapp-dev --with-source\nflux reconcile kustomization myapp-prod --with-source\nflux get kustomizations   # both should now report True / Ready\n```\n\n**Note:** the private key in `age-key.txt` must be stored only as a Flux secret (`create secret sops-age` with `sops.age/age-key.txt`), never committed to Git \u2014 only the public recipient belongs in `.sops.yaml`.",
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

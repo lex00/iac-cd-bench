@@ -1,0 +1,94 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 713,
+    "output": 3650
+  },
+  "content": "\n\n# Pulumi Preview Behavior: RDS Replace & Secrets\n\n## 1. Which Property Triggered the Replace?\n\nGiven the dev\u2192prod transition for the RDS instance:\n\n| Property | Dev | Prod | Update Mode |\n|----------|-----|------|-------------|\n| `instanceClass` | `db.t3.micro` | `db.t3.medium` | **In-place update** |\n| `multiAz` | `false` | `true` | **REPLACE** \u26a0\ufe0f |\n| `kmsKeyId` | *(unset)* | `arn:aws:kms:...` | **REPLACE** \u26a0\ufe0f |\n| `allocatedStorage` | 20 | 100 | In-place update |\n| `storageEncrypted` | `false` | `true` | **REPLACE** \u26a0\ufe0f |\n\n**The primary trigger is `multiAz`.**\n\nIn the Pulumi AWS provider schema for `aws:rds:Instance`, the following are marked as **replace-only** (cannot be updated in place):\n\n```typescript\n// From @pulumi/aws/rds/instance.ts \u2014 replace triggers:\n//   dbName, engine, username, availabilityZone,\n//   multiAz, subnetGroupName, vpcSecurityGroupIds (if changing AZ),\n//   storageType, kmsKeyId, storageEncrypted, iamRole\n```\n\nSo the preview would show:\n\n```\n~   pulumi:pulumi:Stack  myapp-prod\n @  aws:rds:Instance     mydb:\n     replace: true\n     ~ allocatedStorage: 20 => 100        (would-be update, overridden)\n     ~ instanceClass:    \"db.t3.micro\" => \"db.t3.medium\"\n     + kmsKeyId:         \"arn:aws:kms:...\"\n     ~ multiAz:          false => true    \u2190 TRIGGER\n     + storageEncrypted: true             \u2190 also a trigger\n```\n\nThe `+` / `~` / `@` notation: `@` on the resource means \"this entire resource will be replaced (destroy + create)\". Individual property diffs shown are informational \u2014 they won't apply incrementally.\n\n**Key insight:** Even though AWS *technically* supports enabling Multi-AZ on a running instance via `ModifyDBInstance`, the Pulumi provider models this as a replace because the operation can be destructive (potential data loss on some engine versions, long downtime, and the provider cannot guarantee atomicity). This is a conservative design choice.\n\n---\n\n## 2. What Does `pulumi up --target` Skip?\n\n```bash\npulumi up --target urn:pulumi:prod::myapp::aws:rds:Instance:mydb\n```\n\n### Scope of effect\n\n```\n                    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n                    \u2502           TARGET (mydb)                 \u2502\n                    \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n                                       \u2502 depends on\n                    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25bc\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n                    \u2502   UPSTREAM DEPENDENCIES (INCLUDED)      \u2502\n                    \u2502  \u2022 VPC                                  \u2502\n                    \u2502  \u2022 Subnets (private, public)            \u2502\n                    \u2502  \u2022 Security Group (db-sg)               \u2502\n                    \u2502  \u2022 KMS Key (if referenced)             \u2502\n                    \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n                                       \u2502\n                    \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u25bc\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n                    \u2502   DOWNSTREAM / UNRELATED (SKIPPED)      \u2502\n                    \u2502  \u2022 S3 Bucket (assets)                   \u2502\n                    \u2502  \u2022 EKS Cluster + node groups            \u2502\n                    \u2502  \u2022 IAM Role (service account)           \u2502\n                    \u2502  \u2022 ALB / CloudFront distribution        \u2502\n                    \u2502  \u2022 App config that references mydb      \u2502\n                    \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n### Precise semantics\n\n`--target` restricts the operation to:\n\n| Category | Included? | Why |\n|----------|-----------|-----|\n| The target resource itself | \u2705 Yes | Explicit |\n| Transitive **upstream** dependencies | \u2705 Yes | Must exist for target to be valid |\n| Resources that **depend on** the target (downstream) | \u274c Skipped | They may reference a resource that no longer exists (post-replace) |\n| Unrelated resources in the stack | \u274c Skipped | Out of scope |\n\n### Practical consequence for the replace scenario\n\nWhen `mydb` is replaced (destroy + create), its new URN will have a new `id`. Any downstream resource that stored the old endpoint/ARN (e.g., an app config containing the connection string) will **not** be updated automatically. You'll see a dangling reference:\n\n```\nerror: Resource 'app-config' depends on resource 'mydb' which was replaced; \n       its reference to the old ID is stale. Re-run without --target to \n       reconcile downstream.\n```\n\n### `--target` does NOT:\n- Skip the **destroy** phase of the replace\n- Skip dependency **creation** (new subnets, etc.)\n- Skip state reconciliation for dependencies (if a subnet was deleted out-of-band, it will be re-created)\n\n---\n\n## 3. How Does Pulumi Handle Secrets in Outputs?\n\n### Lifecycle of a secret\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 1. DECLARATION (stack config)                                       \u2502\n\u2502    pulumi config set --secret db:connectionString \"postgres://...\"  \u2502\n\u2502                                                                      \u2502\n\u2502    Stored in Pulumi Cloud: AES-256 encrypted, key in KMS            \u2502\n\u2502    Local: encrypted with passphrase (pulumi login)                  \u2502\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502 2. READING IN PROGRAM                                               \u2502\n\u2502                                                                      \u2502\n\u2502    const dbSecret = config.requireSecret(\"db:connectionString\");    \u2502\n\u2502    // type: Secret<string>                                          \u2502\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502 3. REGISTERING AS OUTPUT                                            \u2502\n\u2502                                                                      \u2502\n\u2502    export const dbEndpoint = pulumi.secret(                         \u2502\n\u2502      mydb.endpointAddress                                           \u2502\n\u2502    );                                                               \u2502\n\u2502    // OR: dbSecret (already a Secret) propagates automatically      \u2502\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502 4. STATE STORAGE                                                    \u2502\n\u2502                                                                      \u2502\n\u2502    Checkpoint file stores:                                           \u2502\n\u2502      { \"4dabf18193072939515e22adb298388d\": \"...\" }                  \u2502\n\u2502    (base64-encoded ciphertext, not plaintext)                       \u2502\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502 5. DISPLAY IN CLI                                                   \u2502\n\u2502                                                                      \u2502\n\u2502    $ pulumi stack output                                            \u2502\n\u2502    dbEndpoint: [secret]                                             \u2502\n\u2502                                                                      \u2502\n\u2502    $ pulumi stack output --show-secrets                             \u2502\n\u2502    dbEndpoint: mydb.cluster-xxx.us-east-1.rds.amazonaws.com        \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n### Key behaviors\n\n| Scenario | Behavior |\n|----------|----------|\n| `pulumi preview` / `pulumi up` output | Shows `[secret]` \u2014 never reveals plaintext |\n| `pulumi stack output` | Shows `[secret]` |\n| `pulumi stack output --show-secrets` | Decrypts and shows value (requires auth to Pulumi Cloud or local passphrase) |\n| State file (checkpoint) | Encrypted at rest; ciphertext is a hash-based key derived from the value |\n| `Secret` in expression | `pulumi.interpolate`${secret}//path`` \u2192 result is **also** a Secret (propagation) |\n| `Secret` passed to a resource input | Stored as secret in state for that resource's inputs |\n| Cross-stack reference to a secret | Remains encrypted; the referencing stack must have decryption access |\n| `pulumi up --diff` | Shows `[secret] => [secret]` (can't diff without revealing) |\n\n### Code example (idiomatic for this scenario)\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\n\n// Read secret from stack config (dev.yaml / prod.yaml)\nconst dbPassword = config.requireSecret(\"db:password\");\n// type: Secret<string>\n\nconst rds = new aws.rds.Instance(\"mydb\", {\n    // ... other props ...\n    password: dbPassword,  // Secret propagates into state\n});\n\n// Export as secret \u2014 will show [secret] in CLI\nexport const dbConnectionString = pulumi.secret(\n    pulumi.interpolate`postgres://${config.require(\"db:username\")}:${dbPassword}@${rds.endpointAddress}:5432/${config.require(\"db:name\")}`\n);\n```\n\n### What the preview looks like\n\n```\nResources:\n    + 4 created\n    ~ 1 replaced (mydb)\n    + 1 replaced (mydb)\n\nOutputs:\n    + dbConnectionString: [secret]\n\nPermalink: https://app.pulumi.com/org/myapp/prod/updates/3\n```\n\n### Important caveat\n\n> **`--show-secrets` is not available in CI unless the service account has KMS decrypt permissions on the stack's encryption key.** This is intentional: it prevents accidental secret leakage in build logs.\n\n---\n\n## Summary Table\n\n| Question | Answer |\n|----------|--------|\n| Replace trigger | `multiAz` (primary), `kmsKeyId`/`storageEncrypted` (secondary) |\n| `--target` skips | Downstream dependents + unrelated resources; includes upstream deps only |\n| Secrets in outputs | Encrypted in state, displayed as `[secret]`, `Secret<T>` type propagates through expressions, `--show-secrets` reveals (gated by auth) |",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-vmgizt0d/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-vmgizt0d/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-vmgizt0d/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-vmgizt0d/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-vmgizt0d/generated_3.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-vmgizt0d/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-vmgizt0d/generated_4.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-typescript/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

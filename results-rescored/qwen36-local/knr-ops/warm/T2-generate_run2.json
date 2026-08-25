@@ -1,0 +1,91 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: s3.aws.upbound.io/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    region: us-east-1\n    versioning:\n      - status: Enabled\n    serverSideEncryptionConfiguration:\n      - rule:\n          applyServerSideEncryptionByDefault:\n            sseAlgorithm: AES256\n    publicAccessBlock:\n      - blockPublicAcls: true\n        blockPublicPolicy: true\n        ignorePublicAcls: true\n        restrictPublicBuckets: true\n---\napiVersion: kustomize.config.k8s.io/v1beta1\nkind\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/overlays/dev/patches.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\nSummary: 6 resources found in 6 files - Valid: 0, Invalid: 0, Errors: 1, Skipped: 5\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/base: exit=0\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/overlays/dev: exit=1\nERR: Error: Unexpected kind: unknown\n"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 940,
+    "output": 8192
+  },
+  "content": "\n\nHere is the idiomatic `knr-ops` implementation for the new logs bucket, IRSA, and Flux reconciliation. The structure follows GitOps best practices: **base** contains shared ACK manifests, **overlays** apply environment-specific patches, and **Flux** drives deployment with SOPS decryption.\n\n### \ud83d\udcc1 Directory Structure\n```\ninfra/\n\u251c\u2500\u2500 s3/\n\u2502   \u251c\u2500\u2500 base/\n\u2502   \u2502   \u251c\u2500\u2500 bucket.yaml\n\u2502   \u2502   \u251c\u2500\u2500 irsa-role.yaml\n\u2502   \u2502   \u251c\u2500\u2500 irsa-policy.yaml\n\u2502   \u2502   \u2514\u2500\u2500 kustomization.yaml\n\u2502   \u2514\u2500\u2500 overlays/\n\u2502       \u251c\u2500\u2500 dev/\n\u2502       \u2502   \u251c\u2500\u2500 kustomization.yaml\n\u2502       \u2502   \u2514\u2500\u2500 patches.yaml\n\u2502       \u2514\u2500\u2500 prod/\n\u2502           \u251c\u2500\u2500 kustomization.yaml\n\u2502           \u2514\u2500\u2500 patches.yaml\n\u2514\u2500\u2500 flux/\n    \u2514\u2500\u2500 kustomizations.yaml  # Append the new Kustomization here\n```\n\n---\n\n### \ud83d\udce6 Base Manifests\n\n#### `infra/s3/base/kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bucket.yaml\n  - irsa-role.yaml\n  - irsa-policy.yaml\n```\n\n#### `infra/s3/base/bucket.yaml`\n```yaml\napiVersion: s3.aws.upbound.io/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    region: us-east-1\n    versioning:\n      - status: Enabled\n    serverSideEncryptionConfiguration:\n      - rule:\n          applyServerSideEncryptionByDefault:\n            sseAlgorithm: AES256\n    publicAccessBlock:\n      - blockPublicAcls: true\n        blockPublicPolicy: true\n        ignorePublicAcls: true\n        restrictPublicBuckets: true\n```\n\n#### `infra/s3/base/irsa-role.yaml`\n```yaml\napiVersion: iam.aws.upbound.io/v1alpha1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Federated\": \"arn:aws:iam::PLACEHOLDER_ACCOUNT:oidc-provider/oidc.eks.PLACEHOLDER_REGION.id.amazonaws.com/CLUSTER_ID\"\n            },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": {\n              \"StringEquals\": {\n                \"oidc.eks.PLACEHOLDER_REGION.id.amazonaws.com/CLUSTER_ID:sub\": \"system:serviceaccount:default:myapp-logs-sa\"\n              }\n            }\n          }\n        ]\n      }\n```\n\n#### `infra/s3/base/irsa-policy.yaml`\n```yaml\napiVersion: iam.aws.upbound.io/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-irsa-policy\nspec:\n  forProvider:\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Action\": [\n              \"s3:GetObject\",\n              \"s3:PutObject\",\n              \"s3:AbortMultipartUpload\",\n              \"s3:ListBucket\",\n              \"s3:DeleteObject\"\n            ],\n            \"Resource\": [\n              \"arn:aws:s3:::myapp-logs\",\n              \"arn:aws:s3:::myapp-logs/*\"\n            ]\n          }\n        ]\n      }\n  dependsOn:\n    - kind: Role\n      name: myapp-logs-irsa\n```\n\n---\n\n### \ud83d\udd04 Kustomize Overlays\n\n#### `infra/s3/overlays/dev/kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base\npatches:\n  - path: patches.yaml\n    target:\n      kind: Bucket\n      name: myapp-logs\n  - path: patches.yaml\n    target:\n      kind: Policy\n      name: myapp-logs-irsa-policy\n  - path: patches.yaml\n    target:\n      kind: Role\n      name: myapp-logs-irsa\n```\n\n#### `infra/s3/overlays/dev/patches.yaml`\n```yaml\n- op: replace\n  path: /metadata/name\n  value: myapp-logs-dev\n- op: replace\n  path: /spec/forProvider/name\n  value: myapp-logs-dev\n- op: replace\n  path: /spec/forProvider/policy\n  value: >\n    {\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:AbortMultipartUpload\",\"s3:ListBucket\"],\"Resource\":[\"arn:aws:s3:::myapp-logs-dev\",\"arn:aws:s3:::myapp-logs-dev/*\"]}]}\n- op: replace\n  path: /spec/forProvider/assumeRolePolicy\n  value: >\n    {\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\"Principal\":{\"Federated\":\"arn:aws:iam::DEV_ACCOUNT_ID:oidc-provider/oidc.eks.us-east-1.id.amazonaws.com/DEV_CLUSTER_ID\"},\"Action\":\"sts:AssumeRoleWithWebIdentity\",\"Condition\":{\"StringEquals\":{\"oidc.eks.us-east-1.id.amazonaws.com/DEV_CLUSTER_ID:sub\":\"system:serviceaccount:default:myapp-logs-sa\"}}}]}\n```\n\n*(Repeat `overlays/prod/` with `myapp-logs-prod`, prod account/cluster IDs, and prod-compliant least-privilege actions if required.)*\n\n---\n\n### \u2699\ufe0f Flux Kustomization\n\nAppend this to `infra/flux/kustomizations.yaml` (or add to a `flux/sources/` directory depending on your repo layout):\n\n```yaml\n- apiVersion: kustomize.toolkit.fluxcd.io/v1\n  kind: Kustomization\n  metadata:\n    name: knr-ops-s3-logs\n    namespace: flux-system\n  spec:\n    interval: 10m0s\n    path: \"./infra/s3/overlays/dev\" # Swap to /prod for prod reconciler\n    targetNamespace: default\n    sourceRef:\n      kind: GitRepository\n      name: knr-ops\n    decryption:\n      provider: sops\n      secretRef:\n        name: sops-age\n    postBuild:\n      substituteFrom:\n        - kind: ConfigMap\n          name: knr-ops-vars\n    # Optional: ensure ACK controllers are ready before reconciling ACK CRDs\n    dependsOn:\n      - name: knr-ops-ack\n```\n\n---\n\n### \ud83d\udd10 SOPS & Secret Handling\nWhile this scenario doesn't contain plaintext secrets, `knr-ops` enforces SOPS for sensitive fields. If you later add tags with internal identifiers, KMS key ARNs, or service account tokens:\n1. Encrypt the field with `sops -e -i infra/s3/overlays/dev/patches.yaml`\n2. Ensure the",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/base/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/base/bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/base/irsa-role.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/base/irsa-policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/overlays/dev/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-shu_1aos/infra/s3/overlays/dev/patches.yaml"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 3,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/knr-ops/warm/T2-generate_run2.json",
+    "published_score": {
+      "correctness": 0.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 3,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

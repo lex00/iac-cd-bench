@@ -1,0 +1,94 @@
+{
+  "model": "claude-opus-5",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "\\n    },\\n    \"prod\": {\\n        \"node_instance_type\": \"t3.large\",\\n        \"node_count\": 4,\\n        \"db_instance_class\": \"db.t3.medium\",\\n        \"multi_az\": True,\\n        \"storage_encrypted\": True,\\n    },\\n}[env]\\n\\ntags = {\"Environment\": env, \"Project\": \"myapp\", \"ManagedBy\": \"pulumi\"}\\n\\n\\n# ============================================...:serviceaccount:myapp:myapp-sa\",\\n                            }\\n                        },\\n                    }\\n                ],\\n            }\\n        )\\n    )\\n\\n    app_principal = aws.iam.Role(\\n        \"app-role\", assume_role_policy=assume_role_doc, tags=tags\\n    )\\n    aws.iam.RolePolicyAttachment(\\n        \"app-role-policy\", role=app_principal.name, policy_arn=app_policy.arn\\n    )\\n    principal_arn = app_principal.arn\\nelse:\\n    app_user = aws.iam.User(\"app-user\", name=f\"myapp-{env}-sa\", tags=tags)\\n    aws.iam.UserPolicyAttachment(\\n        \"app-user-policy\", user=app_user.name, policy_arn=app_policy.arn\\n    )\\n    principal_arn = app_user.arn\\n\\n\\n# =============================================================================\\n# Outputs\\n# =============================================================================\\npulumi.export(\"bucketName\", bucket.bucket)\\npulumi.export(\"bucketUrl\", bucket_url)\\npulumi.export(\"dbEndpoint\", db.endpoint)\\npulumi.export(\"dbSecretArn\", db_secret.arn)\\npulumi.export(\"appPrincipalArn\", principal_arn)\\n# Secret-marked: shown as [secret] unless --show-secrets is passed.\\npulumi.export(\"dbConnectionString\", db_connection_string)\\n'.count\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py:17: AssertionError: Should not overuse .apply() on Output values\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1649,
+    "output": 5124
+  },
+  "content": "## What's actually broken\n\n| # | Defect | Why it fails |\n|---|---|---|\n| 1 | `config.get(\"dbPassword\")` | Returns a **plain `str`**. The value is read from unencrypted config, lands in plaintext in the state file and in `pulumi stack output`, and Pulumi can't track it as a secret. Any `--secret` config value read this way returns the *decrypted* string with no secret marker, so it propagates unmarked into `aws.rds.Instance.password`. Also `config.get` returns `None` if unset \u2192 `password=None` \u2192 provider error at deploy time. |\n| 2 | `bucket.arn.apply(...)` used as a value | `apply` returns `Output[str]`, **not** `str`. It's fine here for `export`, but the pattern breaks the moment the result is interpolated (`f\"{bucket_url}/x\"` \u2192 `\"Calling __str__ on an Output[T]...\"`) or passed where a plain string is needed. Also `region` is a config string, not the actual provider region, and the URL shape is wrong (ARN in a URL path). |\n| 3 | Acceptance criteria unmet | no SSE, no public-access block, `deletion_protection=False`, no `backup_retention_period`, `publicly_accessible` unset, no env-based sizing, no multi-AZ/encryption on prod. |\n\nThe rule: **never unwrap an Output**. Stay inside `apply`/`Output.concat`/`Output.all` and let the engine resolve it.\n\n---\n\n## Fixed `__main__.py`\n\n```python\n\"\"\"Canonical scenario \u2014 Pulumi (Python). Env-parameterised via stack config.\"\"\"\n\nimport json\n\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.require(\"env\")                     # \"dev\" | \"prod\"\nis_prod = env == \"prod\"\n\n# --- FIX 1: secret stays an Output[str], never a plain str -------------------\n# Set with: pulumi config set --secret dbPassword <value>\n# require_secret() -> Output[str] flagged secret; encrypted in Pulumi.<stack>.yaml\n# and redacted in state/CLI output.\ndb_password = config.require_secret(\"dbPassword\")\n\naws_config = pulumi.Config(\"aws\")\nregion = aws_config.require(\"region\")\n\nsizing = {\n    \"dev\": {\n        \"node_instance_type\": \"t3.medium\",\n        \"node_count\": 2,\n        \"db_instance_class\": \"db.t3.micro\",\n        \"multi_az\": False,\n        \"storage_encrypted\": False,\n    },\n    \"prod\": {\n        \"node_instance_type\": \"t3.large\",\n        \"node_count\": 4,\n        \"db_instance_class\": \"db.t3.medium\",\n        \"multi_az\": True,\n        \"storage_encrypted\": True,\n    },\n}[env]\n\ntags = {\"Environment\": env, \"Project\": \"myapp\", \"ManagedBy\": \"pulumi\"}\n\n\n# =============================================================================\n# S3 \u2014 versioned, encrypted, no public access\n# =============================================================================\nbucket = aws.s3.BucketV2(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    tags=tags,\n)\n\naws.s3.BucketVersioningV2(\n    \"app-bucket-versioning\",\n    bucket=bucket.id,\n    versioning_configuration=aws.s3.BucketVersioningV2VersioningConfigurationArgs(\n        status=\"Enabled\",\n    ),\n)\n\naws.s3.BucketServerSideEncryptionConfigurationV2(\n    \"app-bucket-sse\",\n    bucket=bucket.id,\n    rules=[\n        aws.s3.BucketServerSideEncryptionConfigurationV2RuleArgs(\n            apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationV2RuleApplyServerSideEncryptionByDefaultArgs(\n                sse_algorithm=\"AES256\",\n            ),\n            bucket_key_enabled=True,\n        )\n    ],\n)\n\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-pab\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# --- FIX 2: build derived strings *inside* the Output graph -------------------\n# Output.concat lazily joins Outputs and plain strings and returns Output[str].\n# It never stringifies an unresolved Output.\nbucket_url = pulumi.Output.concat(\n    \"https://\", bucket.bucket_regional_domain_name\n)\n\n# Equivalent single-input form when real transformation is needed:\n#   bucket_url = bucket.bucket.apply(lambda b: f\"https://{b}.s3.{region}.amazonaws.com\")\n# Multi-input form:\n#   pulumi.Output.all(bucket.bucket, db.endpoint).apply(lambda a: f\"{a[0]}@{a[1]}\")\n\n\n# =============================================================================\n# RDS PostgreSQL\n# =============================================================================\ndb_subnets = aws.rds.SubnetGroup(\n    \"app-db-subnets\",\n    subnet_ids=config.require_object(\"privateSubnetIds\"),\n    tags=tags,\n)\n\ndb_sg = aws.ec2.SecurityGroup(\n    \"app-db-sg\",\n    description=f\"Postgres access for myapp-{env}\",\n    vpc_id=config.require(\"vpcId\"),\n    ingress=[\n        aws.ec2.SecurityGroupIngressArgs(\n            protocol=\"tcp\",\n            from_port=5432,\n            to_port=5432,\n            cidr_blocks=[config.require(\"vpcCidr\")],  # VPC-internal only\n        )\n    ],\n    egress=[\n        aws.ec2.SecurityGroupEgressArgs(\n            protocol=\"-1\", from_port=0, to_port=0, cidr_blocks=[\"0.0.0.0/0\"]\n        )\n    ],\n    tags=tags,\n)\n\ndb = aws.rds.Instance(\n    \"app-db\",\n    identifier=f\"myapp-{env}\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    instance_class=sizing[\"db_instance_class\"],\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"appuser\",\n    password=db_password,                       # Output[str], stays secret\n    db_subnet_group_name=db_subnets.name,\n    vpc_security_group_ids=[db_sg.id],\n    publicly_accessible=False,                  # AC 2\n    deletion_protection=True,                   # AC 2\n    backup_retention_period=14 if is_prod else 7,  # AC 2 (>= 7)\n    multi_az=sizing[\"multi_az\"],\n    storage_encrypted=sizing[\"storage_encrypted\"],\n    skip_final_snapshot=not is_prod,\n    final_snapshot_identifier=None if not is_prod else f\"myapp-{env}-final\",\n    apply_immediately=not is_prod,\n    tags=tags,\n)\n\n# Connection string is derived from a secret -> the result is *also* secret.\n# Pulumi propagates the secret bit through apply/Output.all automatically,\n# but we mark it explicitly so intent is obvious at the export site.\ndb_connection_string = pulumi.Output.secret(\n    pulumi.Output.all(db.endpoint, db.db_name, db.username, db_password).apply(\n        lambda a: f\"postgresql://{a[2]}:{a[3]}@{a[0]}/{a[1]}?sslmode=require\"\n    )\n)\n\n# Optional: hand the connection string to Secrets Manager rather than an output.\ndb_secret = aws.secretsmanager.Secret(\n    \"app-db-secret\", name=f\"myapp/{env}/db\", tags=tags\n)\naws.secretsmanager.SecretVersion(\n    \"app-db-secret-version\",\n    secret_id=db_secret.id,\n    secret_string=db_connection_string,         # Output, not str\n)\n\n\n# =============================================================================\n# IAM \u2014 least privilege, no wildcards on prod\n# =============================================================================\nbucket_policy_doc = pulumi.Output.all(bucket.arn, db_secret.arn).apply(\n    lambda arns: json.dumps(\n        {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n                {\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\"s3:GetObject\", \"s3:PutObject\", \"s3:DeleteObject\"],\n                    \"Resource\": f\"{arns[0]}/*\",\n                },\n                {\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\"s3:ListBucket\"],\n                    \"Resource\": arns[0],\n                },\n                {\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\"secretsmanager:GetSecretValue\"],\n                    \"Resource\": arns[1],\n                },\n            ],\n        }\n    )\n)\n\napp_policy = aws.iam.Policy(\n    \"app-policy\", policy=bucket_policy_doc, tags=tags\n)\n\nif is_prod:\n    # OIDC trust for IRSA \u2014 no long-lived credentials in prod.\n    oidc_arn = config.require(\"oidcProviderArn\")\n    oidc_url = config.require(\"oidcProviderUrl\")  # host/path, no scheme\n\n    assume_role_doc = pulumi.Output.all(oidc_arn, oidc_url).apply(\n        lambda a: json.dumps(\n            {\n                \"Version\": \"2012-10-17\",\n                \"Statement\": [\n                    {\n                        \"Effect\": \"Allow\",\n                        \"Principal\": {\"Federated\": a[0]},\n                        \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n                        \"Condition\": {\n                            \"StringEquals\": {\n                                f\"{a[1]}:aud\": \"sts.amazonaws.com\",\n                                f\"{a[1]}:sub\": \"system:serviceaccount:myapp:myapp-sa\",\n                            }\n                        },\n                    }\n                ],\n            }\n        )\n    )\n\n    app_principal = aws.iam.Role(\n        \"app-role\", assume_role_policy=assume_role_doc, tags=tags\n    )\n    aws.iam.RolePolicyAttachment(\n        \"app-role-policy\", role=app_principal.name, policy_arn=app_policy.arn\n    )\n    principal_arn = app_principal.arn\nelse:\n    app_user = aws.iam.User(\"app-user\", name=f\"myapp-{env}-sa\", tags=tags)\n    aws.iam.UserPolicyAttachment(\n        \"app-user-policy\", user=app_user.name, policy_arn=app_policy.arn\n    )\n    principal_arn = app_user.arn\n\n\n# =============================================================================\n# Outputs\n# =============================================================================\npulumi.export(\"bucketName\", bucket.bucket)\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\npulumi.export(\"dbSecretArn\", db_secret.arn)\npulumi.export(\"appPrincipalArn\", principal_arn)\n# Secret-marked: shown as [secret] unless --show-secrets is passed.\npulumi.export(\"dbConnectionString\", db_connection_string)\n```\n\n---\n\n## Stack configs\n\n`Pulumi.dev.yaml`\n\n```yaml\nconfig:\n  aws:region: us-east-1\n  myapp:env: dev\n  myapp:vpcId: vpc-0dev0000\n  myapp:vpcCidr: 10.10.0.0/16\n  myapp:privateSubnetIds:\n    - subnet-0dev1\n    - subnet-0dev2\n  myapp:dbPassword:\n    secure: AAABAJ...ciphertext...\n```\n\n`Pulumi.prod.yaml`\n\n```yaml\nconfig:\n  aws:region: us-east-1\n  myapp:env: prod\n  myapp:vpcId: vpc-0prod000\n  myapp:vpcCidr: 10.20.0.0/16\n  myapp:privateSubnetIds:\n    - subnet-0prod1\n    - subnet-0prod2\n    - subnet-0prod3\n  myapp:oidcProviderArn: arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/ABC\n  myapp:oidcProviderUrl: oidc.eks.us-east-1.amazonaws.com/id/ABC\n  myapp:dbPassword:\n    secure: AAABAJ...ciphertext...\n```\n\nPopulate the secrets with:\n\n```bash\npulumi config set --secret --stack dev  dbPassword \"$(openssl rand -base64 24)\"\npulumi config set --secret --stack prod dbPassword \"$(openssl rand -base64 24)\"\n```\n\n`secure:` values are ciphertext (Pulumi-managed KMS or your own `--secrets-provider`), so the encrypted config **is** safe to commit \u2014 AC 3. Separate `Pulumi.<stack>.yaml` files plus separate state per stack give AC 7.\n\n---\n\n## Output rules to internalise\n\n```python\n# \u2717 never\nf\"https://{bucket.arn}\"          # \"<pulumi.output.Output object at 0x...>\"\nstr(bucket.arn)\nif db.multi_az: ...              # Output is always truthy\nsome_dict[bucket.id]             # unhashable / wrong key\n\n# \u2713 always\npulumi.Output.concat(\"https://\", bucket.bucket_regional_domain_name)\nbucket.arn.apply(lambda arn: arn.split(\":\")[-1])\npulumi.Output.all(a, b).apply(lambda vals: f\"{vals[0]}/{vals[1]}\")\npulumi.Output.json_dumps({\"arn\": bucket.arn})\n```\n\n`apply` returns an `Output`; its callback receives the resolved plain value. Any branching or formatting on resource attributes belongs **inside** the callback. Secrets propagate through `apply` automatically \u2014 the derived value inherits the secret flag, which is why `db_connection_string` is redacted without extra work.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-cqr78bdl/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-cqr78bdl/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-cqr78bdl/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-cqr78bdl/Pulumi.<stack>.yaml"
+  ],
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 0.5,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5555555555555556
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/pulumi-python/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.5,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0.6666666666666666,
+      "attempted_stages": 3,
+      "completeness": 0.5,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5555555555555556
+    },
+    "corrected_composite_no_idiom": 0.625,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 989,
+    "output": 632
+  },
+  "content": "# Answers\n\n## 1. Which property triggered the replace?\n\nTypically **`db_instance_class`** (or another *replace-on-change* property). In the canonical Pulumi stack, dev and prod differ in:\n\n- `db.t3.micro` (dev) vs `db.t3.medium` (prod)\n- single-AZ vs `multi_az = True`\n- `storage_encrypted`\n\nWhen a config/stack switch changes the instance class (or other force-new fields like `engine`, `identifier`, `allocated_storage` on classic RDS), the preview shows:\n\n```\n~ rdsInstance: aws:rds/Instance:Instance  replace\n  ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n```\n\nThe arrow `=>` line under the `replace` marker identifies the culprit \u2014 here the environment sizing property (`instanceClass` / node group `instanceType` equivalents). Pulumi marks the resource for **delete + recreate** because the provider marks that field as force-new; intermediate fields that are merely in-place updates show `~ updated` without replace.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target <urn>` applies changes **only to the targeted resource(s)**. It skips:\n\n- All **other resources** \u2014 even ones the preview showed as create/update/replace, and even dependencies (unless `--target-dependents` is passed).\n- The creation of any resource the target needs that doesn't exist, unless explicitly included or `--target-dependents` is used.\n- Nothing in *state bookkeeping* \u2014 it still records the result of the targeted resource in state, but no other URNs are touched.\n\nSo a preview showing \"replace DB + update 5 other resources\" plus `--target` on the DB URN will perform **only the DB replace**; the other 5 changes are deferred to a subsequent full `pulumi up`.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- Declared via `config.require_secret(\"db_password\")` \u2014 the value stays an `Output` marked as a **secret** throughout the program.\n- **State**: the secret is encrypted (with the stack's passphrase/KMS key from `Pulumi.<stack>.yaml`) and never stored in plaintext in state.\n- **Propagation**: secrets are *contagious* \u2014 any Output derived from a secret via `.apply()`, or Output containing a secret (e.g., a connection string built from `db_password`), is automatically treated as secret.\n- **`pulumi.export()`**: exporting a secret shows as `[secret]` in CLI output and is encrypted in the statefile \u2014 not printed in plaintext.\n- **Caveat**: if you `str()`/interpolate a secret into a plain resource property (e.g., pass it to a non-secret input), the protection can be lost; always keep it as an Output and pass it as an Input.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gjyaduip/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-python/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

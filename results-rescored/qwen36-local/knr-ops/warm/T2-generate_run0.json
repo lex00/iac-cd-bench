@@ -1,0 +1,88 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    # Overridden per-env via kustomize patches\n    bucket: PLACEHOLDER_BUCKET\n    region: PLACEHOLDER_REGION\n    versioning:\n      - enabled: true\n    serverSideEncryptionConfiguration:\n      - rule:\n        applyServerSideEncryptionByDefault:\n          - sseAlgorithm: AES256\n    publicAccessBlock:\n      - blockPublicAcls: true\n        blockPublicPolicy: true\n        ignorePublicAcls: true\n      \n[validate CRDs] kubeconform: exit=0\nSummary: 6 resources found in 3 files - Valid: 1, Invalid: 0, Errors: 0, Skipped: 5\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-y3w7hvqm: exit=0"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 940,
+    "output": 8192
+  },
+  "content": "\n\nHere is an idiomatic implementation for the `knr-ops` stack. It follows GitOps best practices: base/overlay separation, ACK CRDs for AWS resources, kustomize patches for environment differentiation, SOPS for secrets, and a dedicated Flux `Kustomization` for isolated reconciliation.\n\n### \ud83d\udcc1 Directory Structure\n```\nknr-ops/\n\u251c\u2500\u2500 flux/\n\u2502   \u2514\u2500\u2500 kustomizations.yaml\n\u251c\u2500\u2500 infra/\n\u2502   \u2514\u2500\u2500 s3/\n\u2502       \u251c\u2500\u2500 base/\n\u2502       \u2502   \u251c\u2500\u2500 kustomization.yaml\n\u2502       \u2502   \u251c\u2500\u2500 bucket.yaml\n\u2502       \u2502   \u2514\u2500\u2500 irsa.yaml\n\u2502       \u2514\u2500\u2500 overlays/\n\u2502           \u251c\u2500\u2500 dev/\n\u2502           \u2502   \u2514\u2500\u2500 kustomization.yaml\n\u2502           \u2514\u2500\u2500 prod/\n\u2502               \u2514\u2500\u2500 kustomization.yaml\n\u2514\u2500\u2500 secrets/\n    \u2514\u2500\u2500 sops-irsa-config.yaml.enc\n```\n\n---\n\n### 1. Base Manifests (`infra/s3/base/`)\n\n**`kustomization.yaml`**\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bucket.yaml\n  - irsa.yaml\n```\n\n**`bucket.yaml`** (ACK S3 Bucket)\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    # Overridden per-env via kustomize patches\n    bucket: PLACEHOLDER_BUCKET\n    region: PLACEHOLDER_REGION\n    versioning:\n    - enabled: true\n    serverSideEncryptionConfiguration:\n    - rule:\n      applyServerSideEncryptionByDefault:\n      - sseAlgorithm: AES256\n    publicAccessBlock:\n    - blockPublicAcls: true\n      blockPublicPolicy: true\n      ignorePublicAcls: true\n      restrictPublicBuckets: true\n```\n\n**`irsa.yaml`** (ACK IAM + ServiceAccount)\n```yaml\napiVersion: role.aws.upbound.io/v1beta1\nkind: IAMRole\nmetadata:\n  name: myapp-logs-irsa-role\nspec:\n  forProvider:\n    assumeRolePolicyDocument: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": { \"Federated\": \"PLACEHOLDER_OIDC_ISSUER\" },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": {\n              \"StringEquals\": { \"PLACEHOLDER_CLUSTER_URL/sub\": \"system:serviceaccount:default:myapp-logs-sa\" }\n            }\n          }\n        ]\n      }\n---\napiVersion: policy.aws.upbound.io/v1beta1\nkind: IAMPolicy\nmetadata:\n  name: myapp-logs-irsa-policy\nspec:\n  forProvider:\n    policyDocument: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Action\": [\"s3:GetObject\", \"s3:PutObject\", \"s3:ListBucket\"],\n            \"Resource\": [\"PLACEHOLDER_BUCKET_ARN\", \"PLACEHOLDER_BUCKET_ARN_OBJ\"]\n          }\n        ]\n      }\n---\napiVersion: rolepolicyattachment.aws.upbound.io/v1beta1\nkind: IAMRolePolicyAttachment\nmetadata:\n  name: myapp-logs-irsa-attachment\nspec:\n  forProvider:\n    roleRef:\n      name: myapp-logs-irsa-role\n    policyArnRef:\n      name: myapp-logs-irsa-policy\n---\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: myapp-logs-sa\n  annotations:\n    eks.amazonaws.com/role-arn: PLACEHOLDER_ROLE_ARN\n```\n\n---\n\n### 2. Environment Overlays\n\n**`infra/s3/overlays/dev/kustomization.yaml`**\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base\npatches:\n  - target:\n      kind: Bucket\n      name: myapp-logs\n    patch: |\n      - op: replace\n        path: /spec/forProvider/bucket\n        value: myapp",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-y3w7hvqm/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-y3w7hvqm/bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-y3w7hvqm/irsa.yaml"
+  ],
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5714285714285714
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/knr-ops/warm/T2-generate_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.6666666666666666,
+      "attempted_stages": 3,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5714285714285714
+    },
+    "corrected_composite_no_idiom": 0.6666666666666666,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

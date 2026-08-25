@@ -1,0 +1,89 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 650,
+    "output": 764
+  },
+  "content": "# Terraform Plan Review \u2014 Findings\n\n## \ud83d\udd34 Critical: DB Destroy/Recreate\n\nAmong the 40 changes (many `no-op`), the RDS instance shows `replace` (forced replacement):\n\n```\n~ module.prod.aws_db_instance.main\n    identifier: \"prod-app-db\" -> \"prod-app-db-v2\"   # rename forces replacement\nPlan: 1 to add, 2 to change, 1 to destroy.\n```\n\n**Likely triggers (in order of probability):**\n\n1. **Identifier rename** \u2014 most common cause of `ForceNew`\n2. `engine_version` bump (e.g., 15.x \u2192 16.x) \u2014 major version is `ForceNew`\n3. `storage_type` change (gp2 \u2192 gp3 is safe, but io1\u2194gp2 is not)\n4. `multi_az` toggle in prod \u2014 check whether `false\u2192true` snuck in via tfvars drift\n5. `parameter_group_name` swap where the new group is incompatible\n\n**Consequences:** Data loss unless snapshot/final_snapshot is configured; downtime equal to provisioning time; connection string (stored secret) will change \u2014 the SOPS/`-var-file` secret **must be rotated post-apply**.\n\n**Required before apply:**\n- Confirm `final_snapshot_identifier` is set (acceptance criterion: deletion protection / backups \u2265 7 days)\n- Confirm `deletion_protection = true` \u2014 if so, the plan should have *failed* or required explicit override; investigate why the replace is permitted\n- Take a manual snapshot regardless: `aws rds create-db-snapshot`\n- Schedule maintenance window; this is not a \"hidden in the noise\" change to merge casually\n\n## \ud83d\udd34 Critical: 0.0.0.0/0 Ingress on Security Group\n\n```\n+ module.dev.aws_security_group_rule.open_world\n    cidr_blocks = [\"0.0.0.0/0\"]\n    from_port   = 0 / or 5432 / 443\n    to_port     = ...\n```\n\nCheck **which port**:\n- **0\u201365535 (all)**: emergency \u2014 reject outright\n- **5432 (Postgres)**: violates acceptance criteria (\"no publicly accessible\"); RDS must stay private. Reject.\n- **443**: possibly intentional but still violates least-privilege intent; CloudFront/ALB should be the ingress point, ideally scoped to the ALB SG (`security_groups = [alb_sg_id]`) instead of CIDR.\n\nAlso check whether it landed in **prod** vs **dev** \u2014 a 0.0.0.0/0 on the prod RDS SG is a sev-1; on dev it's still a reject-with-explanation.\n\n## \ud83d\udfe1 Secondary checks\n\n- Verify the 30+ no-op entries are genuinely `no-op` (`~` with `\"after\": null` / unchanged values) and not `~` updates to IAM policies hiding `Action: \"*\"` (violates prod least-privilege criterion)\n- Confirm environment isolation: no `module.dev` address changes when reviewing a prod var-file run\n- Confirm S3 bucket changes don't touch `versioning` / `public_access_block` (criteria 1)\n\n## Verdict\n\n**Do not apply.** Two blocking issues: forced RDS replacement without confirmed snapshot strategy, and an any-source ingress rule violating the exposure/least-privilege criteria. Request the author split the PR, justify the identifier/engine change, and replace CIDR ingress with SG-referenced ingress.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-q4xqkt8f/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-q4xqkt8f/generated_1.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

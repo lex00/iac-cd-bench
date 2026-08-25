@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 585
+  },
+  "content": "## Review: changes requested\n\n### 1. **Blocker \u2014 Bucket versioning was removed**\n\nThis violates the canonical requirement that both dev and prod buckets are versioned.\n\nIt also breaks or prevents prod cross-region replication: S3 replication requires versioning on both the source and destination buckets. Depending on how the provider applies the change, AWS may reject the replication configuration or leave it nonfunctional.\n\n**Required fix:** restore enabled versioning for both environments, including the prod replication destination bucket.\n\n```yaml\nversioningConfiguration:\n  status: Enabled\n```\n\nKeep server-side encryption and public-access blocking unchanged.\n\n---\n\n### 2. **High \u2014 Provider-wide `deletionPolicy: Delete` is unsafe**\n\nApplying `Delete` indiscriminately means deleting a claim/XR can trigger deletion of every composed external resource, including S3 buckets and RDS instances in prod. This turns claim lifecycle operations, composition migrations, and accidental namespace deletion into destructive infrastructure operations.\n\nAdditional risks:\n\n- RDS deletion protection may cause reconciliation/deletion to remain stuck rather than providing a controlled retention workflow.\n- S3 deletion may fail when objects or historical versions remain.\n- IAM, networking, and cluster resources may be removed while retained stateful resources become inaccessible.\n- A provider-wide policy removes the ability to choose lifecycle semantics by resource criticality.\n\n**Required fix:** define deletion behavior per composed resource. Use retention semantics such as `Orphan` for production/stateful resources unless intentional destruction is explicitly part of the design. `Delete` may be reasonable for replaceable resources in dev, but should be selected through environment/composition parameters rather than globally.\n\nExample:\n\n```yaml\nspec:\n  deletionPolicy: Orphan\n```\n\nFor newer Crossplane/provider versions, also verify the configured `managementPolicies`; they can affect whether deletion of the external resource is permitted.\n\n---\n\n## Verdict\n\n**Do not merge as-is.** Restore bucket versioning and replace the provider-wide deletion policy with explicit, environment- and resource-specific lifecycle policies.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/crossplane/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

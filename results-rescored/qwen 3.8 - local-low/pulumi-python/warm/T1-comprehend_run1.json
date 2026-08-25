@@ -1,0 +1,92 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1052,
+    "output": 2376
+  },
+  "content": "\n\n# Pulumi Preview Behavior: Three Answers\n\n## 1. Which Property Triggered the Replace on the DB?\n\nIn the canonical scenario, the RDS PostgreSQL instance differs between dev and prod on several axes. The properties that force **replacement** (rather than in-place update) on a Pulumi `rds.Instance` are:\n\n| Property | Dev | Prod | Replaces? |\n|----------|-----|------|-----------|\n| `identifier` | `myapp-dev` | `myapp-prod` | \u2705 Yes |\n| `db_name` | `myapp` | `myapp` | \u2014 |\n| `multi_az` | `false` | `true` | \u2705 Yes |\n| `allocated_storage` | `20` | `100` | \u274c In-place (grow) |\n| `instance_class` | `db.t3.micro` | `db.t3.medium` | \u274c In-place |\n| `storage_encrypted` | `true` | `true` | \u2014 |\n| `deletion_protection` | `true` | `true` | \u2014 |\n\n**Most likely trigger:** `multi_az` \u2014 toggling between single-AZ and multi-AZ is a **replacement** because it changes the underlying topology (a standby instance must be created or destroyed). If the developer accidentally applied prod config to the dev stack (or vice versa), this is the #1 surprise.\n\nA secondary common culprit is `identifier` (the DB resource name), which is immutable after creation.\n\n**How to confirm in practice:**\n```bash\npulumi preview --diff\n```\nThe diff will show something like:\n```\n~   allocatedStorage: 20 => 100\n+   instance:\n      - multiAz: false\n      + multiAz: true\n    -> replacement (requires replacement)\n```\n\n> **Key rule:** Pulumi marks a property as `requires replacement` in the provider schema. For RDS, `multi_az`, `identifier`, `db_name`, `engine`, and `availability_zone` are all replacement-triggering. `instance_class` and `allocated_storage` are in-place.\n\n---\n\n## 2. What Does `pulumi up --target` Skip?\n\n`pulumi up --target <resource-URN>` restricts the deployment to **only** the specified resource(s) and their **upstream dependencies**.\n\n### What it applies:\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  Target: rds:Instance:myapp-db              \u2502\n\u2502                                             \u2502\n\u2502  \u2713 The target resource itself               \u2502\n\u2502  \u2713 Upstream dependencies (VPC, SG, subnet)  \u2502\n\u2502    \u2014 if they also have pending changes      \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n### What it **skips**:\n\n| Skipped | Why |\n|---------|-----|\n| **Downstream dependents** (e.g., the ALB that references the DB endpoint) | They are *not* dependencies *of* the target |\n| **Unrelated resources** (e.g., S3 bucket, EKS cluster) | Not in the dependency chain |\n| **Pending changes on unrelated resources** | A full `pulumi up` would apply them; `--target` does not |\n| **Outputs that depend on skipped resources** | They won't be re-evaluated |\n\n### Practical implication in the canonical scenario:\n\n```bash\n# Only update the DB and its VPC/SG dependencies\npulumi up --target urn:pulumi:dev::myapp::rds:index:Instance:myapp-db\n```\n\nThis will:\n- \u2705 Update `myapp-db` (and its `securityGroup`, `subnet` if changed)\n- \u23ed\ufe0f Skip the S3 bucket (unrelated)\n- \u23ed\ufe0f Skip the EKS cluster (unrelated)\n- \u23ed\ufe0f Skip the ALB (downstream \u2014 it *depends on* the DB, not the other way around)\n\n> **Gotcha:** If the ALB has a `targetGroupArn` that references the DB endpoint, and you skip the ALB, it may end up in a stale state relative to the new DB endpoint. Pulumi will warn but won't block.\n\n---\n\n## 3. How Does Pulumi Handle Secrets in Outputs?\n\n### Lifecycle of a secret through Pulumi:\n\n```\nconfig.require_secret(\"dbConnection\")\n        \u2502\n        \u25bc\n   Output<Secret>          (value is opaque in-memory)\n        \u2502\n        \u25bc\npulumi.export(\"dbConn\", secret_output)\n        \u2502\n        \u25bc\n   State file:   { \"dbConn\": { \"4dabf18193072939515e25adb19eb167\": \"<encrypted>\" } }\n   CLI display:  [secret]\n```\n\n### Rules:\n\n| Context | Behavior |\n|---------|----------|\n| **State file** | Stored **encrypted** using the stack's passphrase or KMS key. Never plaintext on disk. |\n| **`pulumi preview` / `pulumi up` output** | Displayed as `[secret]` \u2014 the value is **masked**. |\n| **`pulumi stack output`** | Shows `[secret]` by default. |\n| **`pulumi stack output --show-secrets`** | Reveals the plaintext value (requires authentication). |\n| **`pulumi stack export`** | Shows the ciphertext (the `4dabf18193072939515e25adb19eb167` magic prefix identifies it). |\n| **Other resources referencing it** | If a resource property receives a secret Output, that property is also marked secret in state. |\n\n### Code example (canonical scenario):\n\n```python\nimport pulumi\n\nconfig = pulumi.Config()\n\n# Read as a secret \u2014 this is the idiomatic way\ndb_connection = config.require_secret(\"db:connectionString\")\n\n# Use it in a resource (e.g., a Kubernetes secret or env var)\ndb_env = {\n    \"DATABASE_URL\": db_connection,  # Output<Secret>\n}\n\n# Export it as a stack output\npulumi.export(\"dbConnection\", db_connection)\n```\n\n### What you'll see in `pulumi up`:\n\n```\noutputs:\n  ~ dbConnection: [secret]\n```\n\n### Key invariants:\n\n1. **Never plaintext in Git** \u2014 the value lives only in the state file (encrypted) and in the Pulumi Cloud/Service backend.\n2. **Never plaintext in state** \u2014 the state file contains ciphertext with the magic prefix `4dabf18193072939515e25adb19eb167`.\n3. **Propagation** \u2014 if a secret flows into a resource property (like an SSM parameter or K8s Secret), that downstream value is also marked secret.\n4. **`pulumi export` vs `pulumi stack output`** \u2014 the former dumps raw state JSON (ciphertext visible); the latter is the user-facing API (masked).\n\n### Pitfall from the docs:\n\n> Reading secrets as plain strings instead of `config.require_secret()` means Pulumi **won't** encrypt them in state. Use `config.get()` (non-secret) vs `config.require_secret()` (secret) deliberately.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ur4ucm71/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ur4ucm71/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ur4ucm71/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ur4ucm71/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ur4ucm71/generated_3.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-python/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

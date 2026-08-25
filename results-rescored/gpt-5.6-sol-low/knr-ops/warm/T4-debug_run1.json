@@ -1,0 +1,86 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-password-dev\n  namespace: infra\n---\n# SEED REPO: .sops.yaml with WRONG age key (defect)\n# The correct age key is in age-key.txt but this file references a different key\ncreation_rules:\n  - path: '*.yaml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n  - path: '*.yml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n---\n# SEED REPO: knr-ops with SOPS age key defect\n# The defect: .sops.yaml references a different age key than the one in age-key.txt\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-jy4y07hi/.sops.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 3 resources found in 3 files - Valid: 2, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 921,
+    "output": 904
+  },
+  "content": "The correct age recipient is the value in `age-key.txt`:\n\n```text\nage1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nUpdate `.sops.yaml` so the applicable creation rule uses that recipient, for example:\n\n```yaml\ncreation_rules:\n  - path_regex: '(^|/)secret\\.yaml$'\n    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nThe renamed Secret is `db-password-dev`, so update the kustomize patch target from its old name to:\n\n```yaml\npatches:\n  - path: <patch-file>.yaml\n    target:\n      version: v1\n      kind: Secret\n      name: db-password-dev\n```\n\nIf the repository uses legacy `patchesStrategicMerge`, change the patch document\u2019s resource name instead:\n\n```yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-password-dev\n  namespace: infra\n```\n\nRe-encrypt `secret.yaml`; merely changing `.sops.yaml` does not alter an already encrypted file:\n\n```bash\nsops --encrypt --in-place secret.yaml\n```\n\nThen verify both overlays:\n\n```bash\nkustomize build overlays/dev >/dev/null\nkustomize build overlays/prod >/dev/null\n```\n\nOr, using `kubectl`\u2019s bundled kustomize:\n\n```bash\nkubectl kustomize overlays/dev >/dev/null\nkubectl kustomize overlays/prod >/dev/null\n```\n\nBoth commands should exit with status `0`.\n\nOne important distinction: the supplied `age1...` value is a **public age recipient**, suitable for `.sops.yaml`. Flux still needs the corresponding private `AGE-SECRET-KEY-...` value in its SOPS decryption Secret; the public recipient cannot decrypt the file. Also ensure the checked-in `secret.yaml` contains `ENC[AES256_GCM,...]` values and a `sops:` metadata block, rather than the plaintext value shown in the seed file.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-jy4y07hi/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/knr-ops/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

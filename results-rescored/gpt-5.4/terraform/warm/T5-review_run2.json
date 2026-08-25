@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 457
+  },
+  "content": "Please paste the `terraform show -json` plan output (or the relevant `resource_changes` section), and I\u2019ll review it for hidden destructive changes.\n\nWhat I\u2019ll specifically check:\n- Resources with `\"actions\": [\"delete\",\"create\"]` or `[\"replace\"]` disguised among no-ops\n- Any RDS/DB replacement, including which attribute triggered `ForceNew`\n- Security group rule changes introducing `0.0.0.0/0`, especially ingress on DB/app ports\n- Acceptance criteria violations from your spec:\n  - RDS: deletion protection, backup retention >= 7, not publicly accessible\n  - Bucket: versioning, encryption, no public access\n  - IAM: broad wildcards in prod\n  - HTTPS: listener/cert shape\n  - Environment isolation concerns\n\nIf you want, you can paste:\n- the full JSON, or\n- just:\n  - `.resource_changes`\n  - `.configuration`\n  - `.planned_values`\n\nIf the plan is large, these commands help extract the risky bits:\n\n```bash\nterraform show -json tfplan > tfplan.json\n\njq '.resource_changes[] | select(.change.actions | index(\"delete\") or index(\"create\") or index(\"replace\")) | {address, actions: .change.actions, before: .change.before, after: .change.after}' tfplan.json\n\njq '.resource_changes[] | select(.type | test(\"security_group|security_group_rule\")) | {address, actions: .change.actions, before: .change.before, after: .change.after}' tfplan.json\n```\n\nIf you already know there are:\n- a DB recreate hidden among no-op changes, and\n- a `0.0.0.0/0` ingress addition,\n\nthen my likely review outcome will be:\n- **Block apply**\n- **Critical:** unintended DB replacement risks downtime/data loss\n- **High:** world-open ingress likely violates least privilege and possibly \u201cnot publicly accessible\u201d intent, depending on target\n\nSend the JSON and I\u2019ll produce a concise risk review with:\n1. destructive changes found,\n2. why Terraform is doing them,\n3. severity,\n4. exact resources affected,\n5. recommended fix before apply.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

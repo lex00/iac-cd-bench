@@ -1,0 +1,86 @@
+{
+  "model": "claude-opus-5",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: prod\nresources:\n  - ../../clusters/base\n  - ../../infra/base\n# ... existing prod nameSuffix / commonLabels / images / configMapGenerator\n# ... leave as-is, append below\npatches:\n  # 1. app replicas 2 -> 4\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n  # 2 + 3. RDS ins\n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-0zq2fykc/overlays/prod: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from '../../clusters/base': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-0zq2fykc/clusters/base' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-0zq2fykc/clusters: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-0zq2fykc/clu"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1312,
+    "output": 2513
+  },
+  "content": "## Approach\n\nEverything goes in `overlays/prod/kustomization.yaml` as **inline patches** (`patches:` with an embedded `patch:` string + `target:`). Inline patches keep the constraint honest \u2014 no new files under `overlays/prod/`, and `overlays/dev/` is never read by the prod build, so dev is structurally untouched.\n\n```yaml\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nnamespace: prod\n\nresources:\n  - ../../clusters/base\n  - ../../infra/base\n\n# ... existing prod nameSuffix / commonLabels / images / configMapGenerator\n# ... leave as-is, append below\n\npatches:\n  # 1. app replicas 2 -> 4\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  # 2 + 3. RDS instance class + multi-AZ\n  - target:\n      group: rds.services.k8s.aws\n      version: v1alpha1\n      kind: DBInstance\n      name: app-db\n    patch: |-\n      apiVersion: rds.services.k8s.aws/v1alpha1\n      kind: DBInstance\n      metadata:\n        name: app-db\n      spec:\n        dbInstanceClass: db.t3.medium\n        multiAZ: true\n\n  # 4. S3 cross-region replication to us-west-2\n  - target:\n      group: s3.services.k8s.aws\n      version: v1alpha1\n      kind: Bucket\n      name: app-assets\n    patch: |-\n      apiVersion: s3.services.k8s.aws/v1alpha1\n      kind: Bucket\n      metadata:\n        name: app-assets\n      spec:\n        replication:\n          role: arn:aws:iam::<ACCOUNT_ID>:role/app-assets-replication\n          rules:\n            - id: crr-us-west-2\n              status: Enabled\n              priority: 0\n              filter:\n                prefix: \"\"\n              deleteMarkerReplication:\n                status: Enabled\n              destination:\n                bucket: arn:aws:s3:::app-assets-prod-us-west-2\n                storageClass: STANDARD\n```\n\n## Why these patch styles\n\n- **Replicas** uses a JSON patch (`op: replace`). Strategic merge works too, but JSON patch fails loudly if `/spec/replicas` doesn't exist \u2014 a useful guard against silently patching the wrong Deployment after a rename.\n- **RDS and S3** use strategic merge. These are CRDs, so kustomize has no merge-key metadata for them and treats the patch as a plain JSON merge. That's fine for scalar fields (`dbInstanceClass`, `multiAZ`) but matters for the S3 `rules` list \u2014 see the caveat below.\n\n## Verify dev is untouched\n\n```bash\nkustomize build overlays/dev > /tmp/dev-before.yaml\n# apply changes\nkustomize build overlays/dev > /tmp/dev-after.yaml\ndiff /tmp/dev-before.yaml /tmp/dev-after.yaml   # must be empty\n\nkustomize build overlays/prod | grep -E 'replicas|dbInstanceClass|multiAZ'\n```\n\nWorth wiring the dev diff into CI as a guard \u2014 it catches the common failure mode where someone \"fixes\" prod by editing `base/` instead.\n\n## Two things you need to decide before this is actually deployable\n\n**1. Cross-region replication needs resources that don't exist yet.** The patch references two things the repo doesn't create:\n\n- `app-assets-prod-us-west-2` \u2014 the destination bucket, which must exist, be versioned, and live in us-west-2\n- `arn:aws:iam::<ACCOUNT_ID>:role/app-assets-replication` \u2014 a role trusted by `s3.amazonaws.com` with `s3:GetReplicationConfiguration` + `s3:ListBucket` on the source and `s3:ReplicateObject` + `s3:ReplicateDelete` + `s3:ReplicateTags` on the destination\n\nAdding these means new manifests, which breaks the \"only modify `overlays/prod/kustomization.yaml`\" constraint. Your options:\n\n- **Reference pre-existing infra** \u2014 if the bucket and role are already provisioned out-of-band, hardcode the real ARNs and the constraint holds. This is what the patch above assumes.\n- **Relax the constraint** \u2014 add `overlays/prod/replication-dest.yaml` and `overlays/prod/replication-role.yaml`, list them in `resources:`. Still prod-only, still doesn't touch dev, but it's more than one file.\n\nI'd push for the second. Encoding a hand-managed IAM role ARN as a string in a GitOps repo means the replication silently breaks the day someone rotates it, with no drift detection.\n\n**2. The account ID is a placeholder.** `<ACCOUNT_ID>` needs substituting. If prod's account ID varies, use a `configMapGenerator` value plus kustomize `replacements` rather than a literal \u2014 but that's additional structure beyond the single-file constraint.\n\n## Smaller caveats\n\n- **CRD group names are guesses.** I assumed ACK (`rds.services.k8s.aws`, `s3.services.k8s.aws`). If you're on Crossplane the groups are `rds.aws.upbound.io` / `s3.aws.upbound.io` and the field paths differ (`spec.forProvider.instanceClass`, `spec.forProvider.replicationConfiguration`). Confirm with `kustomize build overlays/prod | grep -A2 '^kind:'` \u2014 a `target:` that matches nothing is silently ignored by kustomize, so a wrong group produces a green build with no patch applied.\n- **The S3 `rules` list is replaced, not merged.** Without a merge key, a JSON merge patch overwrites the whole array. If the base already defines replication rules, this drops them. Check with `kustomize build overlays/prod` before applying.\n- **`multiAZ: true` triggers an RDS modify** with a brief failover. Schedule it, or set `applyImmediately: false` to defer to the maintenance window.\n- **Acceptance criteria not covered here.** The spec also wants prod RDS `encrypted: true`, `deletionProtection: true`, and `backupRetentionPeriod >= 7`. Those weren't in the four requested changes \u2014 confirm they're already in the base, since they're not free on a `db.t3.medium` upgrade and `encrypted` cannot be flipped in place on an existing instance.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-0zq2fykc/overlays/prod/kustomization.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/knr-ops/warm/T3-modify_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

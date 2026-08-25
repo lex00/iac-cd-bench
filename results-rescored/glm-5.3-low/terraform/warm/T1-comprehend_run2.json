@@ -1,0 +1,89 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 1036
+  },
+  "content": "# Terraform Plan Behavior Analysis\n\n## Setup (canonical scenario)\n\n```hcl\nvariable \"instance_class\" {\n  type    = string\n  default = \"db.t3.micro\"   # dev\n}\n\nresource \"aws_db_instance\" \"postgres\" {\n  identifier             = \"app-db\"\n  instance_class         = var.instance_class\n  engine                 = \"postgres\"\n  multi_az               = true\n  deletion_protection    = true\n  backup_retention_period = 7\n  publicly_accessible    = false\n  # apply_method note below\n}\n```\n\nFlipping the variable: `db.t3.micro` \u2192 `db.t3.medium` (e.g., promoting dev config to prod sizing via `terraform.tfvars` or a workspace switch).\n\n---\n\n## 1. What does the next plan show?\n\nAn **in-place update**:\n\n```\n~ resource \"aws_db_instance\" \"postgres\" {\n      id                = \"app-db\"\n    ~ instance_class    = \"db.t3.micro\" -> \"db.t3.medium\"\n      # (all other attributes unchanged)\n  }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\n- `~` = modify in place; RDS instance class is a mutable attribute.\n- If the change forces replacement (e.g., changing `engine`, or class not supported for in-place modify), the plan shows `# aws_db_instance.postgres must be replaced`, `-/+` with ` Forces new resource` on the offending attribute, and **Plan: 1 to add, 1 to destroy**.\n- Actual apply of an instance-class change triggers a reboot \u2014 RDS scales the underlying host (brief outage unless Multi-AZ: failover first).\n\n---\n\n## 2. What happens if the state file is deleted?\n\nTerraform becomes **blind to existing infrastructure**:\n\n- `terraform plan` now shows **Plan: N to add, N to destroy? No \u2014 N to add, 0 to destroy**, i.e., it wants to **create everything fresh**.\n- If resource names/identifiers collide with real cloud resources (e.g., S3 bucket name, RDS identifier), `apply` **fails** for those resources. For identifiers that must be unique but don't collide (random suffixes), you get **duplicate infrastructure** \u2014 and the old resources become **orphaned** (still running, still billing, invisible to Terraform).\n- Recovery: `terraform import` each resource to rebuild state, then `plan` should show no drift.\n- Mitigation: remote state (S3 backend + DynamoDB/S3 locking), versioned bucket, backups. Deleting local state for prod is a classic outage/bill incident.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\n1. **Plan phase**: diffs `state.instance_class` vs `config.instance_class` \u2192 schedules `UpdateDBInstance`.\n2. **Apply phase**: calls AWS `ModifyDBInstance` with `DBInstanceClass = db.t3.medium`.\n3. **Runtime effect**: RDS performs a reboot to move to new hardware:\n   - Single-AZ: downtime for the duration of the move.\n   - Multi-AZ (our prod spec): failover to standby, modify old primary, fail back \u2014 seconds of interruption.\n4. State is updated only after AWS reports the instance `available` on the new class.\n5. No data loss \u2014 storage persists; class is compute sizing only.\n\n---\n\n## 4. State vs Configuration\n\n| | **Configuration** (.tf files) | **State** (.tfstate) |\n|---|---|---|\n| Role | *Desired* state (declarative intent, in Git) | *Recorded* actual state (resource IDs, attributes, timestamps) |\n| Source of truth for | What you *want* | What Terraform *thinks exists* |\n| Contains | Resources, variables, modules | Real ARNs/IDs, provider metadata, sensitive attribute values |\n| Editing | Normal workflow | Last resort (`terraform state mv/rm`, never hand-edit) |\n| Shared? | Yes, versioned | No \u2014 remote backend with locking |\n\n**Plan = diff(State, Configuration)** \u2014 plus refresh, which reconciles State against the real cloud first. The variable flip changes only Configuration; state changes only after apply succeeds. That's why deleting state doesn't delete infra \u2014 deletion of real resources requires Terraform to still know about them (or manual cloud-side cleanup).\n\n---\n\n## Acceptance-criteria check for this scenario\n- RDS: `deletion_protection`, `backup_retention_period = 7`, `publicly_accessible = false` \u2705 \u2014 note `deletion_protection = true` means even a `terraform destroy` will fail until it's disabled, protecting against accidental prod teardown.\n- Environment isolation: keep dev/prod in **separate state** (separate workspaces or backends) so flipping the dev tfvars variable never touches prod state.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-k5i2wjtj/terraform.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-k5i2wjtj/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

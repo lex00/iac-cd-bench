@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 791,
+    "output": 1217
+  },
+  "content": "Based on the PR diff and the provided Canonical Scenario Specification, here is the security review of the changes.\n\n### Summary of Security Issues\n\nThe PR introduces **two critical security vulnerabilities** and **one high-severity warning** that directly violate the acceptance criteria defined in the canonical specification. The RDS instance class change is compliant and presents no security risk.\n\n### Detailed Findings (Ranked by Severity)\n\n#### 1. CRITICAL: Public Read Access on S3 Bucket\n*   **Location:** S3 bucket policy changes.\n*   **Issue:** The new policy grants `Public Read` access to the application assets bucket.\n*   **Violation:** Acceptance Criteria #1 explicitly states: *\"no public access\"*. Additionally, the resource description requires the bucket to be \"versioned, encryption,\" implying a private, secure storage layer for assets.\n*   **Risk:** Unauthorized external parties can download application assets. If these assets contain configuration files, build artifacts with embedded secrets, or static content that exposes logic, this leads to data leakage and potential compromise.\n*   **Action:** **REJECT** this change. Remove the public read grant. Ensure `s3:PutPublicAcl`, `s3:GetPublicAcl`, etc., are denied in the bucket policy or rely on the S3 Block Public Access settings.\n\n#### 2. CRITICAL: Plaintext Password in App Deployment\n*   **Location:** App deployment manifests (env vars).\n*   **Issue:** A database connection password is hardcoded in plaintext within the Kubernetes Deployment environment variables.\n*   **Violation:** Acceptance Criteria #3 states: *\"never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"*. In `knr-ops`, this should be handled via SOPS-encrypted secrets or referenced via a Kubernetes Secret/ExternalSecrets, not plaintext env vars in the manifest.\n*   **Risk:** The secret is permanently exposed in the Git history. Anyone with read access to the repository (including contractors, auditors, or compromised accounts) can retrieve the DB password. This violates the principle of least privilege and secure secret management.\n*   **Action:** **REJECT** this change. \n    *   Move the password to a SOPS-encrypted file in the `knr-ops` repo structure.\n    *   Reference it via a `Secret` object in the Kustomize base/overlay.\n    *   Ensure the deployment mounts the secret or uses `valueFrom` referencing the Secret, never inline plaintext.\n\n#### 3. WARNING: Missing Resource Limits on Containers\n*   **Location:** App deployment manifests.\n*   **Issue:** The container spec lacks `resources` (CPU/Memory limits and requests).\n*   **Violation:** While not explicitly listed in the \"Acceptance Criteria\" numbered list, it is a fundamental security and stability concern in Kubernetes. The spine description mentions specific node sizing (e.g., t3.medium/prod t3.large), implying resource planning is expected.\n*   **Risk:** \n    *   **Denial of Service (DoS):** A runaway process can consume all node resources, crashing other pods on the node (including critical system components or other apps in dev/prod).\n    *   **Noisy Neighbor:** Unpredictable performance impacts SLA.\n    *   **Security:** While primarily a stability issue, resource exhaustion can be used as a vector for local privilege escalation or availability attacks.\n*   **Action:** **REJECT** this change. Add explicit `requests` and `limits` for CPU and Memory. Align these with the node type expectations (e.g., if prod nodes are t3.large, ensure the pod doesn't request more than what a single node can support or balance across nodes).\n\n#### 4. INFO: RDS Instance Class Change\n*   **Location:** RDS instance configuration.\n*   **Issue:** Change from `db.t3.micro` (dev) or similar to a larger class.\n*   **Assessment:** **Compliant.** The change is isolated to sizing. As long as the RDS instance remains:\n    *   Not publicly accessible\n    *   Encrypted\n    *   Deletion protection enabled\n    *   Backup retention >= 7 days\n    ...this change is safe and expected as part of environment scaling. No action required.\n\n### Recommendation\n\n**Do Not Merge.**\n\nThe PR contains two **critical** violations of the security model:\n1.  Public exposure of S3 assets.\n2.  Plaintext secret in Git.\n\nBoth must be remediated before merge. The missing resource limits should also be added to meet production-grade standards.\n\n### Corrected Approach for `knr-ops`\n\n1.  **S3 Policy:** Use a restrictive bucket policy denying all public actions. Rely on IAM roles for application access.\n    ```yaml\n    # Example: Deny public access in kustomize or terraform module\n    block_public_access: true\n    ```\n2.  **Secrets:** Use SOPS to encrypt the DB password.\n    ```bash\n    sops --encrypt secrets/dev.yaml > secrets/dev.enc.yaml\n    ```\n    Then reference it in the deployment:\n    ```yaml\n    env:\n      - name: DB_PASSWORD\n        valueFrom:\n          secretKeyRef:\n            name: app-db-credentials\n            key: password\n    ```\n3.  **Resource Limits:**\n    ```yaml\n    containers:\n      - name: app\n        image: app:latest\n        resources:\n          requests:\n            cpu: \"100m\"\n            memory: \"128Mi\"\n          limits:\n            cpu: \"500m\"\n            memory: \"256Mi\"\n    ```",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/knr-ops/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

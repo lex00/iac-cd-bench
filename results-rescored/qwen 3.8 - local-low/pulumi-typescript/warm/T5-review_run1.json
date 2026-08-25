@@ -1,0 +1,88 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 688,
+    "output": 957
+  },
+  "content": "\n\n# Pulumi Preview JSON Security Review\n\n**No Pulumi preview JSON was provided in your request.**\n\nI'm ready to review it once you paste the output. Here's what I'll be checking for based on your three concern areas, applied to this scenario:\n\n---\n\n## What to Look For\n\n### 1. Secrets in Plaintext Outputs\n\nIn a `pulumi preview --json` or `pulumi stack output --json` for this stack, I'll flag:\n\n| Indicator | Example |\n|-----------|---------|\n| `ConfigSecret` value echoed in outputs | `\"dbConnectionString\": \"postgres://user:password@host:5432/db\"` |\n| RDS master password in resource properties without `secret: true` | `\"masterPassword\": \"Sup3rS3cret!\"` |\n| S3 bucket policy or IAM policy with embedded secret | `\"policy\": \"{\\\"...\\\"}\"` containing ARNs with embedded credentials |\n| Stack output containing the connection string | `\"outputs\": { \"dbConn\": { \"value\": \"postgres://...\" } }` |\n\n**Expected correct state:** `ConfigSecret` values appear as `[secret]` in CLI output and as `{\"4dabf18193072939515e22adb298388d\": \"1b47ca227271c732...\"}` (Fernet-encrypted) in the JSON.\n\n### 2. Replacement of Stateful Resource\n\nLook for `replace` in the preview diff for:\n\n- **RDS instance** \u2014 if `allocatedStorage`, `instanceClass`, or `dbName` changed (forces replacement), this is a **data-loss event** if not protected.\n- **EKS cluster** \u2014 if `vpcId` or `subnetIds` changed.\n- **S3 bucket** \u2014 if `bucketName` changed (the bucket itself is destroyed/recreated).\n\nIn the JSON this appears as:\n\n```json\n{\n  \"op\": \"replace\",\n  \"urn\": \"urn:pulumi:prod::mystack::aws:rds/instance.PostgresInstance\",\n  \"old\": { ... },\n  \"new\": { ... }\n}\n```\n\n**Expected correct state:** In-place updates for parameter-group changes, backup-retention changes, etc. A `replace` on RDS in prod with no `protect: true` is a **critical** finding.\n\n### 3. Missing `protect` Flag\n\nFor **stateful / destructive-if-replaced** resources, `protect` should be `true` in prod:\n\n| Resource | `protect` expected in prod? |\n|----------|------------------------------|\n| RDS instance | \u2705 Yes |\n| EKS cluster | \u2705 Yes |\n| S3 bucket (if `forceDestroy` is a risk) | \u2705 Yes |\n| IAM role (with attached policies) | \u2705 Yes |\n| ALB / CloudFront | \u26a0\ufe0f Debatable, but recommended |\n\nIn the JSON, a missing protect shows as the resource having no `\"protect\": true` in its options, or an explicit `\"protect\": false`.\n\n---\n\n## Next Step\n\nPaste your `pulumi preview --json` (or the relevant excerpt) and I'll produce a line-by-line finding report with severity ratings (Critical / High / Medium / Low) and remediation commands.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m5u8jhzj/generated_0.json"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-typescript/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

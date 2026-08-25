@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1049,
+    "output": 1350
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## \ud83d\udd34 BLOCKING Issues\n\n### 1. `deletionPolicy: Delete` added provider-wide\n\nThis is the most dangerous change in the diff. In Crossplane, `deletionPolicy` governs what happens to the **external cloud resource** when the managed resource (MR) is deleted from the cluster.\n\n**Why this is catastrophic:**\n\n- A `kubectl delete`, a failed reconcile, a namespace teardown, or an accidental claim removal now **permanently destroys the underlying S3 bucket and RDS instance** \u2014 including all data.\n- Applied **provider-wide**, this hits **both dev and prod**. Prod data loss is a resume-generating event.\n- This directly **violates AC #2** (RDS deletion protection on). Crossplane's `deletionPolicy: Delete` is orthogonal to AWS's `deletionProtection`, but combining them creates a confusing false sense of safety \u2014 Crossplane will attempt the delete regardless.\n\n**Required fix:**\n\n```yaml\n# For stateful resources (S3, RDS), pin explicitly:\nspec:\n  deletionPolicy: Orphan   # never let Crossplane delete cloud state\n```\n\nBest practice: **default to `Orphan` for all stateful resources.** Use `Delete` only for ephemeral/stateless MRs (e.g., IAM policy attachments you can safely recreate). Never apply it as a blanket provider-wide default.\n\nAlso verify whether the newer `managementPolicies` field is in play \u2014 if so, ensure `Delete` is not in the policy set for stateful resources.\n\n---\n\n### 2. Bucket versioning dropped\n\n**Violates AC #1** (versioning enabled) directly.\n\n**Why this compounds Issue #1:**\n\n- Versioning is your last line of defense against data loss/corruption.\n- Combined with `deletionPolicy: Delete`, you now have **zero recovery path**: an accidental delete removes the bucket, and there are no object versions to recover even if the bucket survived.\n- Cross-region replication (prod, per spec) **requires versioning on both source and destination**. Dropping versioning silently breaks prod DR.\n\n**Required fix:**\n\n```yaml\n- name: bucket-versioning\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketVersioning\n    spec:\n      forProvider:\n        versioningConfiguration:\n          - status: Enabled\n```\n\n---\n\n## Questions for the Author\n\n1. **Was the `deletionPolicy` change intentional or a copy-paste default?** This reads like a scaffolding default that leaked in. If intentional, what's the justification?\n2. **Why was versioning dropped?** If it was to reduce storage cost in dev, that's an *overlay-specific* decision, not a base composition change \u2014 and it still breaks prod replication.\n3. Are you using `deletionPolicy` or `managementPolicies`? Confirm the provider version.\n\n---\n\n## Recommendations\n\n| Concern | Recommendation |\n|---|---|\n| Deletion safety | `Orphan` for S3/RDS in the base composition; document exceptions |\n| Env isolation (AC #7) | Ensure these changes are scoped via composition parameters per ProviderConfig, not global \u2014 a provider-wide change modifying prod when touching dev violates isolation |\n| Versioning | Restore in base; only override sizing/replication in env params |\n| Guardrail | Add a policy check (Kyverno/OPA) rejecting `deletionPolicy: Delete` on `Bucket`/`RDSInstance` kinds |\n| Testing | Add a `kuttl`/composition render test asserting versioning=Enabled and deletionPolicy=Orphan |\n\n---\n\n## Verdict\n\n**\ud83d\udd34 Request changes \u2014 do not merge.**\n\nBoth changes independently violate acceptance criteria; together they create a catastrophic data-loss profile across all environments. Restore versioning and revert the `deletionPolicy` to `Orphan` for stateful resources before re-review.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vhzam1x1/generated_0.yaml"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/crossplane/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 1655
+  },
+  "content": "It looks like the actual Pulumi preview JSON output wasn't included in your message. To give you a concrete review, please paste the JSON (from `pulumi preview --json` or `pulumi preview --json --diff`).\n\nIn the meantime, here's the **review framework** I'll apply against your three focus areas, mapped to this scenario's acceptance criteria. This tells you exactly what I'll flag and where to look in the JSON.\n\n---\n\n## 1. Secrets in plaintext outputs\n\n**Where to look in the JSON:**\n- `steps[].newState.outputs` and top-level `outputs`\n- Look for `secret: true` wrappers vs. raw string values\n\n**Red flags:**\n```jsonc\n// BAD \u2014 DB connection string exposed in plaintext\n\"outputs\": {\n  \"dbConnectionString\": \"postgresql://admin:Sup3rS3cret@prod-db...:5432/app\"\n}\n\n// GOOD \u2014 Pulumi marks it as a secret\n\"outputs\": {\n  \"dbConnectionString\": {\n    \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\"  // secret sig\n  }\n}\n```\n- Any `password`, `connectionString`, `accessKey`, `secretKey`, `token` shown as a raw string = **finding**.\n- Ties to **AC #3**: secret must never be plaintext. Use `pulumi.secret()` / `config.requireSecret()`, and `additionalSecretOutputs` on resources like RDS (`password`) and IAM access keys.\n\n## 2. Replacement of stateful resources\n\n**Where to look:**\n- `steps[]` where `\"op\": \"replace\"` or `\"replace-then-delete\"` / `\"create-replacement\"` + `\"delete-replaced\"`\n- Check `detailedDiff` for the property forcing replacement (`\"kind\": \"UPDATE_REPLACE\"` / `\"ADD_REPLACE\"`)\n\n**Red flags (stateful resources that must NOT be silently replaced):**\n```jsonc\n{\n  \"op\": \"replace\",\n  \"urn\": \"...aws:rds/instance:Instance::prod-postgres\",\n  \"detailedDiff\": {\n    \"dbName\": { \"kind\": \"UPDATE_REPLACE\" }   // DATA LOSS\n  }\n}\n```\n- **RDS instance** replacement \u2192 data loss (**AC #2, #7**).\n- **S3 bucket** replacement \u2192 asset loss + name conflict (**AC #1**).\n- EKS cluster replacement \u2192 downtime.\n- Common triggers: changing `bucket` name, `dbName`, `engineVersion` (some), `availabilityZone`, `storageEncrypted` toggle.\n\n## 3. Missing `protect` flag\n\n**Where to look:**\n- `steps[].newState.protect` (boolean)\n- Cross-reference against stateful URNs\n\n**Red flags:**\n```jsonc\n{\n  \"urn\": \"...aws:rds/instance:Instance::prod-postgres\",\n  \"newState\": { \"protect\": false }   // should be true in prod\n}\n```\n- RDS, S3 bucket, and EKS in **prod** should have `protect: true` (Pulumi resource option) **and** provider-level `deletionProtection: true` on RDS (**AC #2**). These are two different safeguards\u2014flag if either is missing.\n\n---\n\n## Additional checks I'll run while I'm in the JSON\n\n| Area | AC | What I check |\n|---|---|---|\n| S3 encryption + versioning + public access block | 1 | `serverSideEncryptionConfiguration`, `versioning.enabled`, `BucketPublicAccessBlock` all set |\n| RDS backups / public access | 2 | `backupRetentionPeriod >= 7`, `publiclyAccessible: false`, `storageEncrypted: true` (prod) |\n| IAM least privilege | 4 | Policy docs for `\"Action\": \"*\"` or `\"Resource\": \"*\"` on prod |\n| Cluster sizing | 5 | node group `instanceTypes` / `desiredSize` match dev(2\u00d7t3.medium)/prod(4\u00d7t3.large) |\n| HTTPS | 6 | ALB/listener on 443 with valid `certificateArn` |\n| Env isolation | 7 | URNs/stack ref match the previewed stack only; no cross-stack mutation |\n\n---\n\n**Paste the preview JSON** and I'll produce a findings report: each issue with severity, the exact URN/JSON path, why it matters, and the fix (e.g., `additionalSecretOutputs`, `protect: true`, `deletionProtection`, or a `RegisterResource` aliasing strategy to avoid replacement).",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

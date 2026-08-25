@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1049,
+    "output": 3622
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Diff Under Review\n\n```diff\n--- a/crossplane/composition-app-stack.yaml\n+++ b/crossplane/composition-app-stack.yaml\n@@ -1,11 +1,12 @@\n apiVersion: apiextensions.crossplane.io/v1\n kind: Composition\n metadata:\n   name: app-stack-aws\n spec:\n   compositeTypeRef:\n     apiVersion: platform.acme.io/v1alpha1\n     kind: XAppStack\n+  # NOTE: applies to every resource template below\n+  deletionPolicy: Delete\n   resources:\n     - name: assets-bucket\n       base:\n         apiVersion: s3.aws.upbound.io/v1beta1\n         kind: Bucket\n         metadata:\n           labels:\n             component: assets\n         spec:\n           forProvider:\n             region: us-east-1\n-          deletionPolicy: Orphan\n     - name: assets-bucket-versioning\n       base:\n         apiVersion: s3.aws.upbound.io/v1beta1\n-        kind: BucketVersioningConfiguration\n-        spec:\n-          forProvider:\n-            versioningConfiguration:\n-              - status: Enabled\n-            bucketSelector:\n-              matchControllerRef: true\n-          deletionPolicy: Orphan\n+        kind: BucketServerSideEncryptionConfiguration\n+        spec:\n+          forProvider:\n+            rule:\n+              - applyServerSideEncryptionByDefault:\n+                  - sseAlgorithm: AES256\n+            bucketSelector:\n+              matchControllerRef: true\n     - name: assets-bucket-encryption\n       base:\n         apiVersion: s3.aws.upbound.io/v1beta1\n         kind: BucketServerSideEncryptionConfiguration\n         spec:\n           forProvider:\n             rule:\n               - applyServerSideEncryptionByDefault:\n                   - sseAlgorithm: AES256\n             bucketSelector:\n               matchControllerRef: true\n     - name: rds-instance\n       base:\n         apiVersion: v1beta1\n         kind: Instance\n         ...\n```\n\n## Verdict: **REQUEST CHANGES** \u2014 blocking\n\nTwo independent blocking defects, plus one invalid-schema issue that will cause the composition to be rejected outright.\n\n---\n\n## Blocking Issue 1: `spec.deletionPolicy` is not a valid Composition field\n\nThe added field is placed at `spec.deletionPolicy` on the `Composition` object:\n\n```yaml\nspec:\n  compositeTypeRef: ...\n  deletionPolicy: Delete     # <-- not part of the Composition schema\n  resources: ...\n```\n\n`deletionPolicy` is a field on **managed resource specs** (`spec.deletionPolicy` of each composed MR), not on `Composition.spec`. There is no provider-wide or composition-wide `deletionPolicy` inheritance mechanism in Crossplane. The comment `# NOTE: applies to every resource template below` asserts behaviour that does not exist.\n\nConsequences:\n\n1. Depending on the CRD's structural schema pruning, this key is either **rejected by the API server** or **silently pruned**. Crossplane's `Composition` CRD sets `x-kubernetes-preserve-unknown-fields` only on `base` sub-objects, not on `spec` itself \u2014 so this will be pruned/rejected at admission, not honoured.\n2. Even in the pruned case, the diff **also removed the explicit `deletionPolicy: Orphan` from `assets-bucket`**. With the top-level field ineffective, that bucket falls back to the provider default, which is `Delete`. So the intended effect happens by accident on that one resource, while the author believes it applies to all of them. Every other resource (RDS, IAM, CloudFront) retains whatever policy it already had. This is the worst possible outcome: a change that appears to work and is uniformly wrong in intent.\n\nIf a uniform deletion policy is genuinely wanted, it must be written per-resource:\n\n```yaml\nresources:\n  - name: assets-bucket\n    base:\n      apiVersion: s3.aws.upbound.io/v1beta1\n      kind: Bucket\n      spec:\n        forProvider:\n          region: us-east-1\n        deletionPolicy: Delete   # explicit, per MR\n```\n\nOr, preferably for newer providers, use `managementPolicies` and drive it from a composite field so dev and prod can differ.\n\n## Blocking Issue 2: bucket versioning has been deleted, violating acceptance criterion 1\n\nThe `assets-bucket-versioning` resource entry was not modified \u2014 it was **repurposed**. The entry retains the name `assets-bucket-versioning` but its `base.kind` was changed from `BucketVersioningConfiguration` to `BucketServerSideEncryptionConfiguration`, with the versioning `forProvider` block replaced by an encryption rule.\n\nNet effect on the rendered composite:\n\n| Before | After |\n|---|---|\n| Bucket | Bucket |\n| BucketVersioningConfiguration (Enabled) | BucketServerSideEncryptionConfiguration (AES256) |\n| BucketServerSideEncryptionConfiguration (AES256) | BucketServerSideEncryptionConfiguration (AES256) |\n\nVersioning is gone. Encryption is now configured **twice** against the same bucket via `matchControllerRef: true`.\n\nThis fails acceptance criterion 1 outright: *\"Bucket: versioning enabled, server-side encryption, no public access.\"*\n\nIt also compounds with Issue 1's intent. `deletionPolicy: Delete` plus no versioning means that on claim deletion the bucket is destroyed with no recoverable object history. For prod, the spec additionally requires cross-region replication to `us-west-2` \u2014 and **S3 replication requires versioning on both source and destination buckets**. Removing versioning silently breaks the prod replication requirement even if a `Replication` resource exists elsewhere in the composition. AWS will reject the replication configuration with `InvalidRequest`.\n\n## Blocking Issue 3: duplicate encryption resources will fight or error\n\nTwo composed resources of kind `BucketServerSideEncryptionConfiguration` now both select the same bucket with `matchControllerRef: true`. Both will attempt to reconcile `PutBucketEncryption` against the same bucket. Since the configuration values are currently identical, this may appear benign \u2014 both converge on AES256 \u2014 but:\n\n- It is a latent conflict. Any future edit to one entry (e.g. switching prod to `aws:kms` with a CMK) produces two controllers writing opposing state to one AWS API surface, with reconcile-loop thrash and flapping `Synced` conditions.\n- Crossplane does not deduplicate composed resources by kind+selector, so both MRs are created and both are perpetually \"correct\" only by coincidence.\n- The stale resource name `assets-bucket-versioning` pointing at an encryption resource is a maintenance trap; the next reader will assume versioning is configured.\n\nThe `assets-bucket-versioning` entry must be restored to its original form, not deleted and not repurposed.\n\n---\n\n## Additional Findings (non-blocking but should be addressed)\n\n### Hardcoded region defeats environment isolation\n\n```yaml\nforProvider:\n  region: us-east-1\n```\n\nThe spec requires dev and prod in different regions, with prod replicating to `us-west-2`. A literal region in the `base` means every claim against this composition lands in `us-east-1`. This should be patched from the composite:\n\n```yaml\npatches:\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.parameters.region\n    toFieldPath: spec.forProvider.region\n```\n\nCombined with per-environment `ProviderConfig` references, this is the idiomatic Crossplane path to environment separation required by acceptance criterion 7. As written, dev and prod are not independently parameterised at the region level.\n\n### `rds-instance` uses a bare `apiVersion: v1beta1`\n\n```yaml\n- name: rds-instance\n  base:\n    apiVersion: v1beta1\n    kind: Instance\n```\n\nThis is missing its group \u2014 it should be `rds.aws.upbound.io/v1beta1`. A bare `v1beta1` resolves to the core group and will fail to match any registered CRD. This entry cannot render. Given the truncation in the diff this may be an artifact of the excerpt, but if it is literal it is a fourth blocker.\n\n### No `deletionPolicy` / `managementPolicies` differentiation by environment\n\nEven once Issue 1 is fixed properly, applying `Delete` uniformly to prod RDS conflicts with acceptance criterion 2 (deletion protection on). Deletion protection at the AWS level will cause the delete to fail and the MR to hang in a deleting state, which is arguably the correct outcome but produces a stuck finalizer and a claim that never finishes deleting. Prod stateful resources should retain `Orphan` (or `managementPolicies: [\"Observe\", \"Create\", \"Update\"]`) and be driven by a composite parameter:\n\n```yaml\npatches:\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.parameters.deletionPolicy\n    toFieldPath: spec.deletionPolicy\n```\n\nWith the XRD defaulting to `Orphan` and only dev claims opting into `Delete`.\n\n---\n\n## Requested Changes\n\n1. **Remove** `spec.deletionPolicy` and its comment from the `Composition`. It is not a valid field.\n2. **Restore** the `assets-bucket-versioning` entry to `kind: BucketVersioningConfiguration` with `status: Enabled`. Versioning is required by AC 1 and by prod cross-region replication.\n3. **Remove** the duplicate `BucketServerSideEncryptionConfiguration` \u2014 keep exactly one (`assets-bucket-encryption`).\n4. If a uniform deletion policy is the goal, set it **per resource**, and patch it from a composite parameter so prod stateful resources can keep `Orphan`.\n5. **Patch** `region` from the composite rather than hardcoding `us-east-1`.\n6. **Fix** `rds-instance` `apiVersion` to include the group (`rds.aws.upbound.io/v1beta1`) if the diff is literal.\n\n## What Would Make This Approvable\n\nA version of this change that only adds explicit `deletionPolicy: Delete` to the non-stateful resources, leaves `assets-bucket-versioning` untouched, and adds a composite parameter for the policy so prod can override. The encryption-config change appears to be an accidental paste over the versioning block \u2014 reverting that single hunk resolves the majority of the risk.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vuajqj8p/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-vuajqj8p/generated_1.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/crossplane/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

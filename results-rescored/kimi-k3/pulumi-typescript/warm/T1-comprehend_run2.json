@@ -1,0 +1,85 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 644,
+    "output": 697
+  },
+  "content": "Based on the Pulumi TypeScript implementation of the canonical scenario (EKS, S3, RDS with deletion protection, and `ConfigSecret` for the database connection string), here is the behavior breakdown:\n\n## 1. Which property triggered the replace?\n\n**`multiAz`** (changing from `false` in dev to `true` in prod).\n\nIn Pulumi\u2019s AWS provider, `multiAz` is a **ForceNew** (replacement) property on `aws.rds.Instance`. When you preview the prod stack against an existing dev-state (or vice versa), changing this boolean forces Pulumi to plan a `replace` operation rather than an in-place update.\n\n*Secondary trigger:* If the environment change also modifies `dbSubnetGroupName` (to move the DB into different AZ subnets), that would also force replacement, but `multiAz` is the primary driver per the scenario specification.\n\n**Not a trigger:** `deletionProtection` is updatable in-place and does not cause replacement.\n\n## 2. What does `pulumi up --target` skip?\n\n`pulumi up --target <urn>` limits the operation to the specified resource(s) and **skips all other resources** in the dependency graph that are not explicit targets.\n\nSpecifically in this stack:\n- If you target only the RDS instance (`urn:pulumi:prod::myproject::aws:rds/instance:Instance::db`), Pulumi skips the EKS cluster, S3 bucket, IAM roles, and CloudFront distribution\u2014even if they have pending changes.\n- **Dependency behavior:** By default, Pulumi still includes *dependencies* of the target (e.g., the DB Subnet Group or Security Group) unless you also pass `--target-dependents`. Use `--target-dependents` to include resources that depend on the target, or `--exclude-protect` to skip protected resources.\n- **State implication:** Skipped resources retain their last-known state in the Pulumi state file; they are not refreshed or modified during the targeted operation.\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi handles secrets via **stack-level encryption** and **runtime marking**:\n\n- **Configuration:** `pulumi config set --secret dbPassword` encrypts the value using the stack\u2019s configured secrets provider (e.g., Pulumi Service, AWS KMS, or passphrase). It is stored as ciphertext in `Pulumi.prod.yaml`.\n- **Outputs:** When a secret value (like a `ConfigSecret` or `Output.secret()`) flows into a resource property (e.g., `masterPassword`), Pulumi marks that output as **secret** in the state file. It appears as `[secret]` in CLI previews and is encrypted in the state backend.\n- **Propagation:** Secret-ness is contagious. If you concatenate a secret with a string (e.g., `pulumi.interpolate\\`postgres://${user}:${password}@...\\``), the resulting `Output` is automatically marked secret.\n- **State file:** Secrets are never stored in plaintext in the state file; they are encrypted with the stack\u2019s secrets key before persistence.\n\n**Implication for the scenario:** The DB connection string constructed from the RDS endpoint and the `ConfigSecret` password will be encrypted in the Pulumi state and masked in CLI output, satisfying the \u201cnever stored in plaintext in Git\u201d requirement (assuming the passphrase/KMS key is managed outside Git).",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-typescript/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

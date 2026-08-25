@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 819,
+    "output": 1796
+  },
+  "content": "\n\n# PR Security Review \u2014 knr-ops\n\n## Summary\n\n| # | Severity | Finding | File/Area |\n|---|----------|---------|-----------|\n| 1 | \ud83d\udd34 **CRITICAL** | Plaintext DB password committed to Git | App deployment manifest |\n| 2 | \ud83d\udd34 **CRITICAL** | S3 bucket policy grants public read access | S3 bucket policy |\n| 3 | \ud83d\udfe1 **WARNING** | Containers missing CPU/memory limits | App deployment manifest |\n| 4 | \ud83d\udfe2 **INFO** | RDS instance class change | RDS configuration |\n\n---\n\n## Detailed Findings\n\n### 1. \ud83d\udd34 CRITICAL \u2014 Plaintext Secret in Git\n\n**What:** A database connection password is set as a plaintext environment variable in the deployment manifest.\n\n**Why it matters:**\n- Directly violates acceptance criterion **#3**: *\"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"*\n- For knr-ops, the required mechanism is **SOPS encryption** (age or PGP)\n- Once committed, the secret is permanently in Git history \u2014 even a subsequent revert doesn't remove it from history\n- Anyone with read access to the repo (or a leaked mirror) gains DB credentials\n\n**Required fix:**\n```yaml\n# BEFORE (broken):\nenv:\n  - name: DB_PASSWORD\n    value: \"SuperSecret123!\"\n\n# AFTER (correct) \u2014 use SOPS-encrypted ConfigMap/Secret:\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: app-db-credentials   # created from a SOPS-encrypted Secret\n        key: password\n```\n\nThe source secret file should be encrypted with `sops` (e.g., `sops --encrypt --age <key>`) and the key access managed via `sops` age keypairs or an age-key-manager. The manifest in Git contains only the SOPS-encrypted blob (or a reference to a separately managed secret), never the raw value.\n\n**Action:** \u274c **Block merge.** Remove plaintext value, rotate the exposed credential, and implement SOPS encryption.\n\n---\n\n### 2. \ud83d\udd34 CRITICAL \u2014 Public S3 Bucket Policy\n\n**What:** A new bucket policy grants `s3:GetObject` to `Principal: \"*\"`, making all objects publicly readable.\n\n**Why it matters:**\n- Directly violates acceptance criterion **#1**: *\"Bucket: versioning enabled, server-side encryption, **no public access**\"*\n- Exposes application assets (potentially user data, config, code artifacts) to the entire internet\n- Combined with the spec (versioned bucket for application assets), a leak could expose application binaries or user-generated content\n- S3 public access is one of the most commonly exploited misconfigurations in cloud environments\n\n**Required fix:**\n```json\n// BEFORE (broken):\n{\n  \"Effect\": \"Allow\",\n  \"Principal\": \"*\",\n  \"Action\": \"s3:GetObject\",\n  \"Resource\": \"arn:aws:s3:::app-assets-*/*\"\n}\n\n// AFTER: Remove the public policy entirely.\n// Access should be scoped to specific IAM roles/principals:\n{\n  \"Effect\": \"Allow\",\n  \"Principal\": { \"AWS\": \"arn:aws:iam::123456789012:role/app-deploy-role\" },\n  \"Action\": \"s3:GetObject\",\n  \"Resource\": \"arn:aws:s3:::app-assets-*/*\"\n}\n```\n\nAdditionally, verify the bucket has:\n- `PublicAccessBlock` enabled (all four settings)\n- Versioning enabled\n- SSE (AES-256 or KMS) enabled\n\n**Action:** \u274c **Block merge.** Remove the public policy, verify PublicAccessBlock is enforced.\n\n---\n\n### 3. \ud83d\udfe1 WARNING \u2014 Missing Container Resource Limits\n\n**What:** The deployment's containers have no `resources.limits` (or `resources.requests`) defined.\n\n**Why it matters:**\n- On a shared EKS cluster (2 or 4 nodes per the spec), an unbounded container can exhaust node CPU/memory\n- This creates a **denial-of-service vector**: a compromised or misbehaving workload can evict co-located pods, affecting other teams/environments\n- Violates the spirit of environment isolation (acceptance criterion **#7**)\n- Not a data-exposure issue, but a stability/security boundary failure\n\n**Required fix:**\n```yaml\ncontainers:\n  - name: app\n    resources:\n      requests:\n        cpu: \"250m\"\n        memory: \"256Mi\"\n      limits:\n        cpu: \"500m\"\n        memory: \"512Mi\"\n```\n\nValues should be tuned based on actual usage, but the *presence* of limits is the security control here.\n\n**Action:** \u26a0\ufe0f **Request change.** Not a hard blocker on its own, but should be resolved before merge to the shared cluster.\n\n---\n\n### 4. \ud83d\udfe2 INFO \u2014 RDS Instance Class Change\n\n**What:** Instance class is being changed (e.g., `db.t3.micro` \u2192 `db.t3.medium` or similar).\n\n**Assessment:** No security issue identified. Ensure the following are still satisfied post-change (per acceptance criterion **#2**):\n- `DeletionProtection: true`\n- `BackupRetentionPeriod >= 7`\n- `PubliclyAccessible: false`\n- `StorageEncrypted: true` (prod)\n\n**Action:** \u2705 **No change needed** (verify the above flags remain intact).\n\n---\n\n## Verdict\n\n| Gate | Status |\n|------|--------|\n| Merge | \u274c **BLOCKED** |\n\n**Blocking issues (must fix):**\n1. Remove plaintext secret \u2192 use SOPS-encrypted secret + rotate exposed credential\n2. Remove public S3 bucket policy \u2192 scope access to specific IAM principals\n\n**Should fix before merge:**\n3. Add container resource limits\n\n**No action required:**\n4. RDS class change is fine (verify existing security flags are preserved)",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/knr-ops/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

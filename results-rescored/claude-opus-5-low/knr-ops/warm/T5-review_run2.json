@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 2498
+  },
+  "content": "## Caveat first\n\nI only have the *rendered summary* of the diff, not the actual hunks (no file paths, line numbers, or literal YAML). Everything below is keyed to the four described changes. Before this review is authoritative, please paste the raw diff \u2014 in particular the S3 bucket policy JSON and the deployment `env:` block, since the exact principal/action and the secret's blast radius change the remediation.\n\n---\n\n## Findings, ranked\n\n### \ud83d\udd34 CRITICAL \u2014 1. Plaintext DB password in deployment env vars\n\n**Why critical:** This is the worst of the four. It violates acceptance criterion #3 (\"Secret: never stored in plaintext in Git\"). Two compounding harms:\n\n- **Git history is forever.** Even if you fix it in a follow-up commit, the credential is permanently in the repo history, in every clone, in every CI cache, and in the Flux source-controller's artifact tarballs.\n- **Plaintext env vars leak sideways.** They show up in `kubectl describe pod`, in crash dumps, in `/proc/<pid>/environ` for anything in the pod, and in most APM/error-reporting agents.\n\n**Required before merge:**\n1. **Rotate the credential.** Non-negotiable. Assume it is compromised the moment the PR branch was pushed. Fixing the manifest without rotating is not a fix.\n2. Replace with a SOPS-encrypted `Secret` (the knr-ops-native mechanism per the spec) and reference it via `envFrom.secretRef` or `valueFrom.secretKeyRef`.\n3. Confirm the Flux `Kustomization` has `decryption.provider: sops` with the correct `secretRef` for the KMS/age key, or the manifest will apply as ciphertext and the pod will fail with a garbage password.\n4. Consider purging history (BFG / `filter-repo`) \u2014 worth it if the repo is public or widely cloned; often not worth the coordination cost on a small private repo *provided* rotation happened.\n\n---\n\n### \ud83d\udd34 CRITICAL \u2014 2. S3 bucket policy granting public read\n\n**Why critical:** Directly violates acceptance criterion #1 (\"no public access\"). Public-read on an application-assets bucket is the classic data-exposure vector \u2014 and it's rarely just the intended objects, because a `s3:GetObject` on `arn:...:bucket/*` covers anything ever written there, including things uploaded later by a different code path.\n\n**Questions the raw diff would answer (and that gate the severity):**\n- Is `Principal` `\"*\"` or an `AWS: \"*\"` with a `Condition` narrowing to a CloudFront OAC / source VPCE? A conditioned wildcard is a *very* different finding from a bare one.\n- Does the statement include `s3:ListBucket`? Public list turns \"you must guess object keys\" into \"here is the full inventory.\"\n- Is this dev, prod, or the shared base? Landing in `base/` means it silently propagates to prod.\n\n**Required before merge:**\n1. Serve assets through **CloudFront with Origin Access Control**, and scope the bucket policy `Principal` to the CloudFront service principal with a `Condition` on `AWS:SourceArn` = the distribution ARN. The spec already calls for CloudFront + ACM, so this is the idiomatic path, not extra work.\n2. Ensure the bucket's **Public Access Block** is enabled (all four flags). This is the backstop that makes a future misconfigured policy inert. If PAB is currently on, this policy may not even take effect \u2014 but do not rely on that as the control.\n3. If some subset genuinely must be public, scope it to a `public/` key prefix, never `bucket/*`.\n\n---\n\n### \ud83d\udfe1 WARNING \u2014 3. Missing resource limits on containers\n\n**Why warning, not critical:** No confidentiality or integrity impact; this is availability and tenancy hygiene. But it is a real risk:\n\n- No `limits.memory` \u2192 a leaking or spiking container can consume node memory until the kubelet starts evicting *other* pods on that node. One app's bug becomes a node-wide incident.\n- No `requests` \u2192 the scheduler has no signal, so it will happily overcommit the node.\n- Missing requests/limits also puts the pod in the **BestEffort** QoS class, making it the *first* thing killed under node pressure \u2014 which is usually the opposite of what you want for the primary web app.\n\n**Recommended before merge:** Set `requests` and `limits` for both `cpu` and `memory`. Standard guidance: set `memory` request == limit (memory is incompressible; bursting on it just gets you OOMKilled unpredictably), and set a `cpu` request with a generous or absent CPU limit to avoid throttling latency. Enforce ongoing via a `LimitRange` per namespace, or a Kyverno/Gatekeeper policy in CI so this can't regress.\n\n---\n\n### \ud83d\udfe2 INFO \u2014 4. RDS instance class change\n\nFlagged as no issue, and on its face a resize is not a security change. Two things I'd still confirm from the raw diff, because they're cheap to check and expensive to miss:\n\n- **Is this an in-place modification of a prod instance?** Instance class changes cause a reboot / failover. Not a security issue, but it belongs in the PR description so the on-call isn't surprised.\n- **Did the diff touch neighboring RDS attributes?** Resizes are a common place for `publicly_accessible`, `deletion_protection`, `backup_retention_period`, or `storage_encrypted` to get accidentally edited or dropped. Acceptance criteria #2 requires deletion protection on, backup retention \u2265 7 days, and not publicly accessible. Worth eyeballing that hunk's full context, not just the changed line.\n- **Env isolation (criterion #7):** confirm this landed in `overlays/prod/` (or `dev/`) and not `base/`, so the two environments stay independently deployable.\n\n---\n\n## Merge recommendation\n\n**Block.** Two criticals.\n\nMinimum to unblock:\n1. Rotate the leaked DB credential \u2014 **do this now, before the manifest fix**, independently of the PR.\n2. Move the secret to SOPS + `secretKeyRef`; verify Flux decryption is wired up.\n3. Remove the public-read statement; replace with CloudFront OAC-scoped policy; confirm Public Access Block is on.\n4. Add resource requests/limits (I'd hold the merge for this too, since it's a two-line change and you're already touching the deployment).\n\n## Suggested follow-ups (separate PRs)\n\n- Pre-commit / CI secret scanning (`gitleaks`, `trufflehog`) so plaintext credentials fail the build rather than the review.\n- A `konflate`-rendered policy check or Kyverno admission rule for: no public S3 principals, resources required on all containers, RDS deletion protection.\n- Decide on history purge for the leaked credential.\n\n**Please share the raw diff** \u2014 I want to verify the S3 `Principal`/`Condition`/`Action` set, whether these changes hit `base/` vs. an overlay, and whether the RDS hunk quietly altered any of the criterion-#2 attributes. Any of those could move a finding up or down a severity level.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/knr-ops/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

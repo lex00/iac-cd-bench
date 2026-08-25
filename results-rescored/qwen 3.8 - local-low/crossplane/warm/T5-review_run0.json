@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 682,
+    "output": 1325
+  },
+  "content": "\n\n# Crossplane Composition Diff Review\n\n## Summary: \u274c Reject both changes\n\n---\n\n## 1. `deletionPolicy: Delete` (provider-wide)\n\n**Verdict: High-severity \u2014 do not merge**\n\n### What it does\nWhen a claim (or its owning composite) is deleted, Crossplane will **destroy the underlying cloud resource** rather than leaving it orphaned. Applied provider-wide, this affects every XRD: EKS cluster, RDS instance, S3 bucket, IAM roles, ALB, etc.\n\n### Why it's dangerous here\n\n| Concern | Impact |\n|---|---|\n| **Blast radius** | Deleting a single claim (or a namespace, or a misfired `kubectl delete`) cascates into destroying the RDS instance, EKS cluster, and S3 bucket simultaneously. |\n| **Prod data loss** | RDS deletion protection (AC #2) is a guardrail *at the AWS API level*. `deletionPolicy: Delete` bypasses that intent by making accidental claim deletion a full infrastructure teardown. |\n| **Ephemeral vs. long-lived conflation** | `Delete` makes sense for short-lived resources (e.g., a dev EKS cluster torn down by a CI job at end of a PR). It is wrong as a **provider-wide default** that also covers prod. |\n| **Spec violation** | AC #7 requires \"changing prod does not modify dev state.\" A blanket delete policy increases coupling between claim lifecycle and resource lifecycle in a way that makes independent operation harder to reason about. |\n\n### Recommendation\n- **Remove** the provider-wide `deletionPolicy: Delete`.\n- If the intent is to support ephemeral dev clusters, set `deletionPolicy: Delete` **per-XRD or per-composition** for the specific dev-only XRDs (e.g., a `DevEksCluster` XRD), gated by a composition parameter like `ephemeral: true`.\n- Keep the default `Orphan` for prod resources so that a bad `kubectl delete claim/...` in prod does not silently destroy the RDS instance.\n\n---\n\n## 2. S3 Bucket versioning dropped\n\n**Verdict: Spec violation \u2014 must not merge**\n\n### Why it's wrong\n\n- **AC #1 (explicit):** \"Bucket: **versioning enabled**, server-side encryption (AES-256 or KMS), no public access.\"\n- **Scenario spec (explicit):** Both dev and prod buckets are listed as \"versioned.\"\n- **Operational safety:** Without versioning, a mis-scoped IAM policy, an `s3 rm --recursive`, or a failed deployment that overwrites assets results in **unrecoverable** data loss. Versioning is the primary safety net for S3.\n\n### Likely cause\nThis looks like a simplification that was not paired with a compensating control (e.g., Object Lock / WORM, or an explicit \"we don't need history\" justification that would still need a spec amendment).\n\n### Recommendation\n- **Restore** `versioning: enabled` on the S3 bucket spec in the composition.\n- If the motivation was cost (storage for old versions), address that with a **lifecycle rule** (e.g., expire noncurrent versions after 90 days) rather than disabling versioning entirely.\n\n---\n\n## Action Items\n\n| # | Action | Severity |\n|---|---|---|\n| 1 | Revert provider-wide `deletionPolicy: Delete`; scope per-XRD if needed for dev | \ud83d\udd34 High |\n| 2 | Restore bucket versioning; add lifecycle rule if cost is the driver | \ud83d\udd34 High (spec violation) |\n| 3 | Add a composition parameter (e.g., `lifecycleMode: ephemeral \\| persistent`) to gate delete-policy behavior per environment, so dev and prod can diverge idiomatically | \ud83d\udfe1 Medium (improves AC #7) |",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/crossplane/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 686
+  },
+  "content": "# Terraform Plan Behavior \u2014 Predicted Outcomes\n\n## 1. What does the next plan show when a variable flips?\n\nTerraform compares **configuration (desired state)** against the **state file (recorded state)**. A variable change (e.g., `db_instance_class` from `db.t3.micro` \u2192 `db.t3.medium`, or flipping `multi_az`) produces a plan showing:\n\n- `~` **update in-place** for resources whose provider API supports modifying that attribute (RDS instance class, node group size, most tags/S3 settings)\n- `+/-` **replace (destroy + create)** if the changed attribute has `ForceNew: true` \u2014 e.g., changing S3 bucket region or name\n- No changes to dev resources if you're in the prod workspace / using the prod tfvars \u2014 environment isolation means only the flipped env plans\n\nFor the spec's spine, flipping the RDS class in prod shows:\n\n```\n~ resource \"aws_db_instance\" \"db\"\n    ~ instance_class: \"db.t3.micro\" -> \"db.t3.medium\"\n    ~ multi_az: false -> true\n```\n\n## 2. What happens if the state file is deleted?\n\nTerraform \"forgets\" everything:\n\n- Plan shows **`+` create for all resources** \u2014 Terraform believes nothing exists\n- `apply` will **attempt to create duplicate resources**, likely failing on name collisions (bucket names, RDS identifiers) or succeeding and orphaning real infrastructure\n- Real cloud resources still exist but are now unmanaged\n- Recovery: restore from remote state backup (S3 versioning) or `terraform import` each resource, then `plan` until it converges to \"no changes\"\n\nThis is why the spec requires the S3 backend with versioning \u2014 state loss is recoverable.\n\n## 3. How does Terraform handle the RDS instance class change?\n\n- `instance_class` is **updatable in-place** \u2014 Terraform calls `ModifyDBInstance`\n- Terraform still **stops/starts the instance** to apply it; a multi-AZ failover masks downtime but doesn't eliminate it\n- Changing `multi_az: true \u2192 false`, `allocated_storage`, or engine version also modify in-place; changing `identifier` or `engine` forces replacement (`+/-`)\n- `deletion_protection = true` (spec requirement) blocks destroy operations but does **not** block in-place modification or forced replacement plans (AWS rejects the destroy apply)\n\n## 4. State vs. Configuration\n\n| | Configuration (.tf files) | State (.tfstate) |\n|---|---|---|\n| What it is | **Desired** state \u2014 declarative code | **Recorded** state of deployed resources (IDs, attributes) |\n| Lives in | Git (repo) | Backend (S3, remote) \u2014 never in Git |\n| Authored by | Humans | Terraform, on every apply |\n| Secret handling | Variables via `-var-file`/SOPS (spec) | Contains secrets in plaintext \u2014 protect the backend |\n\n**Plan = diff(state, configuration)**, with refresh reconciling state against real cloud resources first. Configuration is what you *want*; state is Terraform's *memory* of what exists; the cloud is *ground truth*.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-w23sv1hs/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/terraform/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

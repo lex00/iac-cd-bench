@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 2182
+  },
+  "content": "\n\nYou haven\u2019t attached the Pulumi preview JSON yet. Please paste it (ideally generated with `pulumi preview --json --diff`), and I\u2019ll return a structured security review aligned with your canonical scenario.\n\nIn the meantime, here\u2019s exactly how I will evaluate it once provided, mapped to your three explicit checks and the acceptance criteria:\n\n### \ud83d\udd0d What I\u2019ll Look For in the JSON\n| Check | JSON Pattern to Validate | Risk if Violated |\n|-------|--------------------------|------------------|\n| **Secret in plaintext outputs** | Scan all `outputs[].secret`. Any `false` on DB connection strings, passwords, API keys, or certs = **Critical**. Pulumi masks properly encrypted secrets with `\"secret\": true`. | Credential leakage in CI/CD logs, audit trails, or exported state. |\n| **Replacement of stateful resource** | Look for `\"kind\": \"replace\"` on `aws:rds:instance`, `aws:s3:bucket`, `aws:eks:cluster`, or `aws:elasticloadbalancingv2:loadbalancer`. Check `old` vs `new` to see if the trigger is a non-migratable property (e.g., `engineVersion`, `kmsKeyId`, `instanceType`, `subnetIds`). | Unintentional data loss, DNS/connection downtime, broken replicas. |\n| **Missing `protect` flag** | Verify `\"protect\": true` on RDS, versioned S3 buckets, and EKS clusters. If missing or `false`, flag as **High**. | Accidental deletion during `pulumi destroy` or misaligned stack operations. |\n\n### \ud83d\udccb Additional Scenario-Aligned Checks I\u2019ll Run\n- **S3 Bucket**: `versioning.enabled == true`, `serverSideEncryptionConfiguration` present, `publicAccessBlock` or bucket policy denying `*`\n- **RDS**: `deletionProtection == true`, `backupRetentionPeriod >= 7`, `publiclyAccessible == false`\n- **IAM**: No `Action: \"*\"` on prod roles/policies; trust policy scoped to OIDC or specific ARNs\n- **HTTPS/ALB/CloudFront**: Listener on `443`, `certificateArn` populated, no forced `80->443` redirect unless explicitly allowed\n- **Environment Isolation**: Stack name/context in URNs confirms `dev`/`prod` separation; no cross-stack outputs leaking prod secrets to dev\n\n### \ud83d\udce5 Next Step\nPaste your `pulumi preview --json --diff` output. I\u2019ll return:\n1. A table of findings with risk severity\n2. Exact JSON paths triggering each issue\n3. Idiomatic Pulumi/TypeScript remediation steps\n4. Compliance status against your 7 acceptance criteria\n\n*(Note: If the JSON is large, you can safely redact non-sensitive property values like bucket names or subnets, but keep `secret`, `protect`, `kind`, and diff blocks intact.)*",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

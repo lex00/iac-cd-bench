@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 953
+  },
+  "content": "## Security review summary\n\nThis PR contains **multiple security issues** that should be addressed **before merge**.\n\n## Ranked findings\n\n### 1. **Critical** \u2014 S3 bucket policy grants public read access\n**Issue:**  \nThe new bucket policy allows public access to bucket objects.\n\n**Why it matters:**  \nThis violates the stated acceptance criteria: **\u201cno public access\u201d** for the S3 bucket. Public-read buckets can expose application assets, sensitive files accidentally uploaded later, or enable unintended data disclosure.\n\n**Risk:**  \n- Unauthorized data exposure\n- Future accidental leakage if sensitive content lands in the bucket\n- Noncompliance with baseline infra security requirements\n\n**What to change before merge:**  \n- Remove public `Principal: \"*\"` access and any anonymous `s3:GetObject` allow rule.\n- Ensure the bucket remains private.\n- Prefer access through:\n  - CloudFront Origin Access Control / Origin Access Identity\n  - IAM roles/service accounts with least privilege\n- Confirm S3 Block Public Access is enabled.\n\n---\n\n### 2. **Critical** \u2014 Plaintext password in deployment env vars\n**Issue:**  \nThe app deployment includes a password directly in manifest env vars.\n\n**Why it matters:**  \nThis violates the acceptance criteria: **\u201cSecret: never stored in plaintext in Git.\u201d**  \nAnything committed in GitOps manifests is broadly accessible to repo readers, PR systems, logs, and history.\n\n**Risk:**  \n- Credential exposure in Git history\n- Credential leakage to CI logs, review tools, artifact systems\n- Potential database or service compromise if reused elsewhere\n\n**What to change before merge:**  \n- Remove the plaintext password from the manifest.\n- Store the secret using the repo\u2019s approved secret mechanism:\n  - **SOPS-encrypted secret**\n  - Crossplane SecretStore/ProviderSecret if applicable to secret flow\n- Reference the secret via `envFrom`, `secretKeyRef`, or mounted secret.\n- Rotate the exposed password if it was ever committed or pushed remotely.\n\n---\n\n### 3. **Warning** \u2014 Missing container resource limits\n**Issue:**  \nContainers lack resource limits (and likely requests).\n\n**Why it matters:**  \nThis is more of a **security/resilience** issue than a direct exploit, but it still matters in multi-tenant clusters. Without limits, a compromised or malfunctioning container can consume excessive CPU/memory and impact availability.\n\n**Risk:**  \n- Denial of service against other workloads on the cluster\n- Unpredictable scheduling and noisy-neighbor impact\n- Reduced blast-radius control\n\n**What to change before merge:**  \n- Add `resources.requests` and `resources.limits` for each container.\n- Set sane defaults appropriate to app profile.\n- Ideally enforce via `LimitRange`/`ResourceQuota` or policy tooling.\n\n---\n\n### 4. **Info** \u2014 RDS instance class change\n**Issue:**  \nThe RDS instance class change itself is not a security issue based on the provided context.\n\n**Why it matters:**  \nNo action needed unless the diff also changed:\n- `publiclyAccessible`\n- encryption\n- backup retention\n- deletion protection\n\n**What to change before merge:**  \n- No blocker from the class change alone.\n- Still verify acceptance criteria remain true:\n  - not publicly accessible\n  - deletion protection enabled\n  - backup retention >= 7 days\n  - encryption enabled\n\n---\n\n## Severity classification\n\n### Critical\n- **Public S3 bucket policy**\n- **Plaintext password in deployment manifest**\n\n### Warning\n- **Missing container resource limits**\n\n### Info\n- **RDS instance class change** (assuming no related security settings changed)\n\n---\n\n## Required changes before merge\n\n1. **Remove public S3 access**\n   - Delete anonymous/public bucket policy statements\n   - Keep bucket private\n   - Use IAM or CloudFront-origin-restricted access instead\n\n2. **Remove plaintext secret from manifests**\n   - Move secret to **SOPS-encrypted** Kubernetes Secret or approved secret backend\n   - Update deployment to reference the secret\n   - **Rotate the exposed password**\n\n3. **Add resource requests/limits**\n   - Define CPU/memory requests and limits for all containers\n\n4. **Re-verify RDS security settings**\n   - Ensure no regression on:\n     - `publiclyAccessible: false`\n     - deletion protection\n     - backups >= 7 days\n     - encryption enabled\n\n---\n\n## Merge recommendation\n\n**Do not merge as-is.**  \nThere are **2 critical security blockers**:\n- public S3 access\n- plaintext credential in GitOps manifests\n\nThe missing resource limits should also be fixed, but the first two are immediate blockers.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/knr-ops/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

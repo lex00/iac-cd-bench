@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 1168
+  },
+  "content": "Here\u2019s a focused review of the Crossplane diff against the canonical spec.\n\n## Summary\n\n**This diff is not acceptable as-is.**\n\n### Why\n1. **`deletionPolicy: Delete` added provider-wide**  \n   This is risky and likely violates the intended durability posture for stateful resources, especially **RDS** and potentially **prod S3**.\n\n2. **Bucket versioning removed**  \n   This is a direct violation of the acceptance criteria:\n   - **Bucket: versioning enabled**\n   - Applies to **both dev and prod**\n\n---\n\n## Detailed review\n\n## 1) Provider-wide `deletionPolicy: Delete`\n\n### Concern\nApplying `deletionPolicy: Delete` broadly at the composition/provider level means that when a claim/composite is deleted or replaced, Crossplane will delete the underlying cloud resources instead of orphaning/retaining them.\n\n### Risks\nThis is especially dangerous for:\n- **RDS PostgreSQL**\n  - Stateful data loss risk\n  - Conflicts with the spirit of:\n    - deletion protection on\n    - backup retention >= 7 days\n- **S3 bucket**\n  - Potential permanent asset/data deletion\n  - In prod, even more concerning if replication is involved\n- Potential accidental deletes during:\n  - composition refactors\n  - claim rename/recreate\n  - XR replacement\n  - environment teardown mistakes\n\n### Spec alignment\nWhile the acceptance criteria do not explicitly forbid `Delete`, provider-wide deletion is **too broad** for this scenario. The canonical setup includes persistent data services, so blanket delete behavior is not a safe default.\n\n### Recommendation\nDo **not** set `deletionPolicy: Delete` provider-wide.\n\nPrefer:\n- **`Retain`** for stateful resources:\n  - RDS\n  - S3 bucket\n- If needed, use `Delete` only for clearly ephemeral resources:\n  - some IAM attachments\n  - temporary supporting resources\n  - non-critical stateless infra\n\n### Better pattern\nSet deletion policy per managed resource in the composition:\n- `Bucket` \u2192 `Retain`\n- `RDSInstance` \u2192 `Retain`\n- EKS/IAM-related stateless/replaceable resources \u2192 evaluate individually\n\nIf the goal is easier teardown in **dev**, parameterize it:\n- `spec.parameters.deletionPolicy`\n- default to safe values\n- enforce stricter values for prod\n\nBut even in dev, dropping stateful data by default should be a conscious choice.\n\n---\n\n## 2) Bucket versioning dropped\n\n### Concern\nThis is a direct spec violation.\n\n### Spec conflict\nCanonical resources table says:\n- **Dev S3 bucket**: versioned, encryption\n- **Prod S3 bucket**: versioned, encryption, cross-region replication\n\nAcceptance criteria explicitly require:\n1. **Bucket: versioning enabled, server-side encryption, no public access**\n\n### Impact\nWithout versioning:\n- object overwrite/delete recovery is lost\n- prod replication setups may break or become invalid depending on implementation\n- resilience posture regresses\n\n### Recommendation\nRestore bucket versioning in the composition or claim-driven parameters.\n\nAt minimum:\n- `versioning: Enabled` for dev\n- `versioning: Enabled` for prod\n\nFor prod, ensure compatibility with:\n- replication configuration\n- encryption\n- public access blocking\n\n---\n\n## Overall assessment by acceptance criterion\n\n### 1. Bucket\n- **FAIL**\n  - versioning removed\n- Need to verify encryption and public access are still intact\n\n### 2. RDS\n- **Potentially at risk**\n  - provider-wide `Delete` is dangerous for DB lifecycle\n- Also verify:\n  - deletion protection still enabled\n  - backup retention >= 7 days\n  - not publicly accessible\n\n### 3. Secret\n- **Not addressed by this diff**\n- No change indicated\n\n### 4. IAM\n- **Not addressed by this diff**\n- No change indicated\n\n### 5. Cluster\n- **Not addressed by this diff**\n\n### 6. HTTPS\n- **Not addressed by this diff**\n\n### 7. Environment isolation\n- **Potential concern**\n  - If provider-wide defaults affect both dev and prod equally, this reduces safe environment-specific behavior\n- Crossplane should use composition params/provider configs to keep dev/prod independently controlled\n\n---\n\n## Suggested disposition\n\n### Request changes\n\n#### Required fixes\n1. **Re-enable S3 bucket versioning**\n2. **Remove provider-wide `deletionPolicy: Delete`**\n   - or narrow it to only non-stateful managed resources\n   - explicitly retain S3 and RDS\n\n#### Recommended follow-ups\n3. Confirm bucket still has:\n   - SSE enabled\n   - public access blocked\n4. Confirm RDS still has:\n   - deletion protection\n   - backup retention >= 7 days\n   - private networking only\n5. If environment-specific lifecycle behavior is desired, implement it via composition parameters, not a blanket provider-wide default\n\n---\n\n## Example review comment\n\n> NACK on this diff as-is:\n> - Removing S3 versioning violates the canonical spec and acceptance criteria (`Bucket: versioning enabled` in both dev and prod).\n> - Adding `deletionPolicy: Delete` provider-wide is too broad and unsafe for stateful resources like RDS and S3. This increases accidental data-loss risk during XR/claim deletion or replacement.\n>\n> Please:\n> 1. restore bucket versioning,\n> 2. scope deletion policy per resource,\n> 3. keep `Retain` for S3/RDS (especially prod).\n\nIf you want, I can also help draft a **Crossplane-specific patch suggestion** for the composition YAML.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/crossplane/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

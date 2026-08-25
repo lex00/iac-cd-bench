@@ -1,0 +1,92 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 637,
+    "output": 712
+  },
+  "content": "# Pulumi Preview JSON \u2014 Security Review\n\nBelow is a checklist-driven review with example findings (patterns to look for in `pulumi preview --json` output), since the actual JSON wasn't attached.\n\n## 1. Secret in plaintext outputs \u274c\n\n**Detect:** `outputs` containing sensitive values with `isSecret: false` (or secrets nested in non-secret outputs).\n\n```json\n\"outputs\": {\n  \"dbConnectionString\": {\n    \"value\": \"postgresql://admin:P@ssw0rd!@db-prod.xxxx.us-east-1.rds.amazonaws.com:5432/app\",\n    \"isSecret\": false   // \u274c leaked in state file & preview\n  }\n}\n```\n\n**Fix:**\n```ts\nexport const dbConnectionString = db.conn.apply(c =>\n  pulumi.secret(`postgresql://...`));  // or use Output.secret(...)\n```\nAlso verify RDS `masterPassword` comes from `config.getSecret(\"dbPassword\")`, never `get()`. Ensure `ConfigSecret` per spec item 3.\n\n## 2. Replacement of stateful resource \u26a0\ufe0f\n\n**Detect:** RDS instance or S3 bucket in `replaceSteps` / `steps[].op == \"replace\"`:\n\n```json\n{\n  \"op\": \"replace\",\n  \"resource\": \"aws:rds/instance:Instance\",\n  \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::appDb\",\n  \"diff\": { \"diffs\": [\"instanceClass\", \"allocatedStorage\"] }\n}\n```\n\n**Impact:** RDS replacement = dropped/renamed database (data loss); bucket replacement risks asset loss. Verify the S3 bucket has no `forceDestroy: true` in diffs \u2014 with versioning on, forced destroy deletes *all* versions.\n\n**Fix:** Use `createBeforeReplace` for replace-on-change fields, apply `replaceOnChanges: [\"instanceClass\"]` only with a snapshot/backup, and gate prod updates.\n\n## 3. Missing protect flag \u274c\n\n**Detect:** Stateful resources (`aws:rds/instance`, `aws:s3/bucket`, `aws:cloudfront/distribution`) appear in `delete` steps without prior warning:\n\n```json\n{ \"op\": \"delete\", \"resource\": \"aws:rds/instance:Instance\", \"protect\": false }\n```\n\n**Fix:**\n```ts\nconst db = new aws.rds.Instance(\"appDb\", {...}, { protect: true });\nconst bucket = new aws.s3.BucketV2(\"assets\", {...}, { protect: true });\n```\n\n## Additional checks against acceptance criteria\n\n| Check | Look for in JSON |\n|---|---|\n| Bucket public access | diffs adding `publicAccess` / ACL grants |\n| RDS `publiclyAccessible`, `deletionProtection`, `backupRetentionPeriod` | should be `false`/`true`/`>= 7`; prod multi-AZ |\n| IAM wildcards | policy diffs with `\"Action\": \"*\"` (prod violation of criterion 4) |\n| Env isolation | preview of `prod` stack shows no diffs to `dev` URNs |\n\n## Verdict\n\n**Block deployment** until: (1) outputs marked secret, (2) RDS/bucket replacement justified with backup, (3) `protect: true` added to stateful resources. Paste the actual JSON for a line-by-line review.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-g8npwk_q/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-g8npwk_q/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-g8npwk_q/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-g8npwk_q/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-g8npwk_q/generated_1.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-typescript/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

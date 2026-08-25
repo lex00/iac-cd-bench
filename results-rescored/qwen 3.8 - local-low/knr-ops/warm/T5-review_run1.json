@@ -1,0 +1,91 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 819,
+    "output": 2104
+  },
+  "content": "\n\n# PR Security Review\n\n## Summary\n\n| # | Issue | Severity |\n|---|-------|----------|\n| 1 | S3 bucket policy grants public read access | \ud83d\udd34 **CRITICAL** |\n| 2 | Plaintext password in deployment env vars | \ud83d\udd34 **CRITICAL** |\n| 3 | Missing resource limits on containers | \ud83d\udfe1 **WARNING** |\n| 4 | RDS instance class change | \u26aa **INFO** (no issue) |\n\n---\n\n## 1. \ud83d\udd34 CRITICAL \u2014 Public S3 Bucket Policy\n\n**What's wrong:**\n\nA new S3 bucket policy is introduced that grants `s3:GetObject` (and likely `s3:ListBucket`) to `Principal: *`. This makes all bucket contents publicly readable from the internet.\n\n**Violates acceptance criterion #1:**\n> *no public access*\n\n**Risk:**\n- Full data exfiltration of application assets (potentially sensitive configuration, user data, etc.)\n- Unintentional data leak to any unauthenticated party\n- Compliance violation (SOC2, HIPAA, etc.)\n\n**Fix \u2014 before merge:**\n\n```yaml\n# \u274c REJECTED\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketPolicy\nmetadata:\n  name: app-assets-public-read\nspec:\n  forEach:\n    policy: |\n      {\n        \"Effect\": \"Allow\",\n        \"Principal\": \"*\",\n        \"Action\": [\"s3:GetObject\", \"s3:ListBucket\"],\n        \"Resource\": [\"arn:aws:s3:::app-assets-bucket\", \"arn:aws:s3:::app-assets-bucket/*\"]\n      }\n```\n\nReplace with access-scoped to the application's IAM role or OIDC identity:\n\n```yaml\n# \u2705 APPROVED \u2014 scoped to service role\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketPolicy\nmetadata:\n  name: app-assets-service-read\nspec:\n  forEach:\n    policy: |\n      {\n        \"Effect\": \"Allow\",\n        \"Principal\": {\n          \"AWS\": \"arn:aws:iam::123456789012:role/app-service-role\"\n        },\n        \"Action\": [\"s3:GetObject\"],\n        \"Resource\": [\"arn:aws:s3:::app-assets-bucket/*\"]\n      }\n```\n\nAlso verify the bucket itself has `PublicAccessBlock` enabled (all four flags true):\n\n```yaml\nkind: PublicAccessBlock\nmetadata:\n  name: app-assets-bucket\nspec:\n  forEach:\n    blockPublicAcls: true\n    ignorePublicAcls: true\n    blockPublicPolicy: true\n    restrictPublicBuckets: true\n```\n\n---\n\n## 2. \ud83d\udd34 CRITICAL \u2014 Plaintext Secret in Git\n\n**What's wrong:**\n\nThe deployment manifest contains a database password (or connection string) as a literal value in an `env` field. This is committed to Git in plaintext.\n\n**Violates acceptance criterion #3:**\n> *never stored in plaintext in Git; encrypted at rest via stack-native mechanism*\n\n**knr-ops stack-native mechanism:** SOPS-encrypted secrets managed via Flux's `SOPS` secret decryption.\n\n**Risk:**\n- Credential exposure to anyone with repo read access (or repo leak)\n- Credential persists in Git history even after removal\n- No rotation without rewriting history\n\n**Fix \u2014 before merge:**\n\n```yaml\n# \u274c REJECTED\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-app\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          env:\n            - name: DATABASE_URL\n              value: \"postgres://admin:S3cur3P@ssw0rd!@db.prod.internal:5432/appdb\"\n```\n\nTwo approved patterns for knr-ops:\n\n**Option A \u2014 SOPS-encrypted Secret + `envFrom`:**\n\n```yaml\n# 1. In a SOPS-encrypted file (secrets.yaml, committed encrypted)\n#    After decryption by Flux SOPS, this becomes a K8s Secret:\napiVersion: v1\nkind: Secret\nmetadata:\n  name: app-db-credentials\n  namespace: prod\ntype: Opaque\nstringData:\n  DATABASE_URL: \"postgres://admin:S3cur3P@ssw0rd!@db.prod.internal:5432/appdb\"\n---\n# 2. Deployment references the Secret \u2014 no plaintext in manifest\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: web-app\nspec:\n  template:\n    spec:\n      containers:\n        - name: web\n          envFrom:\n            - secretRef:\n                name: app-db-credentials\n```\n\n**Option B \u2014 External Secrets Operator / SOPS-Flux native:**\n\nIf using Flux `SOPS` with `sealedSecrets` or `sops` provider, the `secrets.yaml` file is committed in SOPS-encrypted form and decrypted at sync time. The plaintext never appears in the repo.\n\n> \u26a0\ufe0f **Additional action:** If the plaintext password was ever committed, **rotate the credential** and **purge it from Git history** (e.g., `git filter-repo`), or at minimum ensure the old password is invalidated.\n\n---\n\n## 3. \ud83d\udfe1 WARNING \u2014 Missing Resource Limits\n\n**What's wrong:**\n\nThe deployment containers have no `resources` block (requests or limits). This means:\n- A single pod can consume unbounded CPU/memory\n- Node-level resource exhaustion (noisy neighbor / DoS)\n- Scheduling becomes non-deterministic\n\n**Risk:**\n- Availability degradation\n- Potential cluster-wide OOM if a memory leak occurs\n\n**Fix:**\n\n```yaml\ncontainers:\n  - name: web\n    # Add:\n    resources:\n      requests:\n        cpu: \"100m\"\n        memory: \"128Mi\"\n      limits:\n        cpu: \"500m\"\n        memory: \"256Mi\"\n```\n\nThis is not a data-security issue but a **stability/resilience** concern. Should be fixed before merge in prod; acceptable as follow-up in dev.\n\n---\n\n## 4. \u26aa INFO \u2014 RDS Instance Class Change\n\nNo security issue identified. The instance class change (e.g., `db.t3.micro` \u2192 `db.t3.medium`) is a sizing operation. **Verify** that the change does not inadvertently:\n- Remove `multi_az: true` for prod\n- Remove `storage_encrypted: true`\n- Set `publicly_accessible: true`\n\nIf the diff only changes `instance_class`, this is a clean pass.\n\n---\n\n## Pre-Merge Checklist\n\n| Action | Status |\n|--------|--------|\n| Remove public S3 bucket policy; scope to service role | \u274c Required |\n| Remove plaintext secret; migrate to SOPS-encrypted Secret | \u274c Required |\n| Rotate the exposed DB password (if already committed) | \u274c Required |\n| Add `resources` requests/limits to containers | \u26a0\ufe0f Recommended |\n| Verify RDS change doesn't disable encryption/multi-AZ | \u2705 Confirm |\n| Verify bucket `PublicAccessBlock` is enabled | \u2705 Confirm |\n\n**Verdict: \ud83d\udeab Do not merge.** Two critical issues must be resolved.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hf71ga2d/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hf71ga2d/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hf71ga2d/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hf71ga2d/generated_3.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/knr-ops/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

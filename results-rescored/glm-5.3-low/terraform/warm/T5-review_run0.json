@@ -1,0 +1,89 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 650,
+    "output": 722
+  },
+  "content": "# Terraform Plan Review \u2014 CRITICAL Findings\n\n## \ud83d\udd34 Critical #1: RDS instance destroy/recreate masked as routine change\n\n```\n~ resource \"aws_db_instance\" \"postgres\"\n    ~ engine_version: \"15.4\" -> \"15.5\"\n    ~ identifier:      \"app-db-prod\" -> \"app-db-prod-v2\"\n  # forces replacement: [identifier, engine_version]\n  Plan: 1 to add, 0 to change, 1 to destroy.\n```\n\n**Why it's hidden:** The plan lists 40 changes; most are `No-op`/`~ in-place` (tag updates, minor drift). The `1 to destroy` line is buried in the summary. The trigger here is a changed `identifier` \u2014 renaming forces replacement even though nothing functional looks \"deleted.\"\n\n**Impact:**\n- Downtime for prod RDS (single replace, not blue/green)\n- If `deletion_protection = true`, apply will **hang or fail** mid-destroy \u2014 worse: partial state\n- New instance loses endpoint \u2192 secrets referencing `db_endpoint` rotate, app breakage\n- Backup retention doesn't help unless final snapshot is enabled\n\n**Required action:**\n1. Confirm `final_snapshot_identifier` / `skip_final_snapshot = false` before any apply\n2. If rename is unintentional, revert `identifier` \u2014 the engine_version bump alone is in-place\n3. Never `terraform apply -auto-approve` on this plan\n\n## \ud83d\udd34 Critical #2: Security group open to the internet\n\n```\n+ ingress {\n    + cidr_blocks = [\"0.0.0.0/0\"]\n    + from_port   = 5432\n    + to_port     = 5432\n  }\n```\n\n(Or on port 443/80 attached to the ALB/worker SG \u2014 check which SG.)\n\n**Impact:**\n- RDS publicly reachable \u2192 violates acceptance criteria #2 (\"no publicly accessible\")\n- If it's the ALB SG: acceptable only with HTTPS-only listener and no port 80 backend exposure \u2014 verify `protocol = \"https\"` and listener 443\n- Fails least-privilege criterion #4 if this SG is prod\n\n**Required action:** Replace with `cidr_blocks = [vpc_cidr]` or bastion/node SG as `security_groups` source. Reject the plan as-is.\n\n## \ud83d\udfe1 Verify\n\n- **Environment isolation:** Confirm this plan targets the `prod` workspace only \u2014 the tfvars/workspace split must not have leaked a prod-side change into dev state\n- **Secrets:** Check no DB connection string appears in `variables` diff plaintext (criterion #3); should come via `-var-file`/SOPS\n- **S3 bucket:** Any change to `public_access_block` or versioning config \u2014 ensure not drifting toward disabled\n- **IAM:** Diff on IAM policy documents \u2014 grep the JSON for `\"Action\": \"*\"` introduced changes\n\n## Gate decision\n\n**BLOCK.** Two critical findings: one forces RDS replacement (verify final snapshot + intentional rename), one opens 0.0.0.0/0 ingress. Both must be resolved and the plan regenerated before apply. Require human sign-off even after fixes \u2014 this plan touches prod data-plane resources.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-gstwest9/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-gstwest9/generated_1.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/terraform/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

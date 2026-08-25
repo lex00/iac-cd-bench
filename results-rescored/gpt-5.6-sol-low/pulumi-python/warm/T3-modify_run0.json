@@ -1,0 +1,91 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `cluster`\n --> generated_0.py:7:18\n  |\n5 | node_group = aws.eks.NodeGroup(\n6 |     \"web-node-group\",\n7 |     cluster_name=cluster.name,\n  |                  ^^^^^^^\n8 |     node_role_arn=node_role.arn,\n9 |     subnet_ids=private_subnet_ids,\n  |\n\nF821 Undefined name `node_role`\n  --> generated_0.py:8:19\n   |\n 6 |     \"web-node-group\",\n 7 |     cluster_name=cluster.name,\n 8 |     node_role_arn=node_role.arn,\n   |                   ^^^^^^^^^\n 9 |     subnet_ids=private_subnet_id"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 626,
+    "output": 1606
+  },
+  "content": "Add the policy as a new resource attached to the Auto Scaling group created by the existing EKS managed node group. Do not rename or recreate the node group.\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\n# Existing managed node group; keep its Pulumi resource name and arguments stable.\nnode_group = aws.eks.NodeGroup(\n    \"web-node-group\",\n    cluster_name=cluster.name,\n    node_role_arn=node_role.arn,\n    subnet_ids=private_subnet_ids,\n    instance_types=[node_instance_type],\n    scaling_config=aws.eks.NodeGroupScalingConfigArgs(\n        desired_size=node_count,\n        min_size=node_count,\n        # Must permit the scaling policy to scale out.\n        max_size=max_node_count,\n    ),\n    opts=pulumi.ResourceOptions(\n        # Prevent Pulumi from resetting desired capacity after autoscaling.\n        ignore_changes=[\"scalingConfig.desiredSize\"],\n    ),\n)\n\n# The backing ASG name is returned by EKS as an Output.\nnode_group_asg_name = node_group.resources.apply(\n    lambda resources: resources.autoscaling_groups[0].name\n)\n\nnode_cpu_scaling_policy = aws.autoscaling.Policy(\n    \"web-node-cpu-scaling\",\n    autoscaling_group_name=node_group_asg_name,\n    policy_type=\"TargetTrackingScaling\",\n    estimated_instance_warmup=300,\n    target_tracking_configuration=(\n        aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n            target_value=60.0,\n            disable_scale_in=False,\n            predefined_metric_specification=(\n                aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n                    predefined_metric_type=\"ASGAverageCPUUtilization\",\n                )\n            ),\n        )\n    ),\n)\n```\n\nExample stack configuration:\n\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  app:nodeCount: 2\n  app:maxNodeCount: 6\n  app:nodeInstanceType: t3.medium\n```\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  app:nodeCount: 4\n  app:maxNodeCount: 12\n  app:nodeInstanceType: t3.large\n```\n\nRead those values as usual:\n\n```python\nconfig = pulumi.Config()\n\nnode_count = config.require_int(\"nodeCount\")\nmax_node_count = config.require_int(\"maxNodeCount\")\nnode_instance_type = config.require(\"nodeInstanceType\")\n```\n\nRun a detailed preview before applying:\n\n```bash\npulumi stack select dev\npulumi preview --diff\n```\n\nThe expected result is:\n\n- one new `aws:autoscaling/policy:Policy`;\n- no replacement of the EKS node group or backing ASG;\n- possibly an in-place node-group update if `max_size` must be increased.\n\nIf the existing node group already has a sufficiently high `max_size`, leave its `scaling_config` unchanged and only add `ignore_changes` plus the policy. Preserve the existing Pulumi logical name, parent, provider, and aliases; changing those can cause Pulumi to propose replacement. If a policy already exists outside Pulumi, import it instead of creating another:\n\n```bash\npulumi import aws:autoscaling/policy:Policy web-node-cpu-scaling POLICY_NAME\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-rh1zkp4z/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-rh1zkp4z/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-rh1zkp4z/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-rh1zkp4z/generated_1.py"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/pulumi-python/warm/T3-modify_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

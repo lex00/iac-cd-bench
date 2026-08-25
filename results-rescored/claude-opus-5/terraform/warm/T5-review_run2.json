@@ -1,0 +1,91 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1066,
+    "output": 16384
+  },
+  "content": "# Terraform Plan Review \u2014 `prod` workspace\n\n**Plan artifact:** `tfplan` \u2192 `terraform show -json tfplan > tfplan.json`\n**Entries in `resource_changes`:** 40\n**CLI summary line:** `Plan: 5 to add, 5 to change, 2 to destroy.`\n\n## Verdict: \ud83d\udd34 **BLOCK \u2014 do not apply**\n\nTwo blocking findings. The CLI summary is misleading: `2 to destroy` reads as routine cleanup, but one of those destroys is the production database, and the plan has been pre-cleared of the guardrails that would have stopped it.\n\n| # | Severity | Finding | Address | AC violated |\n|---|---|---|---|---|\n| 1 | \ud83d\udd34 **Blocker** | Prod RDS instance **replaced** (destroy \u2192 create). New instance is empty; no final snapshot; automated backups deleted. | `module.rds.aws_db_instance.this` | 2 |\n| 2 | \ud83d\udd34 **Blocker** | New ingress rule `0.0.0.0/0 \u2192 tcp/5432` on the **database** security group | `module.rds.aws_vpc_security_group_ingress_rule.postgres_public` | 2 (spirit), 4 |\n| 3 | \ud83d\udfe0 Major | `deletion_protection: true \u2192 false` on prod RDS | `module.rds.aws_db_instance.this` | 2 |\n| 4 | \ud83d\udfe0 Major | `skip_final_snapshot: false \u2192 true` on prod RDS | `module.rds.aws_db_instance.this` | 2 |\n| 5 | \ud83d\udfe1 Advisory | `delete_automated_backups` left at provider default `true` | `module.rds.aws_db_instance.this` | \u2014 |\n| 6 | \ud83d\udfe1 Advisory | Wildcard action `s3:*` added to prod service role policy | `module.iam.aws_iam_role_policy.service` | 4 |\n| 7 | \ud83d\udfe2 Pass | Only `prod`-scoped addresses in plan; no dev state touched | \u2014 | 7 (satisfied) |\n\n---\n\n## 0. How I triaged 40 changes (reproducible)\n\nReviewing a 40-entry plan by scrolling is not a control. These three commands are:\n\n```bash\nterraform plan -out=tfplan -var-file=envs/prod.tfvars\nterraform show -json tfplan > tfplan.json\n\n# 1. Action histogram \u2014 what shape is this plan?\njq -r '.resource_changes[] | .change.actions | join(\"+\")' tfplan.json \\\n  | sort | uniq -c | sort -rn\n```\n\n```\n  29 no-op\n   5 update\n   4 create\n   1 delete+create      <-- everything else is noise until this is explained\n   1 delete\n```\n\n```bash\n# 2. Every destructive action, with the attribute that forced it\njq -r '\n  .resource_changes[]\n  | select(.change.actions | index(\"delete\"))\n  | \"\\(.change.actions|join(\"+\"))\\t\\(.address)\\treason=\\(.action_reason // \"-\")\\tforced_by=\\(\n      (.change.replace_paths // []) | map(join(\".\")) | join(\",\") )\"\n' tfplan.json | column -t -s$'\\t'\n```\n\n```\ndelete+create  module.rds.aws_db_instance.this        reason=replace_because_cannot_update  forced_by=storage_encrypted,kms_key_id\ndelete         module.iam.aws_iam_user_policy.legacy_admin  reason=-  forced_by=\n```\n\n```bash\n# 3. Every world-open ingress rule the plan creates\njq -r '\n  .resource_changes[]\n  | select(.change.actions | index(\"create\"))\n  | select(.type|test(\"security_group\"))\n  | select((.change.after.cidr_ipv4 == \"0.0.0.0/0\") or (.change.after.cidr_ipv6 == \"::/0\"))\n  | \"\\(.address)\\t\\(.change.after.ip_protocol)/\\(.change.after.from_port)-\\(.change.after.to_port)\\t\\(.change.after.description)\"\n' tfplan.json | column -t -s$'\\t'\n```\n\n```\naws_vpc_security_group_ingress_rule.alb_https_ipv4              tcp/443-443    public HTTPS\naws_vpc_security_group_ingress_rule.alb_http_ipv4               tcp/80-80      public HTTP (ALB redirect target)\nmodule.rds.aws_vpc_security_group_ingress_rule.postgres_public  tcp/5432-5432  temp: allow analytics laptop\n```\n\n**This is why it was nearly missed.** Two of the three `0.0.0.0/0` rules are correct and expected (AC #6 explicitly allows the `:80` listener). A reviewer who greps for `0.0.0.0/0`, sees ALB rules, and moves on will skip the third. The eye pattern-matches \"ALB \u2192 open, fine.\"\n\n---\n\n## Finding 1 \ud83d\udd34 \u2014 Production database will be destroyed and recreated empty\n\n### Evidence\n\n```bash\njq '.resource_changes[] | select(.address==\"module.rds.aws_db_instance.this\")\n    | {actions:.change.actions, action_reason, replace_paths:.change.replace_paths}' tfplan.json\n```\n\n```json\n{\n  \"actions\": [\"delete\", \"create\"],\n  \"action_reason\": \"replace_because_cannot_update\",\n  \"replace_paths\": [[\"storage_encrypted\"], [\"kms_key_id\"]]\n}\n```\n\nCorresponding human-readable hunk (buried ~30 resources into the output, between a 200-line CloudFront diff and the IAM changes):\n\n```hcl\n  # module.rds.aws_db_instance.this must be replaced\n-/+ resource \"aws_db_instance\" \"this\" {\n      ~ address                     = \"prod-app-postgres.cluster-abc.eu-west-1.rds.amazonaws.com\" -> (known after apply)\n      ~ deletion_protection         = true -> false\n      ~ id                          = \"db-3XKQ\u2026\" -> (known after apply)\n      ~ kms_key_id                  = \"\" -> (known after apply) # forces replacement\n      ~ skip_final_snapshot         = false -> true\n      ~ storage_encrypted           = false -> true # forces replacement\n        identifier                  = \"prod-app-postgres\"\n        # (48 unchanged attributes hidden)\n    }\n```\n\n### Root cause\n\nThe PR is a well-intentioned compliance fix \u2014 \"enable encryption at rest on the prod database\" (AC #1/#2):\n\n```diff\n  # modules/rds/main.tf\n  resource \"aws_db_instance\" \"this\" {\n    identifier            = \"${var.env}-app-postgres\"\n-   storage_encrypted     = false\n+   storage_encrypted     = true\n+   kms_key_id            = aws_kms_key.rds.arn\n-   deletion_protection   = true\n+   deletion_protection   = false      # TODO: put back after apply\n-   skip_final_snapshot   = false\n+   skip_final_snapshot   = true       # plan kept failing otherwise\n  }\n```\n\n**`storage_encrypted` is `ForceNew` on `aws_db_instance`.** You cannot turn on encryption in place on an existing RDS instance \u2014 this is an AWS platform constraint, not a Terraform one. Terraform's only way to satisfy the config is destroy + create.\n\nThe last two lines are the important ones for the review: **someone hit the guardrails and removed them rather than stopping.** That pairing \u2014 a replace of a stateful resource *plus* `deletion_protection\u2192false` *plus* `skip_final_snapshot\u2192true` in the same plan \u2014 is a high-confidence signal that the destructive outcome was noticed at the terminal and worked around. It is also trivially machine-detectable (see \u00a74).\n\n### What actually happens on `terraform apply`\n\n1. `deletion_protection` is still `true` in A",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i7sofofj/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i7sofofj/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i7sofofj/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i7sofofj/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

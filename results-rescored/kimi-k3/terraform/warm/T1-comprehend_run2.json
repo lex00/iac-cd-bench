@@ -1,0 +1,88 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 642,
+    "output": 1177
+  },
+  "content": "Here is the predicted behavior for each scenario based on Terraform's architecture:\n\n## 1. What does the next plan show?\n\n**When a variable flips** (e.g., changing `instance_class` from `db.t3.micro` to `db.t3.medium` in `dev.tfvars`):\n\nTerraform performs a **three-way comparison** between:\n- **Configuration** (desired state): The new value from your `.tfvars`\n- **State** (last known): The previous value recorded in `terraform.tfstate`\n- **Reality** (actual): The current value in AWS (via provider refresh)\n\n**Plan output:**\n```\n# aws_db_instance.main will be updated in-place\n~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\n**Key behaviors:**\n- If the variable controls a **ForceNew** attribute (e.g., RDS engine type), Terraform shows a **replacement** (`-/+` destroy/create)\n- If the variable is only used in `locals` or `tags`, it may show no changes to infrastructure (only outputs)\n- If the variable was never applied before (new workspace), Terraform plans to **create** all resources\n- **Critical**: If you flip a variable in `prod.tfvars` but run `terraform plan` with `dev.tfvars`, Terraform shows **no changes** because the configuration input hasn't changed for that state\n\n## 2. What happens if the state file is deleted?\n\n**Immediate consequence:** Terraform loses all mapping between your configuration and real AWS resources.\n\n**Next plan behavior:**\n- Terraform treats every resource in configuration as **new** (plans to `+ create`)\n- It does **not** detect existing EKS clusters, RDS instances, or S3 buckets because it has no record of them\n- **Result**: Attempting to apply will fail with \"already exists\" errors (e.g., `DBInstanceAlreadyExists`, `BucketAlreadyExists`) or create duplicate resources with different names/identifiers\n\n**Recovery options:**\n- **Remote state** (S3 backend): If using the scenario's implied S3 backend with versioning, restore the previous version of the state file\n- **Import**: Manually run `terraform import` for each existing resource (tedious for EKS clusters with node groups)\n- **State reconstruction**: Use `terraform state rm` + `import` blocks (Terraform 1.5+) to rebuild state from reality\n\n**Data loss risk:** If the RDS instance was created by Terraform and state is lost, Terraform cannot track the deletion protection flag or final snapshot identifier, making accidental deletion harder to prevent.\n\n## 3. How does Terraform handle the RDS instance class change?\n\n**Mechanism:** In-place modification (not replacement).\n\n**Execution flow:**\n1. **Refresh**: Terraform queries AWS API and sees current class is `db.t3.micro`\n2. **Diff**: Compares with desired `db.t3.medium` from `prod.tfvars`\n3. **Plan**: Shows `~ update in-place` (not `-/+ destroy and create`)\n4. **Apply**: Calls `ModifyDBInstance` API with the new class\n\n**Operational characteristics:**\n- **Downtime**: For **Multi-AZ** (prod), AWS performs a failover during the modification; downtime is typically 60-120 seconds. For **Single-AZ** (dev), downtime occurs during the reboot.\n- **Apply timing**: If `apply_immediately = false` (default), the change queues for the next maintenance window. If `true`, it applies immediately with potential downtime.\n- **Dependencies**: If the connection string secret (stored in SOPS/Secrets Manager) references the RDS endpoint, Terraform does **not** update the secret value unless the endpoint changes (instance class changes don't affect the endpoint).\n\n**State update:** After successful apply, Terraform updates the state file to reflect `instance_class = \"db.t3.medium\"`.\n\n## 4. What is the difference between state and configuration?\n\n| Aspect | Configuration (`.tf`, `.tfvars`) | State (`terraform.tfstate`) |\n|--------|----------------------------------|----------------------------|\n| **Nature** | **Desired state** \u2014 what you want | **Actual state** \u2014 what exists (last known) |\n| **Source of truth for** | Intent, policy, variables | Resource IDs, dependency graph, metadata |\n| **Storage** | Git (version controlled) | Remote backend (S3 + DynamoDB locking) or local file |\n| **Contains secrets?** | **No** (uses SOPS/variables) | **Yes** (stores DB passwords, connection strings in plaintext) |\n| **Lifecycle** | Authored by humans | Generated/managed by Terraform |\n| **Drift detection** | N/A | Compared against real infrastructure during `plan` |\n\n**Critical distinction in this scenario:**\n- Your **configuration** defines the RDS instance as `db.t3.medium` in `prod.tfvars`\n- The **state** records that AWS instance `db-xyz-123` currently has `db.t3.micro` and maps it to the resource address `aws_db_instance.main`\n- When you run `plan`, Terraform asks: \"Does the real resource matching this state ID have the attributes defined in configuration?\"\n\n**Security note:** While the DB connection string is encrypted in Git via SOPS (per the scenario), Terraform **state** stores the decrypted value in plaintext. This is why the scenario specifies remote state encryption (S3 bucket with AES-256/KMS) and access controls.\n\n**Environment isolation:** Dev and prod use separate state files (either via workspaces `terraform.workspace` or separate backend configs), ensuring that changing `prod.tfvars` never touches dev's state or infrastructure.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-uz1i8r3x/dev.tfvars"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

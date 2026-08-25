@@ -1,0 +1,90 @@
+{
+  "model": "gpt-5.4",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "ersion: database.aws.upbound.io/v1beta1\\n        kind: Instance\\n        spec:\\n          forProvider:\\n            region: us-east-1\\n            engine: postgres\\n            engineVersion: \"16.1\"\\n            allocatedStorage: 20\\n          providerConfigRef:\\n            name: default\\n      patches:\\n        - fromFieldPath: spec.instanceClass\\n          toFieldPath: spec.forProvider.instanceClass\\n      readinessChecks:\\n        - type: MatchCondition\\n          matchCondition:\\n            type: Ready\\n            status: \"True\"\\n' or 'checkType' in 'apiVersion: apiextensions.crossplane.io/v1\\nkind: Composition\\nmetadata:\\n  name: aws-web-service\\n  labels:\\n    crossplane.io/xrd: xawswebservices.app.example.com\\nspec:\\n  group: app.example.com\\n  mode: Pipeline\\n  resources:\\n    - name: rds-instance\\n      base:\\n        apiVersion: database.aws.upbound.io/v1beta1\\n        kind: Instance\\n        spec:\\n          forProvider:\\n            region: us-east-1\\n            engine: postgres\\n            engineVersion: \"16.1\"\\n            allocatedStorage: 20\\n          providerConfigRef:\\n            name: default\\n      patches:\\n        - fromFieldPath: spec.instanceClass\\n          toFieldPath: spec.forProvider.instanceClass\\n      readinessChecks:\\n        - type: MatchCondition\\n          matchCondition:\\n            type: Ready\\n            status: \"True\"\\n'))\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:15: AssertionError: Composition should have ReadinessChecks defined\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks\n============================== 2 failed in 0.01s ===============================\n",
+      "passed_count": 0,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1122,
+    "output": 851
+  },
+  "content": "Here\u2019s the fix.\n\n## What\u2019s broken\n\n1. **Wrong patch source path**\n   - Composition uses:\n     `spec.parameters.storageClass`\n   - But the XRD defines:\n     `spec.instanceClass`\n   - So the patch never finds the source value.\n\n2. **No readiness checks on the RDS managed resource**\n   - Without an explicit readiness signal, the composed RDS resource may never allow the XR/claim to become `Ready`.\n\n---\n\n## Corrected `composition.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n          providerConfigRef:\n            name: default\n      patches:\n        - fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n      readinessChecks:\n        - type: MatchCondition\n          matchCondition:\n            type: Ready\n            status: \"True\"\n```\n\n---\n\n## Notes\n\n### Patch fix\nYour XRD schema exposes:\n\n```yaml\nspec.instanceClass\n```\n\nSo the composition must patch from that path, not `spec.parameters.storageClass`.\n\nAlso, since your XRD default is already a full value like `db.t3.medium`, the string transform:\n\n```yaml\nformat: \"db.t3.%s\"\n```\n\nshould be removed. Otherwise you\u2019d end up with invalid values like:\n\n```yaml\ndb.t3.db.t3.medium\n```\n\n---\n\n## Optional XRD cleanup\n\nYour XRD schema is also slightly inconsistent with common Crossplane XR structure. Right now it defines fields directly under `spec`, not under `spec.parameters`. That\u2019s fine if intentional, but then the Composition must match it exactly.\n\nA corrected `xrd.yaml` matching the composition above would be:\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  versions:\n    - name: v1alpha1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                instanceClass:\n                  type: string\n                  default: db.t3.medium\n                deletionProtection:\n                  type: boolean\n                  default: true\n              required:\n                - instanceClass\n  claimNames:\n    kind: AWSWebService\n    plural: awswebservices\n```\n\n---\n\n## If you want to use `spec.parameters.instanceClass` instead\n\nThen change the XRD schema to:\n\n```yaml\nspec:\n  type: object\n  properties:\n    parameters:\n      type: object\n      properties:\n        instanceClass:\n          type: string\n          default: db.t3.medium\n        deletionProtection:\n          type: boolean\n          default: true\n      required:\n        - instanceClass\n```\n\nAnd use this patch:\n\n```yaml\n- fromFieldPath: spec.parameters.instanceClass\n  toFieldPath: spec.forProvider.instanceClass\n```\n\n---\n\n## Summary\n\n### Required fixes\n- Change:\n  ```yaml\n  fromFieldPath: spec.parameters.storageClass\n  ```\n  to:\n  ```yaml\n  fromFieldPath: spec.instanceClass\n  ```\n\n- Add:\n  ```yaml\n  readinessChecks:\n    - type: MatchCondition\n      matchCondition:\n        type: Ready\n        status: \"True\"\n  ```\n\nIf you want, I can also provide a **fully corrected pair of files** (`composition.yaml` and `xrd.yaml`) in one final version.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-_k0sr8p9/composition.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-_k0sr8p9/xrd.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.3888888888888889
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/crossplane/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.3888888888888889
+    },
+    "corrected_composite_no_idiom": 0.4375,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

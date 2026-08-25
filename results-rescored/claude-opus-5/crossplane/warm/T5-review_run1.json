@@ -1,0 +1,88 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1049,
+    "output": 12726
+  },
+  "content": "# Review: `deletionPolicy: Delete` + drop bucket versioning\n\n**Verdict: Request changes \u2014 do not merge.** Two blocking findings, one of which is created by the *interaction* of the two changes rather than either one alone. There is also no per-environment gate on either change, so this lands in prod on the next reconcile of the existing XRs (`compositionUpdatePolicy` defaults to `Automatic`) \u2014 there is no `plan` step in Crossplane; **merge is deploy**.\n\n---\n\n## Summary\n\n| # | Finding | Severity | AC violated |\n|---|---|---|---|\n| C1 | Bucket versioning removed | **Blocker** | AC1 (versioning), prod CRR requirement |\n| C2 | `deletionPolicy: Delete` on data-bearing MRs (RDS, S3) | **Blocker (prod)** / Major (dev) | AC2 (spirit), AC1 |\n| C3 | Combination: removing a resource from the composition now *destroys* external state instead of just dropping the record | **Blocker** | \u2014 |\n| H1 | Both changes hardcoded in `base:`, not patched per env; prod inherits dev's posture | Major | AC7 (isolation intent) |\n| H2 | `deletionPolicy: Delete` + RDS `deletionProtection: true` \u21d2 wedged deletion / finalizer deadlock | Major | \u2014 |\n| M1 | `deletionPolicy` is the deprecated mechanism; mixing with `managementPolicies` has non-obvious precedence | Minor | \u2014 |\n| M2 | PR couples two unrelated changes, no rationale in the commit body | Minor | \u2014 |\n\n---\n\n## The diff as I read it\n\nConfirm this reconstruction \u2014 a couple of conclusions below depend on which S3 provider you're on.\n\n```diff\n   resources:\n     - name: assets-bucket\n       base:\n         apiVersion: s3.aws.upbound.io/v1beta1\n         kind: Bucket\n+        spec:\n+          deletionPolicy: Delete          # C2 \u2014 repeated on every resource in the file\n         ...\n-    - name: assets-bucket-versioning\n-      base:\n-        apiVersion: s3.aws.upbound.io/v1beta1\n-        kind: BucketVersioning\n-        spec:\n-          forProvider:\n-            versioningConfiguration:\n-              - status: Enabled           # C1\n     - name: db\n       base:\n         apiVersion: rds.aws.upbound.io/v1beta1\n         kind: Instance\n+        spec:\n+          deletionPolicy: Delete          # C2 \u2014 on the only stateful resource in the spine\n```\n\n**Nit on the framing:** \"provider-wide\" isn't a thing for this field. `deletionPolicy` lives on each **managed resource** spec; `ProviderConfig` has no such setting. So this isn't one default being set \u2014 it's N copies of a per-resource decision, applied uniformly to resources with wildly different blast radii (an IAM role and an RDS instance are not the same risk class).\n\n**Second nit that changes the fix:** the *default* value of `deletionPolicy` is already `Delete`. So:\n\n- If the diff replaced `Orphan` \u2192 `Delete`, this is a real safety downgrade. **Blocking.**\n- If the diff added `Delete` where the field was absent, the API behaviour is unchanged \u2014 but you've now explicitly blessed the wrong posture for stateful resources in code. The correct change is not \"revert to absent\", it's **`Orphan` on RDS and S3**.\n\nEither way the target state is the same, so I'm reviewing against that.\n\n---\n\n## C1 \u2014 Bucket versioning removed (Blocker)\n\nDirect violation of AC1 (\"versioning enabled, server-side encryption, no public access\"). Beyond the checklist, three concrete consequences:\n\n**1. This is a live mutation, not just a spec cleanup.** Crossplane fully re-renders composed resource specs from `base` + patches on every reconcile; there is no \"field I stopped managing stays as-is.\"\n\n- *Upjet provider (`s3.aws.upbound.io`)*: removing the `BucketVersioning` resource from the composition garbage-collects the MR. Whether that suspends versioning in AWS depends on the underlying `aws_s3_bucket_versioning` delete implementation \u2014 verify before assuming it's a no-op.\n- *Native `provider-aws` (`s3.aws.crossplane.io/v1beta1 Bucket` with inline `versioningConfiguration`)*: the S3 subresource clients treat a nil spec block as \"this subresource should not exist\" and issue a `PutBucketVersioning{Status: Suspended}`. That's an immediate API call on the next reconcile, no deletion required.\n\n**2. It breaks prod, loudly \u2014 and dev, silently.** Prod requires cross-region replication to `us-west-2`. S3 refuses to change the versioning state of a bucket that has a replication configuration (`InvalidBucketState`). Expected outcome: the bucket MR sits `SYNCED=False` in a permanent error loop, and *every other patch to that bucket stalls behind it*. Dev has no CRR, so dev happily suspends versioning and reports green. **Your dev environment cannot catch this class of regression** \u2014 which is exactly backwards from what you want promotion to test.\n\n**3. Suspension is not reversible for data already written.** Objects written while versioning is suspended get `versionId: null` and are overwritten in place forever after. Re-enabling versioning later does not retroactively protect them. The recovery window is the size of the suspension window.\n\n**Most likely root cause \u2014 please confirm:** are you mid-migration from native `provider-aws` (inline `versioningConfiguration`) to `provider-upjet-aws` (separate `BucketVersioning` MR)? Dropping the inline block and forgetting to add the standalone MR is the textbook failure mode. If so, the fix is *add the new resource*, not *restore the old block*:\n\n```yaml\n    - name: assets-bucket-versioning\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: BucketVersioning\n        spec:\n          deletionPolicy: Orphan\n          forProvider:\n            versioningConfiguration:\n              - status: Enabled\n      patches:\n        - type: PatchSet\n          patchSetName: region\n        - type: FromCompositeFieldPath\n          fromFieldPath: metadata.uid\n          toFieldPath: spec.forProvider.bucketSelector.matchControllerRef\n          # or bucketRef by name; do not hand-roll the bucket name\n```\n\n---\n\n## C2 / C3 \u2014 `Delete` on stateful resources, plus the interaction (Blocker)\n\n`deletionPolicy: Delete` means: delete the claim (or drop the resource from the composition, or `kubectl delete xr`, or hit a typo in a `compositionSelector` label) and the RDS instance and the S3 bucket are deleted in AWS. In Crossplane the surface area for accidental deletion is larger than in Terraform, because deletion is driven by declarative reconciliation rather than an explicit `destroy` invocation: an XR that stops matching a composition, a claim namespace deletion, or a Composition edit all funnel into the same delete path.\n\n**C3 is the finding I'd actually block on.** These two changes make each other worse. With `Orphan`, removing `BucketVersioning` from the composition is a bookkeeping change. With `Delete`, the same edit reaches into AWS. You have simultaneously widened the delete path *and* removed the recovery mechanism (object versions) that would have made a mistake on that path survivable. Ship these two lines separately and each is arguable; ship them together and there's no undo.\n\n**H2 \u2014 the predictable follow-up incident.** RDS should have `deletionProtection: true` (AC2). With `deletionPolicy: Delete`, deletion attempts fail at the AWS API, the MR's finalizer is never removed, and the claim/XR hangs in `Deleting` indefinitely \u2014 often blocking a namespace terminate. The next person to hit this at 2am will \"unblock\" it by setting `deletionProtection: false`, or by adding `forceDestroy: true` to the bucket to clear `BucketNotEmpty`. That's the actual data-loss path this diff opens. Same reasoning for `skipFinalSnapshot` \u2014 verify it's `false` and `finalSnapshotIdentifier` is set.\n\n**Required target state:**\n\n```yaml\n# XRD \u2014 make retention an explicit, defaulted, validated parameter\nparameters:\n  properties:\n    dataRetention:\n      type: string\n      enum: [Orphan, Delete]\n      default: Orphan          # safe by default; dev opts in to Delete\n```\n\n```yaml\n# Composition \u2014 patch only the stateful resources\npatchSets:\n  - name: data-retention\n    patches:\n      - type: FromCompositeFieldPath\n        fromFieldPath: spec.parameters.dataRetention\n        toFieldPath: spec.deletionPolicy\n```\n\nApply that patchSet to `Bucket`, `BucketVersioning`, and `rds.Instance`. Leave stateless resources (`NodeGroup`, `Role`, `Listener`, `Policy`) at the default `Delete` \u2014 orphaning those just leaks cost and drift.\n\n**Do not let prod's value come from the claim.** A claim is user input; AC2 is a control. Pin prod either with a distinct prod composition or with an admission policy so this can't recur regardless of who edits what:\n\n```yaml\n# ValidatingAdmissionPolicy (sketch)\nvalidations:\n  - expression: |\n      !(object.metadata.labels['env'] == 'prod' &&\n        object.spec.deletionPolicy == 'Delete')\n    message: \"prod stateful MRs must be Orphan\"\n```\n\n**M1:** if `managementPolicies` is enabled on your Crossplane version, standardise on it and drop `deletionPolicy` entirely \u2014 the two fields interact via a documented precedence table that nobody remembers correctly under pressure. Pick one mechanism cluster-wide; check the table for your exact version before mixing.\n\n---\n\n## H1 \u2014 No environment gate\n\nBoth changes are in `base:` on a composition that (I assume) serves dev and prod via `compositionSelector`. CompositionRevisions are cluster-scoped, and `compositionUpdatePolicy` defaults to `Automatic`, so existing prod XRs adopt the new revision on their next reconcile \u2014 no gate, no preview. Before merging anything in this file:\n\n- set `compositionUpdatePolicy: Manual` + explicit `compositionRevisionRef` on prod XRs, so revision promotion is a deliberate second commit;\n- or split dev/prod compositions and make this file dev-only.\n\nRight now \"changing dev's composition doesn't touch prod\" is not true, which undercuts AC7 even though the *state* is separate.\n\n---\n\n## Verification I want to see before approval\n\n```bash\n# What does the change actually render to?\ncrossplane render xr-prod.yaml composition.yaml functions.yaml | \\\n  yq 'select(.kind==\"Bucket\" or .kind==\"Instance\") | {kind, \"dp\": .spec.deletionPolicy}'\n\n# Current live state, both envs\naws s3api get-bucket-versioning  --bucket $BUCKET   # expect Status: Enabled\naws s3api get-bucket-replication --bucket $PROD_BUCKET\n\n# Has anything already reconciled?\nkubectl get managed -o custom-columns=\\\nKIND:.kind,NAME:.metadata.name,SYNCED:.status.conditions[?\\(@.type==\\\"Synced\\\"\\)].status,DP:.spec.deletionPolicy\ncrossplane beta trace claim/app-prod\n```\n\n**If this already merged and reconciled:** (1) re-enable versioning immediately; (2) `aws s3api list-object-versions --bucket $B` and grep for `null` version IDs to size the unprotected write window; (3) CloudTrail for `PutBucketVersioning`, `DeleteBucket`, `DeleteDBInstance` in the window; (4) confirm replication is still `Enabled` and the backlog drained.\n\n---\n\n## Path to approval\n\n1. Restore versioning as a first-class resource (`Status: Enabled`), correctly wired for whichever provider you're on.\n2. `dataRetention` parameter, defaulted to `Orphan`, patched onto S3 + RDS only; prod pinned by policy, not by claim.\n3. Confirm `deletionProtection: true`, `skipFinalSnapshot: false`, `backupRetentionPeriod >= 7`, and that no `forceDestroy` crept in as a workaround.\n4. Split this into two PRs with rationale in the commit body \u2014 \"why we needed `Delete`\" is the missing context that would let me review the intent instead of guessing at it.\n5. Add a CI gate: `crossplane render` \u2192 conftest/OPA asserting versioning enabled, encryption set, `deletionPolicy != Delete` on stateful kinds, RDS guardrails. A review catches this once; a policy catches it every time.\n\n**Open questions:** Is this a native\u2192upjet provider migration? What operational failure prompted `Delete` (stuck deletes in dev is my guess)? And was the previous value `Orphan` or absent \u2014 that determines whether this is a regression or a codified pre-existing gap.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-3cvxxgkl/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/crossplane/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

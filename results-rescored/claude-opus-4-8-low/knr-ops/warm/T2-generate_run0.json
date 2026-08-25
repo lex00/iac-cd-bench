@@ -1,0 +1,108 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T2-generate",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Federated\": \"arn:aws:iam::222222222222:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/PROD_OIDC_ID\"\n            },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": {\n              \"StringE\n[validate CRDs] kubeconform: exit=0\nSummary: 15 resources found in 12 files - Valid: 1, Invalid: 0, Errors: 0, Skipped: 14\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd: exit=1\nERR: # Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\nError: accumulating resources: accumulation err='accumulating resources from '../../base': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/base' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/base: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/fol\nflux build kustomizations.yaml: exit=1\nERR: \u2717 invalid resource path \"\"\n"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "st_task.py:7: AssertionError: logs bucket manifest should exist\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   AssertionError: Should have IAM role for IRSA\n    assert 0 > 0\n     +  where 0 = len([])\n/Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py:33: AssertionError: Should have IAM role for IRSA\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_manifest_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_encryption\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_public_access_blocked\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_iam_role_created\n========================= 5 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1483,
+    "output": 5592
+  },
+  "content": "Based on the knr-ops patterns described, here's the idiomatic implementation. I'll create a `base/` with kustomize overlays for `dev`/`prod`, plus the Flux kustomization.\n\n## Directory Layout\n\n```\ninfra/\n  s3-logs/\n    base/\n      kustomization.yaml\n      bucket.yaml\n      versioning.yaml\n      encryption.yaml\n      public-access-block.yaml\n    overlays/\n      dev/\n        kustomization.yaml\n        patch-bucket.yaml\n      prod/\n        kustomization.yaml\n        patch-bucket.yaml\n  iam/\n    logs-irsa/\n      base/\n        kustomization.yaml\n        role.yaml\n        policy.yaml\n      overlays/\n        dev/\n          kustomization.yaml\n          patch-role.yaml\n        prod/\n          kustomization.yaml\n          patch-role.yaml\nflux/\n  kustomizations.yaml   (append logs kustomization)\n```\n\n---\n\n## `infra/s3-logs/base/`\n\n### `bucket.yaml`\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: myapp-logs\n  labels:\n    app.kubernetes.io/part-of: myapp\n    app.kubernetes.io/component: logs\nspec:\n  forProvider:\n    # region + bucket name are patched per-overlay\n    forceDestroy: false\n  providerConfigRef:\n    name: default\n```\n\n### `versioning.yaml`\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketVersioning\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucketRef:\n      name: myapp-logs\n    versioningConfiguration:\n      - status: Enabled\n  providerConfigRef:\n    name: default\n```\n\n### `encryption.yaml`\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketServerSideEncryptionConfiguration\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucketRef:\n      name: myapp-logs\n    rule:\n      - applyServerSideEncryptionByDefault:\n          - sseAlgorithm: AES256\n        bucketKeyEnabled: true\n  providerConfigRef:\n    name: default\n```\n\n### `public-access-block.yaml`\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketPublicAccessBlock\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucketRef:\n      name: myapp-logs\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n  providerConfigRef:\n    name: default\n```\n\n### `kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bucket.yaml\n  - versioning.yaml\n  - encryption.yaml\n  - public-access-block.yaml\n```\n\n---\n\n## `infra/s3-logs/overlays/dev/`\n\n### `patch-bucket.yaml`\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucket: myapp-logs-dev\n    region: us-east-1\n```\n\n### `kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: ack-system\nresources:\n  - ../../base\npatches:\n  - path: patch-bucket.yaml\n    target:\n      kind: Bucket\n      name: myapp-logs\ncommonLabels:\n  env: dev\n```\n\n---\n\n## `infra/s3-logs/overlays/prod/`\n\n### `patch-bucket.yaml`\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucket: myapp-logs-prod\n    region: us-east-1\n    forceDestroy: false\n```\n\n### `kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: ack-system\nresources:\n  - ../../base\npatches:\n  - path: patch-bucket.yaml\n    target:\n      kind: Bucket\n      name: myapp-logs\ncommonLabels:\n  env: prod\n```\n\n---\n\n## `infra/iam/logs-irsa/base/`\n\nThe IRSA role: an IAM Role with an OIDC trust policy scoped to a specific ServiceAccount, plus a least-privilege inline policy limited to the logs bucket ARNs.\n\n### `role.yaml`\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\n  labels:\n    app.kubernetes.io/part-of: myapp\n    app.kubernetes.io/component: logs\nspec:\n  forProvider:\n    # assumeRolePolicy (OIDC trust) is patched per-overlay because the\n    # OIDC provider ARN + account differ per cluster/env.\n    assumeRolePolicy: |\n      {}\n  providerConfigRef:\n    name: default\n```\n\n### `policy.yaml`\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: RolePolicy\nmetadata:\n  name: myapp-logs-rw\nspec:\n  forProvider:\n    roleRef:\n      name: myapp-logs-irsa\n    # policy document is patched per-overlay to reference env bucket ARN\n    policy: |\n      {}\n  providerConfigRef:\n    name: default\n```\n\n### `kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - role.yaml\n  - policy.yaml\n```\n\n---\n\n## `infra/iam/logs-irsa/overlays/dev/`\n\n### `patch-role.yaml`\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Federated\": \"arn:aws:iam::111111111111:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/DEV_OIDC_ID\"\n            },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": {\n              \"StringEquals\": {\n                \"oidc.eks.us-east-1.amazonaws.com/id/DEV_OIDC_ID:sub\": \"system:serviceaccount:myapp:myapp-logs\",\n                \"oidc.eks.us-east-1.amazonaws.com/id/DEV_OIDC_ID:aud\": \"sts.amazonaws.com\"\n              }\n            }\n          }\n        ]\n      }\n```\n\n### `patch-policy.yaml`\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: RolePolicy\nmetadata:\n  name: myapp-logs-rw\nspec:\n  forProvider:\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Sid\": \"ListBucket\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\"s3:ListBucket\", \"s3:GetBucketLocation\"],\n            \"Resource\": \"arn:aws:s3:::myapp-logs-dev\"\n          },\n          {\n            \"Sid\": \"ReadWriteObjects\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\"s3:GetObject\", \"s3:PutObject\", \"s3:DeleteObject\"],\n            \"Resource\": \"arn:aws:s3:::myapp-logs-dev/*\"\n          }\n        ]\n      }\n```\n\n### `kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: ack-system\nresources:\n  - ../../base\npatches:\n  - path: patch-role.yaml\n    target:\n      kind: Role\n      name: myapp-logs-irsa\n  - path: patch-policy.yaml\n    target:\n      kind: RolePolicy\n      name: myapp-logs-rw\ncommonLabels:\n  env: dev\n```\n\n---\n\n## `infra/iam/logs-irsa/overlays/prod/`\n\n### `patch-policy.yaml` (least privilege \u2014 **no wildcard actions in prod**)\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: RolePolicy\nmetadata:\n  name: myapp-logs-rw\nspec:\n  forProvider:\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Sid\": \"ListBucket\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\"s3:ListBucket\", \"s3:GetBucketLocation\"],\n            \"Resource\": \"arn:aws:s3:::myapp-logs-prod\"\n          },\n          {\n            \"Sid\": \"ReadWriteObjects\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\"s3:GetObject\", \"s3:PutObject\", \"s3:DeleteObject\"],\n            \"Resource\": \"arn:aws:s3:::myapp-logs-prod/*\"\n          }\n        ]\n      }\n```\n\n### `patch-role.yaml` (prod OIDC trust)\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Federated\": \"arn:aws:iam::222222222222:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/PROD_OIDC_ID\"\n            },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": {\n              \"StringEquals\": {\n                \"oidc.eks.us-east-1.amazonaws.com/id/PROD_OIDC_ID:sub\": \"system:serviceaccount:myapp:myapp-logs\",\n                \"oidc.eks.us-east-1.amazonaws.com/id/PROD_OIDC_ID:aud\": \"sts.amazonaws.com\"\n              }\n            }\n          }\n        ]\n      }\n```\n\n### `kustomization.yaml`\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: ack-system\nresources:\n  - ../../base\npatches:\n  - path: patch-role.yaml\n    target:\n      kind: Role\n      name: myapp-logs-irsa\n  - path: patch-policy.yaml\n    target:\n      kind: RolePolicy\n      name: myapp-logs-rw\ncommonLabels:\n  env: prod\n```\n\n---\n\n## The ServiceAccount (IRSA consumer)\n\nAdd this to your app overlay so the role is actually assumable. The role ARN annotation is populated per env.\n\n```yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: myapp-logs\n  namespace: myapp\n  annotations:\n    eks.amazonaws.com/role-arn: arn:aws:iam::111111111111:role/myapp-logs-irsa   # patched per env\n```\n\n---\n\n## `flux/kustomizations.yaml` \u2014 append these\n\nTwo separate Flux Kustomizations (dev + prod) that reconcile the logs bucket independently, with a dependency on the IRSA IAM resources.\n\n```yaml\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: s3-logs-dev\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./infra/s3-logs/overlays/dev\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system          # matches existing repo GitRepository source\n  dependsOn:\n    - name: iam-logs-irsa-dev\n  healthChecks:\n    - apiVersion: s3.aws.upbound.io/v1beta1\n      kind: Bucket\n      name: myapp-logs\n      namespace: ack-system\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: iam-logs-irsa-dev\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./infra/iam/logs-irsa/overlays/dev\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: s3-logs-prod\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./infra/s3-logs/overlays/prod\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n  dependsOn:\n    - name: iam-logs-irsa-prod\n  healthChecks:\n    - apiVersion: s3.aws.upbound.io/v1beta1\n      kind: Bucket\n      name: myapp-logs\n      namespace: ack-system\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: iam-logs-irsa-prod\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./infra/iam/logs-irsa/overlays/prod\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: flux-system\n```\n\n---\n\n## Notes on the choices & acceptance criteria\n\n- **Versioning / AES256 / public-access-block**: each is a discrete ACK CRD linked to the `Bucket` via `bucketRef` \u2014 this is the idiomatic upbound/ACK S3 pattern (not inline sub-blocks).\n- **Environment isolation**: dev and prod are separate overlays reconciled by separate Flux Kustomizations \u2192 changing prod never touches dev state (criterion 7).\n- **Least privilege**: policies are scoped to exactly the env bucket ARN with only `Get/Put/Delete/List`; **no wildcard actions**, satisfying criterion 4 for prod.\n- **SOPS**: no plaintext secrets are involved for a bucket + IRSA role (ARNs/OIDC IDs are not secret). If you inject the role ARN into the app via a Secret, encrypt that file with SOPS and ensure the Flux Kustomization has `decryption.provider: sops` referencing the age/KMS key \u2014 but bucket/IAM manifests here contain no sensitive material, so no SOPS envelope is added to avoid dead encryption.\n- **Source ref**: `flux-system` GitRepository is assumed to be the existing bootstrap source \u2014 adjust the `sourceRef.name` if your repo uses a different `GitRepository`/`OCIRepository`.\n\nBefore applying, replace the placeholders: account IDs (`111111111111`/`222222222222`), OIDC IDs (`DEV_OIDC_ID`/`PROD_OIDC_ID`), and regions to match your actual EKS clusters.\n\nWant me to also generate the SOPS-encrypted Secret + app ServiceAccount overlay wiring if your app consumes the role ARN via env?",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/versioning.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/encryption.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/public-access-block.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/patch-bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/patch-bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/role.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/patch-role.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/patch-policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/patch-policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/patch-role.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/flux/kustomizations.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-7g6u19nd/generated_19.yaml"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.16666666666666666,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.3703703703703704
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/knr-ops/warm/T2-generate_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 0.16666666666666666,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.3703703703703704
+    },
+    "published_composite_no_idiom": 0.4166666666666667,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.16666666666666666,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.3703703703703704
+    },
+    "corrected_composite_no_idiom": 0.4166666666666667,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

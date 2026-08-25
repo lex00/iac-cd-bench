@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 791,
+    "output": 1220
+  },
+  "content": "Based on the provided PR diff and the Canonical Scenario Specification, here is the security review of the changes.\n\n### Security Issue Analysis\n\n#### 1. Public S3 Bucket Access (Critical)\n*   **Observation:** The diff introduces a new S3 bucket policy that grants **public read access**.\n*   **Spec Violation:** The Canonical Specification explicitly requires for the S3 bucket: *\"no public access\"*.\n*   **Risk:** Exposing application assets publicly can lead to data leakage, unauthorized access to sensitive configuration files, or serving malicious content if the bucket is writable (though public read is specified, it's a major misconfiguration for an internal asset bucket).\n*   **Severity:** **Critical**\n\n#### 2. Plaintext Secrets in Git (Critical)\n*   **Observation:** The app deployment manifest contains a **plaintext password in environment variables**.\n*   **Spec Violation:** The Specification states: *\"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"*. For `knr-ops`, the idiomatic mechanism is **SOPS-encrypted** secrets (as per the \"Spine\" section: `SOPS-encrypted (knr-ops)`).\n*   **Risk:** Storing credentials in plaintext within a Git repository exposes them to anyone with read access to the repository. Git history may retain these secrets even if they are later removed. This is a fundamental security breach.\n*   **Severity:** **Critical**\n\n#### 3. Missing Resource Limits (Warning)\n*   **Observation:** The app deployment containers lack **CPU and memory limits**.\n*   **Spec Violation:** While the Specification does not explicitly list resource limits as an acceptance criterion, it is a standard Kubernetes best practice and part of \"idiotic\" deployment hygiene. Without limits, a single misbehaving pod can exhaust node resources, leading to Denial of Service (DoS) for other workloads on the node.\n*   **Risk:** Resource exhaustion, noisy neighbor effects, and potential cluster instability.\n*   **Severity:** **Warning**\n\n#### 4. RDS Instance Class Change (Info)\n*   **Observation:** Change in RDS instance class.\n*   **Spec Alignment:** The Specification allows for different sizing between dev (`db.t3.micro`) and prod (`db.t3.medium`). As long as the change respects the environment-specific sizing and maintains encryption/deletion protection (which is implied to be unchanged or pre-existing), this is a valid operational change.\n*   **Risk:** None, assuming other RDS security settings (encryption, multi-AZ, backup retention) remain compliant.\n*   **Severity:** **Info**\n\n---\n\n### Summary by Severity\n\n| Severity | Issue | Description |\n| :--- | :--- | :--- |\n| **Critical** | Public S3 Access | S3 bucket policy allows public read access, violating \"no public access\" requirement. |\n| **Critical** | Plaintext Secrets | Database password is hardcoded in plaintext in the Kubernetes deployment manifest, violating \"never stored in plaintext in Git\" requirement. |\n| **Warning** | No Resource Limits | Containers lack CPU/memory limits, risking resource exhaustion. |\n| **Info** | RDS Size Change | Instance class change is acceptable if aligned with environment specs. |\n\n---\n\n### Required Changes Before Merge\n\n1.  **Remove Public S3 Access:**\n    *   Modify the S3 bucket policy to **deny** all public access.\n    *   Ensure the bucket policy explicitly denies `s3:*` from unauthenticated principals or relies on the bucket-level \"Block Public Access\" settings being enabled (which is the preferred method in AWS).\n    *   *Action:* Revert or fix the S3 policy change to ensure no public read/write.\n\n2.  **Encrypt Secrets with SOPS:**\n    *   Remove the plaintext password from the deployment manifest.\n    *   Use **SOPS** to encrypt the secret. In `knr-ops`, this typically involves creating a `.yaml` or `.env` file, encrypting it with SOPS, and referencing it in the deployment.\n    *   Ensure the KMS key or age key used for encryption is properly configured and that only authorized CI/CD processes have access to decrypt it.\n    *   *Action:* Replace the `env` block with a reference to a SOPS-encrypted secret or a Kubernetes Secret (which itself should be injected from SOPS via GitOps tooling, not plaintext).\n\n3.  **Add Resource Limits:**\n    *   Add `resources.limits` and `resources.requests` to the container spec in the deployment manifest.\n    *   Use reasonable values based on application profiling (e.g., `cpu: 500m`, `memory: 512Mi`).\n    *   *Action:* Update the deployment YAML to include `resources`.\n\n### Example Fix for Deployment (Illustrative)\n\n**Before (Insecure):**\n```yaml\nenv:\n  - name: DB_PASSWORD\n    value: \"supersecret123\" # CRITICAL: Plaintext\n```\n\n**After (Secure - Conceptual):**\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: app-db-secret # Secret managed by GitOps/SOPS\n        key: password\nresources:\n  limits:\n    cpu: \"500m\"\n    memory: \"512Mi\"\n  requests:\n    cpu: \"250m\"\n    memory: \"256Mi\"\n```\n*(Note: The `app-db-secret` would be defined in a separate encrypted file, e.g., `secrets/app-db-secret.yaml`, encrypted with SOPS.)*",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/knr-ops/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 1022
+  },
+  "content": "I'm ready to review the Pulumi preview JSON \u2014 but it wasn't included in your message. Could you paste the actual `pulumi preview --json` output (or attach it)?\n\nOnce you do, here's exactly what I'll check against your three focus areas plus the acceptance criteria:\n\n## What I'll look for\n\n### 1. Secrets in plaintext outputs\n- `outputs` or `stackExports` containing DB connection strings, passwords, or IAM access keys as plain values (not wrapped as `{\"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", ...}` secret sigil objects)\n- `steps[].newState.outputs` with sensitive `inputs` echoed back unmasked\n- IAM user `secret` / `secretAccessKey` appearing in plaintext\n- RDS `password` field shown as literal rather than `[secret]`\n\n### 2. Replacement of stateful resources\n- Any `step.op` of `\"replace\"`, `\"create-replacement\"`, or `\"delete-replaced\"` on:\n  - `aws:rds/instance:Instance` (data loss risk)\n  - `aws:s3/bucket:Bucket` (asset loss)\n  - EKS node groups / cluster (disruption)\n- The `replaceReasons` / `detailedDiff` fields showing a `replace`-triggering property change (e.g., RDS `identifier`, `engineVersion` downgrade, bucket `name`, subnet changes)\n\n### 3. Missing protect flag\n- Stateful resources (`Instance`, `Bucket`, EKS cluster) where `newState.protect` is `false` or absent\n- Especially critical for **prod** stack\n\n## Cross-check against acceptance criteria\n| Check | JSON field to inspect |\n|---|---|\n| Bucket versioning + encryption + no public access | `versioning.enabled`, `serverSideEncryptionConfiguration`, `blockPublicAcls/ignorePublicAcls` etc. |\n| RDS deletion protection, backup \u22657d, not public | `deletionProtection`, `backupRetentionPeriod`, `publiclyAccessible` |\n| IAM least privilege | policy `Action`/`Resource` wildcards (`\"*\"`) especially prod |\n| Cluster sizing | node group `instanceTypes`, `scalingConfig.desiredSize` vs dev(2\u00d7t3.medium)/prod(4\u00d7t3.large) |\n| HTTPS 443 + cert | listener `port: 443`, `certificateArn` |\n| Env isolation | correct `stack`/URN prefix; prod change not touching dev URNs |\n\n**Please paste the JSON and tell me which stack (`dev` or `prod`) it represents**, and I'll produce a findings report with severity ratings and exact remediation snippets.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 562
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Summary\n\nTwo changes, both **blocking** for prod.\n\n## \ud83d\udd34 Change 1: `deletionPolicy: Delete` added provider-wide\n\n**Verdict: Reject for prod, at minimum.**\n\nProblems:\n\n1. **Acceptance criteria conflicts.** RDS requires deletion protection ON (Criterion #2). `deletionPolicy: Delete` on the RDS managed resource means deleting the claim/namespace tears down the database \u2014 this is a prod data-loss footgun. The DB should use `deletionPolicy: Orphan` (and `deletionProtection: true` in the instance spec) regardless of Crossplane policy.\n2. **Blind, provider-wide application.** Correct practice is per-resource-type policy:\n   - Buckets, IAM bindings, CloudFront: `Delete` is fine (recreatable).\n   - RDS, EKS cluster: `Orphan` \u2014 accidental claim deletion should not destroy prod state. Note this also protects against namespace deletion cascades.\n3. **Environment asymmetry ignored.** Dev could reasonably use `Delete` everywhere (cheap teardown); prod should not. Since this is a composition change, it applies to both \u2014 parameterize it (e.g., `deletionPolicy` as a composition field patched from the claim) or set it per environment claim.\n\n## \ud83d\udd34 Change 2: Bucket versioning dropped\n\n**Verdict: Reject.**\n\n- Directly violates Criterion #1 (versioning enabled) for **both** dev and prod.\n- Also undermines prod's cross-region replication \u2014 S3 CRR **requires** versioning enabled on source and destination buckets. If the patch removal is real, replication will fail/drift.\n- No rationale in the diff for dropping it (perf/cost? Bucket versioning is cheap relative to the compliance requirement).\n\n## Suggested fix sketch\n\n```yaml\n# Bucket\nspec:\n  forProvider:\n    versioningConfiguration:\n      status: Enabled\n\n# RDS managed resource\nspec:\n  deletionPolicy: Orphan\n  forProvider:\n    deletionProtection: true\n    backupRetentionPeriod: 7\n    publiclyAccessible: false\n```\n\nIf the intent is \"clean teardown in dev,\" do it via per-env claim parameters, not a provider-wide composition default.\n\n**Questions for the author:**\n1. What prompted the provider-wide `Delete` \u2014 is there a teardown workflow depending on it?\n2. Was versioning dropped intentionally (cost?) or accidental cleanup of a patch?\n3. Was prod replication tested after this change?",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/crossplane/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

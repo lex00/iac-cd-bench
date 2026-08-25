@@ -1,0 +1,95 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 688,
+    "output": 2736
+  },
+  "content": "\n\n# Pulumi Preview JSON Security Review\n\nNo Pulumi preview JSON was provided in your request. Below is a complete review framework with concrete examples of what each of the three flagged issues looks like in `pulumi preview --json` output, so you can apply this directly when the JSON is available.\n\n---\n\n## 1. Secret in Plaintext Outputs\n\n### What to look for\n\nIn Pulumi's preview JSON, look at the `outputs` section and any `properties`/`inputs` that contain sensitive values (DB connection strings, passwords, API keys) **without** the `[secret]` marker.\n\n### Problematic Example\n\n```json\n{\n  \"version\": 3,\n  \"deployments\": {\n    \"organization/project/prod\": {\n      \"outputs\": {\n        \"dbConnectionString\": {\n          \"value\": \"postgresql://admin:SuperSecret123!@prod-db.xxxxx.us-east-1.rds.amazonaws.com:5432/appdb\",\n          \"secret\": false\n        }\n      },\n      \"resources\": [\n        {\n          \"urn\": \"urn:pulumi:prod::project::pulumi:config:config:index:app:dbConnectionString\",\n          \"custom\": false,\n          \"type\": \"pulumi:config:config:index:app:dbConnectionString\",\n          \"inputs\": {\n            \"value\": \"postgresql://admin:SuperSecret123!@prod-db.xxxxx.us-east-1.rds.amazonaws.com:5432/appdb\"\n          }\n        }\n      ]\n    }\n  }\n}\n```\n\n### Indicators\n\n| Signal | Meaning |\n|--------|---------|\n| `\"secret\": false` on a config value that looks like a credential | Configured with `pulumi config set` instead of `pulumi config set --secret` |\n| Plaintext password in a resource `inputs` block | Secret is being passed as a plain string rather than via a secret-typed input |\n| Output contains a connection string with embedded credentials | Output was not declared secret: `export const connStr = ...` instead of `export const connStr = new Output(..., { secret: true })` |\n\n### Correct Form\n\n```json\n{\n  \"outputs\": {\n    \"dbConnectionString\": {\n      \"value\": \"0f9d8a3c...\",\n      \"secret\": true\n    }\n  }\n}\n```\n\n### Checklist\n\n- [ ] `dbConnectionString` in outputs has `\"secret\": true`\n- [ ] No plaintext passwords appear in any resource `inputs`\n- [ ] RDS `masterPassword` is not echoed in preview (Pulumi masks it, but verify no *output* leaks it)\n- [ ] S3 bucket key / KMS key ARN is not exposed as a non-secret output\n\n---\n\n## 2. Replacement of Stateful Resource\n\n### What to look for\n\nIn the preview JSON, look for resources with `\"replace\": true` or a `replaceReason` field. A **stateful** resource being replaced (RDS instance, EFS volume, K8s stateful workload) means **data loss** on apply.\n\n### Problematic Example\n\n```json\n{\n  \"deployments\": {\n    \"organization/project/prod\": {\n      \"resources\": [\n        {\n          \"urn\": \"urn:pulumi:prod::project::aws:rds/instance:Instance:app-db\",\n          \"custom\": true,\n          \"type\": \"aws:rds/instance:Instance\",\n          \"replace\": true,\n          \"replaceReason\": \"changing property 'instanceType' would require replacement\",\n          \"oldInputs\": {\n            \"instanceType\": \"db.t3.micro\"\n          },\n          \"inputs\": {\n            \"instanceType\": \"db.t3.medium\",\n            \"allocatedStorage\": 100,\n            \"dbName\": \"appdb\"\n          }\n        }\n      ]\n    }\n  }\n}\n```\n\n### Indicators\n\n| Signal | Meaning |\n|--------|---------|\n| `\"replace\": true` on an `aws:rds/instance` | The RDS instance will be destroyed and recreated \u2014 **all data lost** |\n| `\"replace\": true` on `aws:eks/cluster` | EKS control plane replacement \u2014 node data on EBS may survive but the cluster identity changes |\n| `replaceReason` mentions `instanceType`, `availabilityZone`, `storageEncrypted`, or `dbName` | These are non-updatable attributes on RDS |\n| `\"replace\": true` on `aws:s3/bucket` with `bucket` name change | Bucket destroyed, objects lost |\n\n### Common Triggers in This Scenario\n\n```typescript\n// PROD: dev \u2192 prod migration or instance resize\n// If you change instanceType from db.t3.micro \u2192 db.t3.medium on an EXISTING instance,\n// Pulumi will plan a replacement because instanceType is not in-place updatable\n// for all transition paths (e.g., across generations).\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceType: config.get(\"instanceType\"), // changing this triggers replace\n    // ...\n});\n```\n\n### Correct Form\n\n```json\n{\n  \"urn\": \"urn:pulumi:prod::project::aws:rds/instance:Instance:app-db\",\n  \"custom\": true,\n  \"type\": \"aws:rds/instance:Instance\",\n  \"replace\": false,\n  \"inputs\": {\n    \"instanceType\": \"db.t3.medium\",\n    \"allocatedStorage\": 100\n  }\n}\n```\n\nOr if replacement is intentional (e.g., enabling `storageEncrypted`), ensure:\n- A snapshot is taken first\n- The `dependsOn` chain includes the snapshot\n- The `lifecycle`/`protect` flags are set appropriately\n\n### Checklist\n\n- [ ] No `\"replace\": true` on `aws:rds/instance`\n- [ ] No `\"replace\": true` on `aws:rds/cluster` (Aurora)\n- [ ] No `\"replace\": true` on `aws:eks/cluster`\n- [ ] No `\"replace\": true` on `aws:s3/bucket` (bucket name change)\n- [ ] If replacement is expected (e.g., initial deploy), confirm `oldInputs` is empty\n\n---\n\n## 3. Missing Protect Flag\n\n### What to look for\n\nResources that **should** be protected (prod RDS, prod EKS, prod S3) but are missing `protect: true`. In preview JSON, this means the resource has no `\"protect\": true` in its inputs/properties, and a subsequent `pulumi destroy` or `pulumi refresh` drift could delete it.\n\n### Problematic Example\n\n```json\n{\n  \"deployments\": {\n    \"organization/project/prod\": {\n      \"resources\": [\n        {\n          \"urn\": \"urn:pulumi:prod::project::aws:rds/instance:Instance:app-db\",\n          \"custom\": true,\n          \"type\": \"aws:rds/instance:Instance\",\n          \"inputs\": {\n            \"instanceType\": \"db.t3.medium\",\n            \"allocatedStorage\": 100,\n            \"multiAz\": true,\n            \"storageEncrypted\": true,\n            \"deletionProtection\": true\n          },\n          \"protect\": false\n        },\n        {\n          \"urn\": \"urn:pulumi:prod::project::aws:eks/cluster:Cluster:app-cluster\",\n          \"custom\": true,\n          \"type\": \"aws:eks/cluster:Cluster\",\n          \"inputs\": {\n            \"roleArn\": \"arn:aws:iam::123456789012:role/eks-service-role\",\n            \"vpcConfig\": { \"subnetIds\": [\"subnet-xxx\"] }\n          },\n          \"protect\": false\n        }\n      ]\n    }\n  }\n}\n```\n\n### Indicators\n\n| Resource Type | Should Be Protected? | Why |\n|---|---|---|\n| `aws:rds/instance` (prod) | \u2705 Yes | Contains production data |\n| `aws:rds/cluster` (prod) | \u2705 Yes | Contains production data |\n| `aws:eks/cluster` (prod) | \u2705 Yes | Contains workloads; deletion is destructive |\n| `aws:s3/bucket` (prod, assets) | \u2705 Yes | Contains application assets |\n| `aws:rds/instance` (dev) | \u26a0\ufe0f Optional | Lower risk, but still good practice |\n| IAM roles/users | \u274c No | Protecting IAM can lock you out of deletion |\n| ALB / Listener | \u274c No | Ephemeral, safe to destroy |\n\n### Correct Form\n\n```json\n{\n  \"urn\": \"urn:pulumi:prod::project::aws:rds/instance:Instance:app-db\",\n  \"custom\": true,\n  \"type\": \"aws:rds/instance:Instance\",\n  \"inputs\": {\n    \"instanceType\": \"db.t3.medium\",\n    \"allocatedStorage\": 100,\n    \"multiAz\": true,\n    \"storageEncrypted\": true,\n    \"deletionProtection\": true\n  },\n  \"protect\": true\n}\n```\n\n### How It's Set in Code\n\n```typescript\n// Idiom: protect based on stack name\nconst isProd = pulumi.runtime.stack === \"prod\";\n\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceType: config.get(\"instanceType\")!,\n    allocatedStorage: config.getNumber(\"allocatedStorage\")!,\n    multiAz: isProd,\n    storageEncrypted: isProd,\n    deletionProtection: isProd,\n    // ...\n}, {\n    protect: isProd,  // \u2190 this is what's missing\n});\n```\n\n### Checklist\n\n- [ ] `aws:rds/instance` in prod has `\"protect\": true`\n- [ ] `aws:eks/cluster` in prod has `\"protect\": true`\n- [ ] `aws:s3/bucket` in prod has `\"protect\": true`\n- [ ] `aws:rds/cluster` (if Aurora) in prod has `\"protect\": true`\n- [ ] Dev resources may be unprotected (acceptable) but should be noted\n\n---\n\n## Summary Review Matrix\n\n| # | Issue | Severity | What to grep in JSON |\n|---|-------|----------|---------------------|\n| 1 | Secret in plaintext | \ud83d\udd34 Critical | `\"secret\": false` near credential-like values; raw connection strings in `outputs` |\n| 2 | Stateful resource replacement | \ud83d\udd34 Critical | `\"replace\": true` on RDS/EKS/S3 resources |\n| 3 | Missing protect flag | \ud83d\udfe1 High | Prod stateful resources without `\"protect\": true` |\n\n---\n\n**If you paste the actual `pulumi preview --json` output, I can run this review against it and give you a line-by-line verdict.**",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_3.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_4.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_5.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9lki6jst/generated_1.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-typescript/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

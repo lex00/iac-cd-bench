@@ -1,0 +1,86 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 685,
+    "output": 8192
+  },
+  "content": "\n\nHere is a production-ready Crossplane XRD and Composition using the `function-patch-and-transform` renderer. It satisfies all acceptance criteria while adhering to Crossplane idioms.\n\n### 1. XRD: `spineinfras.infra.example.com`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: spineinfras.infra.example.com\nspec:\n  group: infra.example.com\n  versions:\n  - name: v1alpha1\n    served: true\n    referenceable: true\n    schema:\n      openAPIV3Schema:\n        type: object\n        properties:\n          spec:\n            type: object\n            required:\n            - forProvider\n            - parameters\n            - writeConnectionSecretToRef\n            properties:\n              forProvider:\n                type: object\n                properties:\n                  region:\n                    type: string\n                    description: AWS region for all provisioned resources\n                required:\n                - region\n              parameters:\n                type: object\n                properties:\n                  environment:\n                    type: string\n                    enum: [dev, prod]\n                    description: Target environment for tagging and sizing\n                  bucketName:\n                    type: string\n                    description: Unique S3 bucket name\n                  rdsInstanceClass:\n                    type: string\n                    description: RDS instance class (e.g., db.t3.micro, db.t3.medium)\n                  rdsMultiAZ:\n                    type: boolean\n                    description: Enable multi-AZ deployment\n                  iamRoleName:\n                    type: string\n                    description: IAM role name for EKS workloads\n                  oidcIssuerUrl:\n                    type: string\n                    description: EKS OIDC provider URL for trust policy\n                  serviceAccountName:\n                    type: string\n                    description: Kubernetes service account name\n                required:\n                - environment\n                - bucketName\n                - rdsInstanceClass\n                - rdsMultiAZ\n                - iamRoleName\n              writeConnectionSecretToRef:\n                type: object\n                properties:\n                  name:\n                    type: string\n                  namespace:\n                    type: string\n                required:\n                - name\n                - namespace\n```\n\n### 2. Composition: `aws-spine-infra` (function-patch-and-transform)\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-spine-infra\n  annotations:\n    crossplane.io/composition-function-renderer: \"pipeline\"\ncompositeResourceRef:\n  apiVersion: infra.example.com/v1alpha1\n  kind: SpineInfra\nfunctions:\n- name: xpkg.upbound.io/crossplane-contrib/function-patch-and-transform\n  inline: false\n\nresources:\n# 1. S3 Bucket: Versioned, AES-256 encrypted, zero public access\n- name: s3-application-assets\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: Bucket\n    metadata: {}\n    spec:\n      forProvider:\n        bucket: {}\n        region: {}\n        versioningConfiguration:\n          enabled: true\n        serverSideEncryptionConfiguration:\n          rules:\n          - applyServerSideEncryptionByDefault:\n              SSEAlgorithm: AES256\n        publicAccessBlock:\n          blockPublicAcls: true\n          blockPublicPolicy: true\n          ignorePublicAcls: true\n          restrictPublicBuckets: true\n  patches:\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.parameters.bucketName\n    toFieldPath: spec.forProvider.bucket\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.forProvider.region\n    toFieldPath: spec.forProvider.region\n  - type: Patch\n    fromFieldPath: spec.parameters.environment\n    toFieldPath: metadata.labels.environment\n\n# 2. RDS PostgreSQL: Deletion protected, 7-day backup, non-public, encrypted\n- name: rds-postgres-instance\n  base:\n    apiVersion: database.aws.upbound.io/v1beta1\n    kind: Instance\n    metadata: {}\n    spec:\n      forProvider:\n        engine: postgres\n        engineVersion: \"16.3\"\n        instanceClass: {}\n        allocatedStorage: 20\n        multiAZ: {}\n        deletionProtection: true\n        backupRetentionPeriod: 7\n        publiclyAccessible: false\n        storageEncrypted: true\n        skipFinalSnapshot: true\n        skipResourceExport: true\n        region: {}\n      writeConnectionSecretToRef: {}\n  patches:\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.parameters.rdsInstanceClass\n    toFieldPath: spec.forProvider.instanceClass\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.parameters.r",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-x84_cjhr/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/crossplane/warm/T2-generate_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

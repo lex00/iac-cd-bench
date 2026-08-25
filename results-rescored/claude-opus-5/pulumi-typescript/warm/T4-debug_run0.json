@@ -1,0 +1,99 @@
+{
+  "model": "claude-opus-5",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/config.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/generated_2.ts(1,18): error TS1375: 'await' expressions are only allowed at the top level of a file when that file is a module, but this file has no imports or exports. Consider adding an e"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "rinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index FAILED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: Should not mix async functions with pulumi.output() wrapping\n    assert ('async function' not in 'import * as....endpoint;\\n'\n      \n      'async function' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n        // Defect 1: async function used without .apply() \u2014 crashes at preview time...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show or 'pulumi.output' not in 'import * as....endpoint;\\n'\n      \n      'pulumi.output' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n      ?                                                           +++++++++++++...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show)\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py:9: AssertionError: Should not mix async functions with pulumi.output() wrapping\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1795,
+    "output": 16384
+  },
+  "content": "# Fix: async misuse + wrong `pulumi.output()` wrapping\n\n## 1. Root cause \u2014 why `tsc` passes but `preview` dies\n\nBoth defects are **type-legal but semantically wrong**. TypeScript can't catch them because `Output<T>` and `Promise<T>` are structurally different but both flow into `Input<T>`.\n\n### Defect 1 \u2014 `await` on an `Output<T>`\n\n```ts\nconst resolved = await arn;                    // \u2190 arn is Output<string>, NOT a Promise\nreturn `https://s3.${region}.amazonaws.com/${resolved}`;\n```\n\n`pulumi.Output<T>` **does not implement `then()`** \u2014 it is not a thenable. So:\n\n1. `await arn` returns **the `Output` object itself**, not the string.\n2. `${resolved}` invokes `Output.toString()`, which the SDK deliberately traps:\n   `Calling [toString] on an [Output<T>] is not supported. To get the value ... consider .apply(v => ...) or pulumi.interpolate`. Depending on SDK version this logs an error *or* throws.\n3. `getBucketUrl(...)` is a floating async call \u2014 nobody awaits it, nobody catches it. When it rejects, Node emits an **unhandled rejection**, the language host process exits non-zero, and the CLI reports `error: preview failed` with no diff.\n4. Even if it \"worked\", `bucket.arn` is **unknown during preview** (the bucket doesn't exist yet). Eagerly resolving it can only ever produce `undefined`.\n5. `export const bucketEndpoint = <Promise>` also silently drops the resource dependency edge \u2014 the engine can't order anything against it.\n\n### Defect 2 \u2014 `pulumi.output()` on a literal\n\n```ts\nconst dbPassword = pulumi.output(\"plain-text-password\");\n```\n\n`pulumi.output(x)` on a non-Output is a **no-op wrapper**. It does three bad things:\n\n- It adds nothing (`Input<string>` already accepts `string`), so it's pure noise.\n- It **is not marked secret** \u2192 the plaintext password lands in the checkpoint (`Pulumi.<stack>.json`), in `pulumi preview` diffs, and in `pulumi stack export`.\n- The literal is in Git, violating acceptance criterion 3.\n\n`pulumi.output()` is for **lifting a `Promise<T>` into `Output<T>`** \u2014 `pulumi.output(somePromise)`. That's it.\n\n---\n\n## 2. The rules\n\n| \u274c Anti-pattern | \u2705 Correct |\n|---|---|\n| `await someOutput` | `someOutput.apply(v => \u2026)` |\n| `await a; await b;` | `pulumi.all([a, b]).apply(([a, b]) => \u2026)` |\n| `` `text ${output}` `` | ``pulumi.interpolate`text ${output}` `` |\n| `async function makeInfra()` at top level | plain function returning `Output<T>` |\n| `const x = await aws.getFoo({...})` | `aws.getFooOutput({...})` (Output-returning variant) |\n| `pulumi.output(\"literal\")` | pass the literal directly |\n| secrets as literals | `config.requireSecret(\"k\")` \u2192 already `Output<string>`, already secret |\n| `.split()`, `.length`, `JSON.stringify` on an Output | do it **inside** `.apply()` |\n| side effects inside `.apply()` | never \u2014 the callback is skipped on unknown (preview) values |\n\n`await` **is** legal in exactly one place: inside an `apply` callback (`o.apply(async v => await aws.getBar({ id: v }))`). Secretness propagates automatically through `apply` / `interpolate` / `all`.\n\n---\n\n## 3. Minimal diff on the defective lines\n\n```diff\n-async function getBucketUrl(arn: pulumi.Output<string>) {\n-    const resolved = await arn;\n-    return `https://s3.${region}.amazonaws.com/${resolved}`;\n-}\n-const bucketUrl = getBucketUrl(bucket.arn);\n+// No async, no await, no Promise. Output<string> in, Output<string> out \u2014\n+// dependency edges preserved, unknown-safe at preview.\n+const bucketUrl = pulumi.interpolate`https://${bucket.bucketRegionalDomainName}`;\n\n-const dbPassword = pulumi.output(\"plain-text-password\");\n+// Already Output<string> and already flagged secret \u2192 encrypted in state,\n+// masked in CLI, ciphertext-only in Git.\n+const dbPassword = config.requireSecret(\"dbPassword\");\n\n-export const bucketEndpoint = bucketUrl;  // a Promise\n+export const bucketEndpoint = bucketUrl;  // now an Output<string>\n```\n\nThe rest of this answer is the seed grown into the full canonical scenario, with those two patterns applied correctly throughout.\n\n---\n\n## 4. Project layout\n\n```\n.\n\u251c\u2500\u2500 Pulumi.yaml\n\u251c\u2500\u2500 Pulumi.dev.yaml          # ciphertext only\n\u251c\u2500\u2500 Pulumi.prod.yaml         # ciphertext only\n\u251c\u2500\u2500 index.ts\n\u251c\u2500\u2500 config.ts\n\u251c\u2500\u2500 network.ts\n\u251c\u2500\u2500 storage.ts\n\u251c\u2500\u2500 database.ts\n\u251c\u2500\u2500 cluster.ts\n\u251c\u2500\u2500 identity.ts\n\u2514\u2500\u2500 https.ts\n```\n\n### `Pulumi.yaml`\n\n```yaml\nname: canonical-webapp\nruntime:\n  name: nodejs\n  options:\n    typescript: true\ndescription: Stateless web app spine \u2014 EKS + S3 + RDS + IAM + HTTPS\n\nconfig:\n  env:\n    type: string\n    description: Environment name (dev | prod)\n  domainName:\n    type: string\n  hostedZoneId:\n    type: string\n```\n\n### `Pulumi.dev.yaml`\n\n```yaml\nconfig:\n  aws:region: us-east-1\n  canonical-webapp:env: dev\n  canonical-webapp:domainName: app-dev.internal.example.com\n  canonical-webapp:hostedZoneId: Z0123456789ABCDEFGHIJ\n  canonical-webapp:dbPassword:\n    secure: AAABAK7f3rL9mQ2v...   # `pulumi config set --secret dbPassword`\n```\n\n### `Pulumi.prod.yaml`\n\n```yaml\nconfig:\n  aws:region: us-east-1\n  canonical-webapp:env: prod\n  canonical-webapp:domainName: app.example.com\n  canonical-webapp:hostedZoneId: Z9876543210ZYXWVUTSR\n  canonical-webapp:dbPassword:\n    secure: AAABAJ2pQ8xR4tN6...   # different stack \u21d2 different DEK \u21d2 different ciphertext\n```\n\n> Two stacks, two config files, two state files. `pulumi up --stack prod` cannot touch dev state (AC 7).\n\n---\n\n## 5. `config.ts` \u2014 typed env spec, no async\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\n\nexport type EnvName = \"dev\" | \"prod\";\n\nexport interface EnvSpec {\n    name: EnvName;\n    isProd: boolean;\n    /** EKS */\n    nodeCount: number;\n    nodeInstanceType: string;\n    /** RDS */\n    dbInstanceClass: string;\n    dbMultiAz: boolean;\n    backupRetentionDays: number;\n    /** S3 */\n    replicaRegion?: string;\n}\n\nconst cfg = new pulumi.Config();\n\nconst envName = cfg.require(\"env\") as EnvName;\nif (envName !== \"dev\" && envName !== \"prod\") {\n    throw new Error(`config 'env' must be \"dev\" or \"prod\", got \"${envName}\"`);\n}\n\nexport const spec: EnvSpec = envName === \"prod\"\n    ? {\n        name: \"prod\",\n        isProd: true,\n        nodeCount: 4,\n        nodeInstanceType: \"t3.large\",\n        dbInstanceClass: \"db.t3.medium\",\n        dbMultiAz: true,\n        backupRetentionDays: 30,\n        replicaRegion: \"us-west-2\",\n    }\n    : {\n        name: \"dev\",\n        isProd: false,\n        nodeCount: 2,\n        nodeInstanceType: \"t3.medium\",\n        dbInstanceClass: \"db.t3.micro\",\n        dbMultiAz: false,\n        backupRetentionDays: 7,\n    };\n\nexport const domainName = cfg.require(\"domainName\");\nexport const hostedZoneId = cfg.require(\"hostedZoneId\");\n\n/**\n * Output<string>, already flagged secret by the SDK.\n * NOT pulumi.output(\"literal\") \u2014 that would be a plaintext no-op wrapper.\n */\nexport const dbPassword: pulumi.Output<string> = cfg.requireSecret(\"dbPassword\");\n\nexport const baseTags = {\n    Environment: spec.name,\n    Project: \"myapp\",\n    ManagedBy: \"pulumi\",\n    Stack: pulumi.getStack(),\n};\n```\n\n---\n\n## 6. `network.ts`\n\n```ts\nimport * as awsx from \"@pulumi/awsx\";\nimport { spec, baseTags } from \"./config\";\n\nexport const vpc = new awsx.ec2.Vpc(`myapp-${spec.name}`, {\n    cidrBlock: spec.isProd ? \"10.20.0.0/16\" : \"10.10.0.0/16\",\n    numberOfAvailabilityZones: spec.isProd ? 3 : 2,\n    natGateways: { strategy: spec.isProd ? \"OnePerAz\" : \"Single\" },\n    subnetSpecs: [\n        { type: awsx.ec2.SubnetType.Public,  cidrMask: 20 },\n        { type: awsx.ec2.SubnetType.Private, cidrMask: 18 },\n        { type: awsx.ec2.SubnetType.Isolated, cidrMask: 24, name: \"db\" },\n    ],\n    tags: baseTags,\n});\n```\n\n---\n\n## 7. `storage.ts` \u2014 AC 1 + prod CRR\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\nimport { spec, baseTags } from \"./config\";\n\nconst name = `myapp-assets-${spec.name}`;\n\nexport const bucket = new aws.s3.BucketV2(\"app-assets\", {\n    bucket: name,\n    tags: baseTags,\n}, { protect: spec.isProd });\n\nconst versioning = new aws.s3.BucketVersioningV2(\"app-assets-versioning\", {\n    bucket: bucket.id,\n    versioningConfiguration: { status: \"Enabled\" },              // AC 1\n});\n\nnew aws.s3.BucketServerSideEncryptionConfigurationV2(\"app-assets-sse\", {\n    bucket: bucket.id,\n    rules: [{\n        applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" }, // AC 1\n        bucketKeyEnabled: true,\n    }],\n});\n\nnew aws.s3.BucketPublicAccessBlock(\"app-assets-pab\", {                  // AC 1\n    bucket: bucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n});\n\nnew aws.s3.BucketOwnershipControls(\"app-assets-owner\", {\n    bucket: bucket.id,\n    rule: { objectOwnership: \"BucketOwnerEnforced\" },\n});\n\n/* ---------- prod only: cross-region replication to us-west-2 ---------- */\n\nlet replicaBucket: aws.s3.BucketV2 | undefined;\n\nif (spec.isProd && spec.replicaRegion) {\n    const replicaProvider = new aws.Provider(\"replica\", { region: spec.replicaRegion });\n    const opts = { provider: replicaProvider };\n\n    replicaBucket = new aws.s3.BucketV2(\"app-assets-replica\", {\n        bucket: `${name}-replica`,\n        tags: { ...baseTags, Role: \"replica\" },\n    }, { ...opts, protect: true });\n\n    const replicaVersioning = new aws.s3.BucketVersioningV2(\"app-assets-replica-versioning\", {\n        bucket: replicaBucket.id,\n        versioningConfiguration: { status: \"Enabled\" },\n    }, opts);\n\n    new aws.s3.BucketServerSideEncryptionConfigurationV2(\"app-assets-replica-sse\", {\n        bucket: replicaBucket.id,\n        rules: [{ applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" } }],\n    }, opts);\n\n    new aws.s3.BucketPublicAccessBlock(\"app-assets-replica-pab\", {\n        bucket: replicaBucket.id,\n        blockPublicAcls: true, blockPublicPolicy: true,\n        ignorePublicAcls: true, restrictPublicBuckets: true,\n    }, opts);\n\n    const replicationRole = new aws.iam.Role(\"s3-replication\", {\n        assumeRolePolicy: JSON.stringify({\n            Version: \"2012-10-17\",",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/Pulumi.<stack>.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/Pulumi.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/config.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/network.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/generated_2.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-k6fu8xe1/generated_3.ts"
+  ],
+  "regraded_semantic": true,
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.5,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.4444444444444444
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/pulumi-typescript/warm/T4-debug_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 0.5,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.5,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.4444444444444444
+    },
+    "corrected_composite_no_idiom": 0.5,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

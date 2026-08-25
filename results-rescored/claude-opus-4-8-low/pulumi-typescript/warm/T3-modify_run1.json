@@ -1,0 +1,91 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T3-modify",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ist7dqsb/generated_0.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ist7dqsb/generated_0.ts(3,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1057,
+    "output": 3123
+  },
+  "content": "# Migrating Flat Pulumi Program to ComponentResource with Aliases\n\n## The Core Problem\n\nWhen you move a resource under a `ComponentResource`, its **URN changes** because the URN encodes the parent hierarchy and type. Pulumi identifies resources by URN, so a changed URN looks like *\"delete old resource, create new one\"* \u2192 **replacement**.\n\n`aliases` tell Pulumi *\"this new URN is the same resource as that old URN\"* so state is re-linked instead of replaced.\n\n---\n\n## Before: Flat Program\n\n```typescript\n// index.ts (flat)\nimport * as aws from \"@pulumi/aws\";\nimport * as pulumi from \"@pulumi/pulumi\";\n\nconst config = new pulumi.Config();\nconst env = pulumi.getStack(); // \"dev\" or \"prod\"\n\nconst bucket = new aws.s3.BucketV2(\"app-assets\", {\n    bucket: `app-assets-${env}`,\n});\n\nconst versioning = new aws.s3.BucketVersioningV2(\"app-assets-versioning\", {\n    bucket: bucket.id,\n    versioningConfiguration: { status: \"Enabled\" },\n});\n\nconst sse = new aws.s3.BucketServerSideEncryptionConfigurationV2(\"app-assets-sse\", {\n    bucket: bucket.id,\n    rules: [{ applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" } }],\n});\n\nconst pab = new aws.s3.BucketPublicAccessBlock(\"app-assets-pab\", {\n    bucket: bucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n});\n```\n\nAt the root, these resources have URNs like:\n\n```\nurn:pulumi:dev::proj::aws:s3/bucketV2:BucketV2::app-assets\n```\n\n---\n\n## After: ComponentResource\n\n```typescript\n// components/AppBucket.ts\nimport * as aws from \"@pulumi/aws\";\nimport * as pulumi from \"@pulumi/pulumi\";\n\nexport interface AppBucketArgs {\n    env: string;\n    replicationRegion?: string; // prod: \"us-west-2\"\n}\n\nexport class AppBucket extends pulumi.ComponentResource {\n    public readonly bucket: aws.s3.BucketV2;\n\n    constructor(name: string, args: AppBucketArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"myorg:storage:AppBucket\", name, {}, opts);\n\n        // Now that parent = this component, each child's URN changes.\n        // Alias each child back to its OLD (root-parented) URN.\n\n        this.bucket = new aws.s3.BucketV2(`${name}`, {\n            bucket: `app-assets-${args.env}`,\n        }, {\n            parent: this,\n            // OLD urn had no parent (root). Alias by NAME with no parent.\n            aliases: [{ name: \"app-assets\", parent: pulumi.rootStackResource }],\n        });\n\n        new aws.s3.BucketVersioningV2(`${name}-versioning`, {\n            bucket: this.bucket.id,\n            versioningConfiguration: { status: \"Enabled\" },\n        }, {\n            parent: this,\n            aliases: [{ name: \"app-assets-versioning\", parent: pulumi.rootStackResource }],\n        });\n\n        new aws.s3.BucketServerSideEncryptionConfigurationV2(`${name}-sse`, {\n            bucket: this.bucket.id,\n            rules: [{ applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" } }],\n        }, {\n            parent: this,\n            aliases: [{ name: \"app-assets-sse\", parent: pulumi.rootStackResource }],\n        });\n\n        new aws.s3.BucketPublicAccessBlock(`${name}-pab`, {\n            bucket: this.bucket.id,\n            blockPublicAcls: true,\n            blockPublicPolicy: true,\n            ignorePublicAcls: true,\n            restrictPublicBuckets: true,\n        }, {\n            parent: this,\n            aliases: [{ name: \"app-assets-pab\", parent: pulumi.rootStackResource }],\n        });\n\n        this.registerOutputs({ bucketArn: this.bucket.arn });\n    }\n}\n```\n\n```typescript\n// index.ts (new)\nimport * as pulumi from \"@pulumi/pulumi\";\nimport { AppBucket } from \"./components/AppBucket\";\n\nconst env = pulumi.getStack();\nconst cfg = new pulumi.Config();\n\n// NOTE: the component's logical name must match what the aliases reference.\n// If children were named \"app-assets-*\", keeping name=\"app-assets\" makes\n// child names \"app-assets-versioning\" etc. \u2192 matches old flat names.\nconst appBucket = new AppBucket(\"app-assets\", {\n    env,\n    replicationRegion: env === \"prod\" ? \"us-west-2\" : undefined,\n});\n\nexport const bucketArn = appBucket.bucket.arn;\n```\n\n---\n\n## Key Rules for Alias-Based Migration\n\n### 1. Alias the change, not the identity\nThe alias describes the resource's **old address**. When wrapping in a component, the two things that changed are:\n- **parent** (was root/stack \u2192 now the component)\n- Sometimes the **type** (only if you renamed the class of resource \u2014 not the case here)\n\nSo alias `{ name: \"<old-name>\", parent: pulumi.rootStackResource }`.\n\n### 2. Keep child names identical\nThe safest migration keeps the resource *name* strings the same. If the old resource was `\"app-assets-versioning\"`, name the new child so it resolves to the same string. Using template `${name}-versioning` with component name `\"app-assets\"` reproduces `\"app-assets-versioning\"`.\n\n### 3. The component itself needs no alias\nThe `ComponentResource` is new state (it has no physical cloud resource), so it's fine for it to appear as an addition. Only the **leaf cloud resources** need aliases.\n\n### 4. `parent: pulumi.rootStackResource`\nThis is the modern way to reference the implicit root/stack parent that flat resources had. On older SDKs use the stack's URN directly, or `aliases: [{ name: \"old-name\" }]` with `parent` omitted \u2014 but being explicit avoids ambiguity.\n\n---\n\n## Verification Workflow\n\n```bash\n# 1. Preview BEFORE applying \u2014 this is the critical safety gate\npulumi preview --diff\n\n# Expect to see:\n#   + myorg:storage:AppBucket  app-assets   create   (the component wrapper - fine)\n#   ~ aws:s3/bucketV2:BucketV2 app-assets   (no changes / update-in-place)\n#\n# You must NOT see:\n#   +- aws:s3/bucketV2:BucketV2 app-assets   replace\n#   -  aws:s3/bucketV2:BucketV2 app-assets   delete\n\n# 2. If any resource shows \"replace\" or \"delete\", STOP.\n#    An alias is wrong. Check name/parent match.\n\n# 3. Apply per environment independently (isolation criterion #7)\npulumi stack select dev  && pulumi up\npulumi stack select prod && pulumi up\n```\n\nIf preview shows `replace` on the RDS or bucket, that would violate acceptance criteria (data loss + deletion protection). The whole point of aliases is to reduce that diff to a no-op re-parenting.\n\n---\n\n## Applying the Pattern to the Full Spine\n\nWrap each logical unit in its own component, aliasing every leaf:\n\n| Component | Wraps | Alias each leaf \u2192 root parent |\n|---|---|---|\n| `AppBucket` | BucketV2, Versioning, SSE, PAB, (prod) Replication | \u2705 |\n| `Database` | rds.Instance, SubnetGroup, SecurityGroup | \u2705 |\n| `Cluster` | eks.Cluster, ManagedNodeGroup | \u2705 |\n| `ServiceAccount` | iam.User/Role, Policy, OIDC provider | \u2705 |\n| `HttpsFrontend` | CloudFront, ACM cert, listener | \u2705 |\n\nEnvironment differences stay in `Pulumi.dev.yaml` / `Pulumi.prod.yaml` and are read via `pulumi.Config` \u2014 the component signatures take an `env`/sizing arg, preserving stack-config-based isolation.\n\n---\n\n## Once Migration Is Confirmed\n\nAfter a successful `pulumi up` where state is re-linked, the aliases have done their job \u2014 state URNs are now the component URNs. You *can* remove the alias arrays in a later cleanup commit. Keep them for at least one release cycle in case of rollback, then delete.\n\nWant me to expand the same alias treatment for the RDS `Database` component (where a replacement would be genuinely destructive)?",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ist7dqsb/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ist7dqsb/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ist7dqsb/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-ist7dqsb/generated_2.ts"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T3-modify_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

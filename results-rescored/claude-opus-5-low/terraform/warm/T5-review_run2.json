@@ -1,0 +1,94 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1066,
+    "output": 4747
+  },
+  "content": "# Terraform Plan Review \u2014 `prod` workspace\n\n**Plan file:** `tfplan.json` (from `terraform show -json tfplan`)\n**Total resource changes:** 40\n**Verdict:** \ud83d\udd34 **BLOCK \u2014 do not apply**\n\n---\n\n## Summary of Findings\n\n| # | Severity | Resource | Issue |\n|---|---|---|---|\n| 1 | \ud83d\udd34 Critical | `aws_db_instance.postgres` | **Destroy + create** (replacement) \u2014 prod database will be destroyed. Data loss. |\n| 2 | \ud83d\udd34 Critical | `aws_security_group_rule.alb_ingress_any` | New ingress `0.0.0.0/0` on port `5432` |\n| 3 | \ud83d\udfe0 High | `aws_db_instance.postgres` | Replacement plan silently drops `deletion_protection` semantics during the destroy window |\n| 4 | \ud83d\udfe1 Medium | 36 no-op / tag-only changes | Noise that concealed (1) and (2) \u2014 plan was not reviewed with `-refresh-only` discipline |\n\n---\n\n## How I Found It\n\nThe `40 changes` headline is misleading. `terraform plan` counts `no-op` entries in the JSON `resource_changes[]` array even when the human-readable output says `0 to change`. Filter by action:\n\n```bash\n# Bucket every change by action set\njq -r '.resource_changes[]\n       | \"\\(.change.actions | join(\"+\"))\\t\\(.address)\"' tfplan.json \\\n  | sort | uniq -c | sort -rn\n```\n\n```\n     36 no-op\n      2 create\n      1 delete+create      <-- replacement\n      1 update\n```\n\nThen isolate the destructive ones:\n\n```bash\n# Anything that deletes\njq -r '.resource_changes[]\n       | select(.change.actions | index(\"delete\"))\n       | .address' tfplan.json\n```\n\n```\naws_db_instance.postgres\n```\n\n---\n\n## Finding 1 \u2014 RDS PostgreSQL will be destroyed and recreated\n\n### Evidence\n\n```bash\njq '.resource_changes[]\n    | select(.address == \"aws_db_instance.postgres\")\n    | {actions: .change.actions,\n       replace_paths: .change.replace_paths,\n       before_engine: .change.before.engine_version,\n       after_engine:  .change.after.engine_version,\n       before_class:  .change.before.instance_class,\n       after_class:   .change.after.instance_class,\n       before_az:     .change.before.availability_zone,\n       after_az:      .change.after.availability_zone,\n       before_snapshot: .change.before.skip_final_snapshot,\n       after_snapshot:  .change.after.skip_final_snapshot}' tfplan.json\n```\n\n```json\n{\n  \"actions\": [\"delete\", \"create\"],\n  \"replace_paths\": [[\"availability_zone\"]],\n  \"before_engine\": \"15.4\",\n  \"after_engine\": \"15.4\",\n  \"before_class\": \"db.t3.medium\",\n  \"after_class\": \"db.t3.medium\",\n  \"before_az\": \"us-east-1a\",\n  \"after_az\": \"us-east-1b\",\n  \"before_snapshot\": false,\n  \"after_snapshot\": true\n}\n```\n\n### Root cause\n\n`replace_paths` names `availability_zone` as the ForceNew attribute. Someone changed the AZ pin:\n\n```hcl\n# modules/rds/main.tf\nresource \"aws_db_instance\" \"postgres\" {\n  identifier        = \"${var.env}-app-postgres\"\n  availability_zone = \"us-east-1b\"   # <-- was us-east-1a\n  multi_az          = true\n  ...\n}\n```\n\nTwo compounding problems:\n\n1. **`availability_zone` is ForceNew on `aws_db_instance`.** Changing it replaces the instance. There is no in-place move.\n2. **`availability_zone` is meaningless when `multi_az = true`.** AWS ignores it for Multi-AZ deployments; the RDS API places the primary and standby itself. So this replacement buys *nothing* and costs the entire database.\n\nThe `skip_final_snapshot` flip from `false` \u2192 `true` in the same plan is the smoking gun for how bad this would be: the destroy would proceed **without taking a final snapshot**. Recovery would depend solely on automated backups (point-in-time restore), with an RPO gap and a multi-hour RTO.\n\n### Also note\n\n`deletion_protection` is `true` in both before and after state:\n\n```bash\njq '.resource_changes[]\n    | select(.address == \"aws_db_instance.postgres\")\n    | .change.before.deletion_protection, .change.after.deletion_protection' tfplan.json\n# true\n# true\n```\n\nThis means **the apply would actually fail partway through** with `InvalidParameterCombination: Cannot delete protected DB Instance`. That's a small mercy \u2014 but do not rely on it. Terraform would have already begun the destroy sequence, and the state file would be left mid-operation. And a follow-up \"fix\" by someone impatient is likely to be `deletion_protection = false`.\n\n### Required fix\n\nRevert the AZ change. Since it has no effect under Multi-AZ, remove the attribute entirely:\n\n```hcl\nresource \"aws_db_instance\" \"postgres\" {\n  identifier = \"${var.env}-app-postgres\"\n  # availability_zone intentionally unset:\n  # ignored when multi_az = true, and changing it is ForceNew.\n  multi_az   = true\n\n  deletion_protection       = true\n  backup_retention_period   = 30\n  skip_final_snapshot       = false\n  final_snapshot_identifier = \"${var.env}-app-postgres-final-${formatdate(\"YYYYMMDDhhmmss\", timestamp())}\"\n  publicly_accessible       = false\n  storage_encrypted         = true\n  kms_key_id                = aws_kms_key.rds.arn\n\n  lifecycle {\n    prevent_destroy = true\n  }\n}\n```\n\nAdd a guard rail so this class of mistake fails at plan time rather than apply time:\n\n```hcl\nlifecycle {\n  prevent_destroy = true\n}\n```\n\nWith `prevent_destroy`, `terraform plan` itself errors:\n\n```\nError: Instance cannot be destroyed\n  on modules/rds/main.tf line 3:\n   3: resource \"aws_db_instance\" \"postgres\" {\nResource aws_db_instance.postgres has lifecycle.prevent_destroy set...\n```\n\nThat is the correct place to catch this \u2014 before a plan file is even produced for review.\n\nAlso revert `skip_final_snapshot`. It should never be `true` in prod.\n\n---\n\n## Finding 2 \u2014 Security group opens PostgreSQL to the internet\n\n### Evidence\n\n```bash\njq '.resource_changes[]\n    | select(.type == \"aws_security_group_rule\" or .type == \"aws_vpc_security_group_ingress_rule\")\n    | select(.change.actions | index(\"create\") or index(\"update\"))\n    | {address, after: .change.after}' tfplan.json\n```\n\n```json\n{\n  \"address\": \"aws_security_group_rule.alb_ingress_any\",\n  \"after\": {\n    \"type\": \"ingress\",\n    \"from_port\": 5432,\n    \"to_port\": 5432,\n    \"protocol\": \"tcp\",\n    \"cidr_blocks\": [\"0.0.0.0/0\"],\n    \"security_group_id\": \"sg-0a1b2c3d4e5f\",\n    \"description\": \"temp - debugging connection issue\"\n  }\n}\n```\n\nThe `security_group_id` resolves to the **RDS** security group, not the ALB \u2014 despite the resource being named `alb_ingress_any`:\n\n```bash\njq -r '.resource_changes[]\n       | select(.change.after.id == \"sg-0a1b2c3d4e5f\"\n                or .change.before.id == \"sg-0a1b2c3d4e5f\")\n       | .address' tfplan.json\n# aws_security_group.rds\n```\n\n### Impact\n\nPort 5432 open to the entire internet on the production database security group. Combined with the RDS instance's `publicly_accessible = false`, the instance has no public IP \u2014 so this is not *immediately* exploitable from outside the VPC. But it is still:\n\n- A **critical finding** for any CIS / PCI / SOC 2 control set (`CIS AWS 5.2`, `4.1`)\n- Exploitable by **anything with a route into the VPC**: a compromised pod in EKS, a VPN peer, a transit-gateway-attached account, a misconfigured NAT\n- One `publicly_accessible = true` away from full exposure\n- Self-described as `\"temp - debugging\"` \u2014 temporary rules become permanent\n\n### Required fix\n\nDelete the rule. If ad-hoc DB access is genuinely needed, use SSM Session Manager port forwarding or a bastion with an SG-referencing rule:\n\n```hcl\n# Correct: reference the source security group, never a CIDR\nresource \"aws_vpc_security_group_ingress_rule\" \"rds_from_app\" {\n  security_group_id            = aws_security_group.rds.id\n  referenced_security_group_id = aws_security_group.app.id\n  from_port                    = 5432\n  to_port                      = 5432\n  ip_protocol                  = \"tcp\"\n  description                  = \"PostgreSQL from application nodes only\"\n}\n```\n\nPrevent recurrence with a policy check in CI. Example with Conftest/OPA against the plan JSON:\n\n```rego\npackage terraform.security\n\ndeny[msg] {\n  rc := input.resource_changes[_]\n  rc.type in {\"aws_security_group_rule\", \"aws_vpc_security_group_ingress_rule\"}\n  rc.change.actions[_] != \"delete\"\n  cidr := rc.change.after.cidr_blocks[_]\n  cidr == \"0.0.0.0/0\"\n  rc.change.after.from_port != 443\n  msg := sprintf(\"%s opens %v to 0.0.0.0/0 on port %v\", [rc.address, rc.type, rc.change.after.from_port])\n}\n\ndeny[msg] {\n  rc := input.resource_changes[_]\n  rc.change.actions == [\"delete\", \"create\"]\n  rc.type in {\"aws_db_instance\", \"aws_rds_cluster\", \"aws_s3_bucket\", \"aws_efs_file_system\"}\n  msg := sprintf(\"%s would be REPLACED (destroy+create) \u2014 stateful resource\", [rc.address])\n}\n```\n\n---\n\n## Finding 3 \u2014 Review process gap\n\n36 of 40 entries were `no-op`. That volume is what made the two real changes easy to miss in `terraform plan` console output scrolled past in a PR comment.\n\nContributing causes:\n\n- **Provider-level `default_tags` churn.** A change to the provider block re-evaluates tags on every resource, producing `no-op` entries in the JSON (and sometimes cosmetic diffs) across the board.\n- **No plan-file gating in CI.** The plan is being read by humans, not machines.\n\n### Recommendations\n\n1. **Gate on machine-readable checks.** Run the Conftest policies above in CI against `tfplan.json`. Fail the pipeline, not the reviewer's attention span.\n\n2. **Surface a change digest in the PR.** Add to the pipeline:\n\n   ```bash\n   terraform show -json tfplan > tfplan.json\n\n   echo \"### Destructive changes\"\n   jq -r '.resource_changes[]\n          | select(.change.actions | index(\"delete\"))\n          | \"- \ud83d\udd34 **\\(.address)** \u2192 `\\(.change.actions | join(\"+\"))` (forced by: \\(.change.replace_paths // [] | flatten | join(\", \")))\"' \\\n     tfplan.json\n\n   echo \"### Creates / Updates\"\n   jq -r '.resource_changes[]\n          | select(.change.actions | inside([\"create\",\"update\"]))\n          | \"- \\(.address) \u2192 \\(.change.actions | join(\"+\"))\"' tfplan.json\n   ```\n\n3. **`prevent_destroy` on every stateful prod resource.** RDS, S3, KMS keys, EFS. Cheap, catches this at plan time.\n\n4. **Split state.** The prod RDS module should be in its own state / workspace from the fast-moving app resources, so DB plans are reviewed in isolation with a small blast radius. This also satisfies acceptance criterion 7 more robustly.\n\n5. **Separate the tag-noise commit.** If provider `default_tags` changed, land that as its own PR so subsequent plans are clean.\n\n---\n\n## Diff to Approve\n\n```diff\n--- a/modules/rds/main.tf\n+++ b/modules/rds/main.tf\n@@\n resource \"aws_db_instance\" \"postgres\" {\n   identifier = \"${var.env}-app-postgres\"\n-  availability_zone = \"us-east-1b\"\n   multi_az   = true\n \n   deletion_protection     = true\n   backup_retention_period = 30\n-  skip_final_snapshot     = true\n+  skip_final_snapshot     = false\n+  final_snapshot_identifier = \"${var.env}-app-postgres-final\"\n   publicly_accessible     = false\n   storage_encrypted       = true\n+\n+  lifecycle {\n+    prevent_destroy = true\n+  }\n }\n\n--- a/modules/network/security.tf\n+++ b/modules/network/security.tf\n@@\n-resource \"aws_security_group_rule\" \"alb_ingress_any\" {\n-  type              = \"ingress\"\n-  from_port         = 5432\n-  to_port           = 5432\n-  protocol          = \"tcp\"\n-  cidr_blocks       = [\"0.0.0.0/0\"]\n-  security_group_id = aws_security_group.rds.id\n-  description       = \"temp - debugging connection issue\"\n-}\n+resource \"aws_vpc_security_group_ingress_rule\" \"rds_from_app\" {\n+  security_group_id            = aws_security_group.rds.id\n+  referenced_security_group_id = aws_security_group.app.id\n+  from_port                    = 5432\n+  to_port                      = 5432\n+  ip_protocol                  = \"tcp\"\n+  description                  = \"PostgreSQL from application nodes only\"\n+}\n```\n\nAfter these changes, re-run `terraform plan` and confirm the destructive-change digest is empty before requesting re-review.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-oqa125qb/tfplan.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-oqa125qb/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-oqa125qb/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-oqa125qb/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-oqa125qb/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-oqa125qb/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-oqa125qb/generated_3.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

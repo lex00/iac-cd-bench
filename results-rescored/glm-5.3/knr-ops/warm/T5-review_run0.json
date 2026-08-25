@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 652
+  },
+  "content": "# PR Security Review \u2014 knr-ops\n\n## Issues Ranked by Severity\n\n### \ud83d\udd34 Critical \u2014 Block merge\n\n**1. S3 bucket policy grants public read access**\n- Violates acceptance criterion: \"no public access.\"\n- Exposes application assets (potentially anything uploaded) to the internet; risk of data leak or hosting abuse.\n- **Fix before merge:** Remove the public-read `Statement`. If assets must be public, use CloudFront with an Origin Access Identity/Control instead of a bucket policy \u2014 the spec already calls for CloudFront in prod. Additionally add `PublicAccessBlock` (all four flags) and keep SSE + versioning.\n\n**2. Plaintext DB password in deployment env vars**\n- Violates \"Secret: never stored in plaintext in Git\" \u2014 the secret is now permanently in Git history even if removed later.\n- **Fix before merge:** Move to SOPS-encrypted Secret (stack-native mechanism per spec):\n  - `kustomize` cannot natively consume encrypted files cleanly; use SOPS + `ksops` (kustomize plugin) or Flux's `sops` decryption in `kustomization.yaml`:\n    ```yaml\n    apiVersion: kustomize.config.k8s.io/v1beta1\n    kind: Kustomization\n    metadata:\n      annotations:\n        config.kubernetes.io/function-...  # Flux: decryption: provider: sops\n    ```\n    In Flux, set `spec.decryption.provider: sops` on the Kustomization and reference the encrypted Secret. Also **rotate the leaked credential** and consider history scrub (BFG/git filter-repo) since it's already committed.\n\n### \ud83d\udfe1 Warning \u2014 Should fix before or immediately after merge\n\n**3. Missing resource limits on containers**\n- Container could exhaust node memory/CPU \u2014 a DoS/nohoisy-neighbor risk, worse on shared prod nodes.\n- **Fix:** Add `resources.limits` (and requests) in the base deployment so it applies to both dev and prod overlays, e.g.:\n  ```yaml\n  resources:\n    requests: { cpu: 100m, memory: 128Mi }\n    limits:   { cpu: 500m, memory: 256Mi }\n  ```\n- Ideally enforce via a `LimitRange`/Kyverno policy so it can't regress.\n\n### \u26aa Info \u2014 No action required\n\n**4. RDS instance class change** \u2014 No security impact per the diff. Verify it's applied only to the intended overlay (dev vs prod) to preserve environment isolation, and confirm deletion protection / backup retention remain untouched.\n\n## Merge Checklist\n\n1. \u274c Remove public-read S3 policy; add PublicAccessBlock; serve assets via CloudFront OAC.\n2. \u274c Remove plaintext password, introduce SOPS-encrypted Secret with Flux `decryption.provider: sops`, rotate the credential.\n3. \u26a0\ufe0f Add resource requests/limits in `base/`.\n4. \u2705 RDS change: verify overlay scoping only.\n\n**Verdict: Do not merge.** Two critical violations of the repo's security acceptance criteria must be resolved first.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-kzg1mql7/kustomization.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/knr-ops/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

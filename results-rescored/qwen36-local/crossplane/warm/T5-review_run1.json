@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 652,
+    "output": 2654
+  },
+  "content": "\n\n# Crossplane Composition Diff Review\n\n## \ud83d\udeab Verdict: **REJECT** \n**Critical compliance violations and high operational risk detected.** Do not merge until remediated.\n\n---\n\n## \ud83d\udd0d Detailed Findings\n\n### 1. `deletionPolicy: Delete` added provider-wide\n| Aspect | Assessment |\n|--------|------------|\n| **Compliance** | \u26a0\ufe0f Violates Criterion 2 (RDS deletion protection) & Criterion 7 (environment isolation) |\n| **Risk Level** | \ud83d\udd34 **Critical** |\n| **Impact** | Applying `deletionPolicy: Delete` at the `ProviderConfig` level means **any** composed resource deletion will trigger immediate external resource deletion. This bypasses safe lifecycle gates, conflicts with AWS RDS `DeletionProtection`, and creates irreversible data loss risk for S3/RDS/EKS. It also applies identically to `dev` and `prod`, breaking environment isolation. |\n\n### 2. Bucket versioning dropped\n| Aspect | Assessment |\n|--------|------------|\n| **Compliance** | \u274c Direct violation of Criterion 1 (`versioning enabled`) |\n| **Risk Level** | \ud83d\udd34 **Critical** |\n| **Impact** | Removes object version history, undermining data durability, auditability, and rollback capabilities for application assets. Applies to both environments. |\n\n---\n\n## \ud83d\udccb Acceptance Criteria Mapping\n\n| Criterion | Status | Notes |\n|-----------|--------|-------|\n| 1. Bucket: versioning, encryption, no public access | \u274c FAIL | Versioning removed; must verify encryption & public access block remain intact |\n| 2. RDS: deletion protection, backup >=7d, non-public | \u26a0\ufe0f AT RISK | `deletionPolicy: Delete` will trigger AWS `DeleteDBInstance` API, causing reconciliation failures if `DeletionProtection: true` is set |\n| 3. Secret: encrypted at rest | \u2705 N/A | Not affected by this diff |\n| 4. IAM: least privilege, no wildcards on prod | \u2705 N/A | Not affected |\n| 5. Cluster: managed node groups, env sizing | \u2705 N/A | Not affected |\n| 6. HTTPS: 443 listener, valid cert, no forced redirect | \u2705 N/A | Not affected |\n| 7. Environment isolation | \u26a0\ufe0f COMPROMISED | Provider-wide policy applies to both `dev`/`prod` without scoping |\n\n---\n\n## \ud83d\udee0\ufe0f Recommended Remediation\n\n### For `deletionPolicy: Delete`\n1. **Revert provider-wide setting.** The Crossplane default (`Orphan`) is correct for production-grade workloads.\n2. **Scope deletion behavior per-resource or per-environment:**\n   - Use claim annotations: `crossplane.io/deletion-policy: Orphan` (prod) vs `Delete` (dev, if desired)\n   - Set explicitly in the Composition: `metadata.annotations: {\"crossplane.io/deletion-policy\": \"Orphan\"}`\n   - Ensure RDS composition explicitly sets `DeletionPolicy: Orphan` to align with AWS `DeletionProtection: true`\n3. **Add reconciliation safeguards:** Use `crossplane.io/external-name` guards or OPA/Gatekeeper policies to prevent accidental claim deletion in prod.\n\n### For Bucket Versioning\n1. **Re-add versioning configuration** to the S3 bucket composite resource:\n   ```yaml\n   spec:\n     forProvider:\n       versioning:\n         status: Enabled\n   ```\n   *(Or reference a dedicated `BucketVersioning` composite if using the AWS provider's versioned topology)*\n2. **Verify encryption & public access** remain enforced:\n   - `serverSideEncryptionConfiguration` \u2192 `AES256` or KMS key ARN\n   - `publicAccessBlock` \u2192 all `true`\n3. **Add drift detection** via Crossplane `Composition` `patches` or external validation to catch future versioning regressions.\n\n---\n\n## \u2705 Next Steps\n1. Revert the diff\n2. Apply environment-scoped deletion policies (not provider-wide)\n3. Restore S3 versioning in the bucket composition\n4. Validate against full acceptance criteria matrix\n5. Re-submit for review\n\n*Crossplane best practice reminder: Provider-level configurations should define authentication & rate limits only. Lifecycle policies (`deletionPolicy`, `managementPolicy`) belong at the Claim/Composition level to preserve multi-tenant/environment safety.*",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/crossplane/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

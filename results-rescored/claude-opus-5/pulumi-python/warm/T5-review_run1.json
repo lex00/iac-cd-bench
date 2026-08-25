@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1058,
+    "output": 9706
+  },
+  "content": "## First: the artifact didn't come through\n\nYour message contains the scenario spec and the review scope, but no `preview.json` payload. Paste it (or the relevant excerpt) and I'll produce the finding-by-finding report.\n\n**Before you paste \u2014 two collection notes:**\n\n```bash\n# Correct: secrets render as \"[secret]\", safe to share\npulumi preview --stack prod --json > preview-prod.json\n\n# NEVER for review artifacts \u2014 this materializes plaintext into the file and CI logs\n# pulumi preview --json --show-secrets   \u274c\n```\n\nIf the file was generated with `--show-secrets`, treat every secret in it as compromised and rotate before sending. Also send `Pulumi.dev.yaml` / `Pulumi.prod.yaml` if you want AC #3 (secret-at-rest) verified properly \u2014 the preview alone can't prove config encryption, only hint at it.\n\nMeanwhile, here is exactly what I will run and how I'll grade it, so you can pre-screen.\n\n---\n\n## Review rubric\n\n### Check A \u2014 Secret in plaintext outputs\n\nThree distinct loci in the JSON, three distinct root causes.\n\n**A1. Unencrypted stack config** (`.config`) \u2014 means the value is in `Pulumi.<stack>.yaml` in Git. Direct AC #3 violation.\n\n```bash\njq -r '.config // {} | to_entries[]\n  | select(.key | test(\"(?i)pass|secret|token|dsn|conn|credential|apikey\"))\n  | select((.value|tostring) != \"[secret]\")\n  | \"PLAINTEXT CONFIG: \\(.key)\"' preview.json\n```\n\nRoot cause is almost always `config.require(\"dbPassword\")` where it should be `config.require_secret(\"dbPassword\")`, paired with `pulumi config set` instead of `pulumi config set --secret`.\n\n**A2. Stack outputs not marked secret.** Pulumi wraps secret values in a sigil object; a bare string in a secret-shaped output is the finding.\n\n```bash\n# Enumerate stack outputs and classify\njq -r '.steps[] | select(.newState.type == \"pulumi:pulumi:Stack\")\n  | .newState.outputs // {} | to_entries[]\n  | \"\\(.key)\\t\\(if (.value|type)==\"object\" and (.value|has(\"4dabf18193072939515e22adb298388d\"))\n        then \"SECRET\" else \"PLAINTEXT\" end)\"' preview.json\n```\n\n`4dabf18193072939515e22adb298388d` is Pulumi's special-key marker; `1b47061264138c4ac30d75fd1eb44270` as its value means \"secret\". Any output named `dbConnectionString`, `dbUrl`, `accessKeySecret` etc. showing `PLAINTEXT` is **Critical on prod** \u2014 stack outputs are readable by anyone with stack read access and leak into `pulumi stack output`, CI artifacts, and StackReference consumers.\n\n**A3. Secrets in resource inputs the provider doesn't auto-protect.** Highest-yield in practice:\n\n```bash\njq -r '.steps[]\n  | select(.newState.type | test(\"kubernetes:core/v1:ConfigMap|lambda/function|ecs/taskDefinition|ssm/parameter|eks:.*:Cluster\"))\n  | {urn, type: .newState.type, addl: (.newState.additionalSecretOutputs // [])}' preview.json\n```\n\nLook for the DB connection string in a k8s `ConfigMap.data`, a Lambda `environment.variables`, an ECS container `environment` block, or an `aws:ssm:Parameter` with `type: \"String\"` instead of `\"SecureString\"`. Also confirm `aws:rds/instance:Instance` carries `additionalSecretOutputs` containing `password`, and `aws:iam/accessKey:AccessKey` carries `secret` / `encryptedSecret`.\n\n**Common subtle cause:** `Output.concat` and `.apply()` *do* propagate secretness. Leakage happens when the password enters the graph as a plain string in the first place (A1), or when someone calls `pulumi.Output.unsecret()` to silence a `[secret]` in a template.\n\n---\n\n### Check B \u2014 Replacement of stateful resource\n\n```bash\njq -r '\ndef stateful: test(\"aws:rds/(instance|cluster):|aws:s3/bucket|aws:dynamodb/table:|aws:ebs/volume:|aws:elasticache/|aws:efs/fileSystem:|aws:docdb/\");\n.steps[]\n| select(.op | IN(\"replace\",\"create-replacement\",\"delete-replaced\"))\n| (.newState.type // .oldState.type) as $t | select($t | stateful)\n| {op, type: $t, urn,\n   triggers: (.detailedDiff // {} | to_entries\n              | map(select(.value.kind | test(\"replace\"))) | map(.key)),\n   deleteBeforeReplace: (.newState.deleteBeforeReplace // false),\n   protect: (.newState.protect // false)}' preview.json\n```\n\nGrading:\n\n| Signal | Severity | Meaning |\n|---|---|---|\n| `deleteBeforeReplace: true` on RDS/S3 | **Critical** | Old resource destroyed *before* new one exists. Unrecoverable without a snapshot. |\n| `replace` on `aws:rds/instance` (prod) | **Critical** | New empty database; app points at it silently. |\n| `replace` on `aws:s3/bucket` | **Critical** | Objects are not migrated. New bucket is empty. |\n| `replace` on `aws:eks/nodeGroup` | Medium | Stateless by design \u2014 acceptable if PDBs exist. |\n| `replace` triggered by a *cosmetic* diff (tag, name) | High | Signals accidental replacement, not intended migration. |\n\nCross-reference `triggers` against the known replace-forcing properties: RDS `identifier`, `engine`, `storageEncrypted` (cannot be toggled in place), `availabilityZone`, `dbSubnetGroupName`; S3 `bucket`; DynamoDB `hashKey`/`rangeKey`. A replacement whose only trigger is `tags` or `name` is a bug in your naming scheme, not a real migration.\n\n**Explicitly flagged:** if the diff shows `storageEncrypted: false \u2192 true` on an existing prod RDS, you are trading AC #2 compliance for total data loss. That must be done via encrypted-snapshot restore, not a Pulumi replace.\n\n---\n\n### Check C \u2014 Missing `protect` flag\n\n```bash\njq -r '\ndef stateful: test(\"aws:rds/|aws:s3/bucket|aws:dynamodb/table:|aws:kms/key:|aws:efs/|aws:secretsmanager/secret:\");\n.steps[] | select(.newState.type? // \"\" | stateful)\n| select((.newState.protect // false) == false)\n| \"UNPROTECTED \\(.newState.type)\\t\\(.urn)\"' preview.json\n```\n\nSeverity is stack-dependent \u2014 parse the stack name from the URN (`urn:pulumi:prod::...`):\n\n- **prod + stateful + `protect: false`** \u2192 **High**. AC #2 asks for RDS deletion protection; that's the *AWS-side* control. `protect` is the *Pulumi-side* control and they defend different failure modes: `deletionProtection` stops the API call, `protect` stops the engine from ever emitting the delete step (including via `pulumi destroy` or an accidental resource rename). You need both.\n- **dev + stateful + `protect: false`** \u2192 Informational. Dev should stay destroyable; that's a feature.\n\nAlso check `retainOnDelete` on prod S3/RDS, and confirm `skipFinalSnapshot` is `false` on prod RDS with a `finalSnapshotIdentifier` set.\n\n---\n\n## Additional checks I run against the same artifact\n\nMapped to your acceptance criteria, since the preview JSON carries the resolved inputs:\n\n| AC | Assertion against `newState.inputs` |\n|---|---|\n| 1 | `BucketVersioningV2.versioningConfiguration.status == \"Enabled\"`; `BucketServerSideEncryptionConfigurationV2` present; `BucketPublicAccessBlock` with all four flags `true` |\n| 2 | `deletionProtection: true`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false`, `storageEncrypted: true` (prod) |\n| 4 | No `\"Action\": \"*\"` or `\"Resource\": \"*\"` in any `iam/policy` or inline `policy` document on the prod stack; `assumeRolePolicy` uses OIDC `Federated` principal with a `sub`/`aud` string condition, not bare `sts:AssumeRoleWithWebIdentity` |\n| 5 | `eks/nodeGroup.scalingConfig` = `{2,t3.medium}` dev / `{4,t3.large}` prod |\n| 6 | `lb/listener.port == 443`, `certificateArn` resolves to an ACM cert in the right region (`us-east-1` for CloudFront) |\n| 7 | Every URN in the file carries the same stack segment \u2014 a prod preview touching a dev-named resource means shared state or a leaked StackReference write |\n\n---\n\n## Remediation patterns (Python)\n\n```python\nimport pulumi, pulumi_aws as aws\n\ncfg      = pulumi.Config()\nstack    = pulumi.get_stack()\nis_prod  = stack == \"prod\"\n\n# A1 fix: require_secret + `pulumi config set --secret app:dbPassword`\ndb_password = cfg.require_secret(\"dbPassword\")\n\ndb = aws.rds.Instance(\n    \"app-db\",\n    engine=\"postgres\",\n    instance_class=\"db.t3.medium\" if is_prod else \"db.t3.micro\",\n    multi_az=is_prod,\n    storage_encrypted=True,\n    deletion_protection=True,          # AWS-side guard (AC #2)\n    backup_retention_period=14 if is_prod else 7,\n    publicly_accessible=False,\n    skip_final_snapshot=not is_prod,\n    final_snapshot_identifier=f\"app-db-final-{stack}\" if is_prod else None,\n    username=\"appuser\",\n    password=db_password,\n    opts=pulumi.ResourceOptions(\n        protect=is_prod,               # C fix: engine-side guard\n        retain_on_delete=is_prod,\n        delete_before_replace=False,   # B fix: never destroy-then-create\n        additional_secret_outputs=[\"password\"],\n        ignore_changes=[\"password\"] if is_prod else [],\n    ),\n)\n\n# A2 fix: don't export the credential at all. Export a pointer.\nconn = pulumi.Output.all(db.address, db.port, db_password).apply(\n    lambda a: f\"postgresql://appuser:{a[2]}@{a[0]}:{a[1]}/app\"\n)  # secretness propagates from db_password automatically\n\nsm = aws.secretsmanager.Secret(f\"app-db-conn-{stack}\", recovery_window_in_days=7 if is_prod else 0)\naws.secretsmanager.SecretVersion(\"app-db-conn-v\", secret_id=sm.id, secret_string=conn)\n\npulumi.export(\"dbSecretArn\", sm.arn)   # ARN is not sensitive\n# pulumi.export(\"dbConnectionString\", conn)  \u274c even wrapped, don't\n```\n\nFor an unintended replacement you've already identified, the escape hatches in order of preference: `ignore_changes` on the offending property \u2192 `aliases` if it's a rename/refactor \u2192 `pulumi import` to re-adopt the existing physical resource \u2192 snapshot-restore migration if the property genuinely cannot change in place.\n\n---\n\n## CI gate\n\nDrop this in `scripts/preview_gate.py` and run it on every prod plan:\n\n```python\n#!/usr/bin/env python3\nimport json, sys, re\n\nSTATEFUL = re.compile(r\"aws:(rds/|s3/bucket|dynamodb/table:|efs/|kms/key:|elasticache/)\")\nSECRETY  = re.compile(r\"(?i)pass|secret|token|dsn|conn|credential\")\nSIGIL    = \"4dabf18193072939515e22adb298388d\"\n\np, fails = json.load(open(sys.argv[1])), []\nis_prod = any(\":prod::\" in s.get(\"urn\", \"\") for s in p[\"steps\"])\n\nfor k, v in (p.get(\"config\") or {}).items():\n    if SECRETY.search(k) and str(v) != \"[secret]\":\n        fails.append(f\"CRITICAL plaintext config: {k}\")\n\nfor s in p[\"steps\"]:\n    ns, urn = s.get(\"newState\") or {}, s.get(\"urn\", \"\")\n    t = ns.get(\"type\") or (s.get(\"oldState\") or {}).get(\"type\", \"\")\n\n    if t == \"pulumi:pulumi:Stack\":\n        for k, v in (ns.get(\"outputs\") or {}).items():\n            if SECRETY.search(k) and not (isinstance(v, dict) and SIGIL in v):\n                fails.append(f\"CRITICAL plaintext stack output: {k}\")\n\n    if STATEFUL.search(t):\n        if s.get(\"op\") in (\"replace\", \"create-replacement\", \"delete-replaced\"):\n            why = [k for k, d in (s.get(\"detailedDiff\") or {}).items()\n                   if \"replace\" in d.get(\"kind\", \"\")]\n            fails.append(f\"CRITICAL replacement of {t} ({urn}) triggered by {why}\")\n        if is_prod and not ns.get(\"protect\", False):\n            fails.append(f\"HIGH missing protect: {t} ({urn})\")\n        if ns.get(\"deleteBeforeReplace\"):\n            fails.append(f\"CRITICAL deleteBeforeReplace on {t} ({urn})\")\n\nprint(\"\\n\".join(fails) or \"PASS\")\nsys.exit(1 if fails else 0)\n```\n\n---\n\nPaste the preview JSON (both stacks if you have them) and I'll return per-finding severity, the exact JSON path for each, the root cause in your Python, and a patch.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-rdljn4bw/preview.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-rdljn4bw/Pulumi.dev.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/pulumi-python/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

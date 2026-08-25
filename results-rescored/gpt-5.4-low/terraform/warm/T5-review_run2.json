@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 1134
+  },
+  "content": "Key hidden risks to flag in this Terraform plan:\n\n## High-risk findings\n\n### 1. RDS/DB replacement is occurring\nEven if the plan summary is buried in ~40 changes, a **destroy + create** on the database means a **resource recreation**, not an in-place update.\n\nWhat to look for in `tfplan.json`:\n- `resource_changes[].change.actions` contains:\n  - `[\"delete\",\"create\"]` or `[\"create\",\"delete\"]`\n- Resource type likely:\n  - `aws_db_instance`\n  - possibly `aws_rds_cluster` / `aws_rds_cluster_instance`\n\nWhy this matters:\n- Causes downtime\n- Risks data loss if snapshots/final snapshot settings are wrong\n- May bypass acceptance criteria if deletion protection is expected\n- Often triggered by immutable field changes like:\n  - `identifier`\n  - `storage_encrypted`\n  - `engine_version` in some cases\n  - subnet group / AZ / instance class transitions\n  - parameter group family mismatches\n\n### 2. Security group ingress opened to the world\nA rule allowing `0.0.0.0/0` ingress is a serious exposure unless explicitly intended for a public HTTPS entrypoint.\n\nWhat to look for:\n- `aws_security_group`\n- `aws_security_group_rule`\n- `aws_vpc_security_group_ingress_rule`\n\nSuspicious pattern:\n- `cidr_blocks = [\"0.0.0.0/0\"]`\n- especially on:\n  - DB ports like `5432`\n  - SSH `22`\n  - internal app ports\n  - node/security group rules that should be limited\n\nAcceptable only if:\n- It is for a deliberate public listener such as `443`\n- And attached to the correct edge resource like ALB/CloudFront-related origin path, not the DB or internal services\n\n## What I would report in the review\n\n### Severity: Critical\n- **Database is being replaced**\n- **Ingress widened to `0.0.0.0/0`**\n\n### Likely recommendation\n- **Do not apply** until both are understood and explicitly approved.\n\n## How to confirm in the plan JSON\n\nUse `jq` to isolate destructive changes:\n\n```bash\njq '\n  .resource_changes[]\n  | select(.change.actions | index(\"delete\"))\n  | {address, actions: .change.actions, before: .change.before, after: .change.after}\n' tfplan.json\n```\n\nFind all replacements specifically:\n\n```bash\njq '\n  .resource_changes[]\n  | select(.change.actions == [\"delete\",\"create\"] or .change.actions == [\"create\",\"delete\"])\n  | {address, actions: .change.actions}\n' tfplan.json\n```\n\nFind world-open ingress:\n\n```bash\njq '\n  .resource_changes[]\n  | select(\n      (.type == \"aws_security_group_rule\" or .type == \"aws_vpc_security_group_ingress_rule\" or .type == \"aws_security_group\")\n    )\n  | select(\n      tostring | test(\"0\\\\.0\\\\.0\\\\.0/0\")\n    )\n  | {address, actions: .change.actions, before: .change.before, after: .change.after}\n' tfplan.json\n```\n\n## What to inspect on the DB resource\nFor the DB replacement, compare `before` vs `after` on:\n- `identifier`\n- `db_subnet_group_name`\n- `storage_encrypted`\n- `kms_key_id`\n- `engine`\n- `engine_version`\n- `instance_class`\n- `username`\n- `publicly_accessible`\n- `multi_az`\n- `parameter_group_name`\n- `snapshot_identifier`\n\nAlso verify:\n- `deletion_protection = true`\n- `backup_retention_period >= 7`\n- `publicly_accessible = false`\n\nThose are required by your acceptance criteria.\n\n## What to inspect on the SG rule\nFor the ingress addition, verify:\n- port/protocol\n- target resource\n- whether this is `443` on a public ALB only\n- whether source should instead be:\n  - VPC CIDR\n  - ALB security group\n  - CloudFront prefix list\n  - office/VPN CIDR\n  - cluster node security group\n\nIf this `0.0.0.0/0` is on RDS, that is a hard stop.\n\n## Suggested review summary\n\nYou could summarize the review like this:\n\n> The plan contains two hidden high-risk changes among otherwise low-signal updates:\n> 1. The RDS instance is being replaced (`delete` + `create`), which is destructive and may cause downtime/data loss.\n> 2. A new ingress path allows `0.0.0.0/0`, widening exposure to the public internet.\n>\n> This plan should not be applied until:\n> - the DB replacement is justified and protected with snapshot/deletion review\n> - the security group rule is restricted to intended sources\n> - RDS acceptance criteria are revalidated (`deletion_protection`, backups, non-public)\n\nIf you want, paste the actual `tfplan.json` snippet and I can identify the exact resource addresses and the fields forcing replacement.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

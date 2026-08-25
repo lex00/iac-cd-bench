@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 354
+  },
+  "content": "Please provide the Pulumi preview JSON, ideally generated with:\n\n```bash\npulumi preview --json > preview.json\n```\n\nRedact account IDs, hostnames, and other identifiers if needed, but preserve:\n\n- `steps`, operation types, and replacement reasons\n- Resource URNs and types\n- `oldState` / `newState`, including `inputs` and `outputs`\n- Secret metadata/signatures\n- Resource options such as `protect`\n\nI\u2019ll review specifically for:\n\n1. **Plaintext secrets**\n   - DB connection strings, passwords, tokens, or access keys visible in outputs\n   - Values not represented as Pulumi secret envelopes\n   - Configuration that should use `config.requireSecret(...)` and `pulumi.secret(...)`\n\n2. **Stateful resource replacement**\n   - `replace`, `create-replacement`, or `delete-replaced` operations affecting RDS, S3, or other persistent resources\n   - Replacement triggered by immutable property changes\n   - Potential deletion, outage, or data-loss impact\n\n3. **Missing protection**\n   - Production RDS, S3, and other critical resources lacking:\n     ```ts\n     { protect: true }\n     ```\n   - RDS also lacking AWS-side `deletionProtection: true`\n\nI\u2019ll also check the preview against the supplied criteria: bucket encryption/versioning/public access, RDS backups and public accessibility, least-privilege IAM, EKS sizing, HTTPS configuration, and dev/prod isolation.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wrn6l5c5/generated_0.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/pulumi-typescript/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "model": "claude-opus-5",
+  "task": "T2-generate",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "xrds/composite-web-service.yaml') = Path('xrds/composite-web-service.yaml')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:6: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('compositions/composition.yaml').exists\n     +      where PosixPath('compositions/composition.yaml') = Path('compositions/composition.yaml')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:10: AssertionError: assert False\nE   AssertionError: assert (False or False)\n     +  where False = exists()\n     +    where exists = PosixPath('claims/dev.yaml').exists\n     +      where PosixPath('claims/dev.yaml') = Path('claims/dev.yaml')\n     +  and   False = exists()\n     +    where exists = PosixPath('claims/prod.yaml').exists\n     +      where PosixPath('claims/prod.yaml') = Path('claims/prod.yaml')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:14: AssertionError: assert (False or False)\nE   AssertionError: At least one ProviderConfig should exist\n    assert 0 >= 1\n     +  where 0 = len([])\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:19: AssertionError: At least one ProviderConfig should exist\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_xrd_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_composition_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_claim_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_provider_config_exists\n============================== 4 failed in 0.01s ===============================\n",
+      "passed_count": 0,
+      "total_count": 4,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1101,
+    "output": 16384
+  },
+  "content": "",
+  "regraded_semantic": true,
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2222222222222222
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/crossplane/warm/T2-generate_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2222222222222222
+    },
+    "corrected_composite_no_idiom": 0.25,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "empty_completion: the provider returned no text at all",
+      "no_extractable_output: the task's enabled stages act on files the model was to produce, and the completion contains no code block \u2014 lint and static would have nothing to check and would pass vacuously"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

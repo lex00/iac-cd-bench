@@ -1,0 +1,92 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 636,
+    "output": 826
+  },
+  "content": "# Pulumi Preview Security Review\n\n## Sample Preview JSON (what I'd review)\n\n```json\n{\n  \"steps\": [\n    {\n      \"urn\": \"urn:pulumi:prod::webapp::aws:s3/bucketV2:BucketV2::assets\",\n      \"op\": \"replace\",\n      \"old\": {\"bucket\": \"webapp-assets-prod-a1b2c3\"},\n      \"new\": {}\n    },\n    {\n      \"urn\": \"urn:pulumi:prod::webapp::aws:rds/instance:Instance::db\",\n      \"op\": \"delete\",\n      \"protect\": false\n    },\n    {\n      \"urn\": \"urn:pulumi:prod::webapp::pulumi:pulumi:StackOutput::db-url\",\n      \"op\": \"create\",\n      \"outputs\": {\"value\": \"postgresql://admin:S3cretPw@db.x.us-east-1.rds.amazonaws.com/appdb\"}\n    }\n  ]\n}\n```\n\n## Findings\n\n### \ud83d\udd34 CRITICAL \u2014 Secret in plaintext stack output\nThe `db-url` output contains the full connection string **including credentials**, visible in plaintext in the preview/state. Anyone with read access to the Pulumi state (backend, CI logs) can read the DB password.\n\n**Fix:**\n```python\npulumi.export(\"db-url\", pulumi.Output.secret(conn_string))\n```\nBetter: don't export credentials at all; write them to SSM Parameter Store (SecureString) or Secrets Manager from within the program, and export only the secret ARN/reference. Per the spec, the connection string must come from `ConfigSecret`:\n\n```python\nconfig = pulumi.Config()\ndb_password = config.require_secret(\"db_password\")  # from prod.yaml encrypted config\n```\n\nVerify `Pulumi.prod.yaml` uses the project's passphrase/KMS encryption (`pulumi config set --secret`), not a plaintext YAML value.\n\n### \ud83d\udd34 CRITICAL \u2014 Replacement of stateful S3 bucket\n`op: \"replace\"` on `assets` means Pulumi will **delete and recreate** the bucket \u2014 application assets are destroyed. This usually indicates a change to a force-new property (bucket name, region, or a naming/suffix input change \u2014 note the hardcoded name with hash suffix suggests a random suffix regenerating).\n\n**Fix:** Enable `protect` on stateful resources and pin deterministic names:\n```python\nassets = s3.BucketV2(\"assets\",\n    bucket=f\"webapp-assets-{env}\",  # deterministic, no random suffix\n    opts=pulumi.ResourceOptions(protect=True))\n```\nIf replacement is truly intended: copy objects out first (replication or `aws s3 sync`), run `pulumi state unprotect` deliberately, and confirm the change in a peer-reviewed run.\n\n### \ud83d\udfe0 HIGH \u2014 Missing `protect` on RDS instance\nThe database is showing `op: delete` with `protect: false`. A preview that can delete prod RDS data without a guardrail violates acceptance criterion 2.\n\n**Fix:**\n```python\ndb = rds.Instance(\"db\", ...,\n    opts=pulumi.ResourceOptions(protect=True))\n```\nAdditionally verify in the full config (not just preview): `deletion_protection=True`, `publicly_accessible=False`, `backup_retention_period=7+`, `multi_az=True` for prod.\n\n### \ud83d\udfe1 MEDIUM \u2014 Environment isolation check\nConfirm this preview ran against the **prod stack only** (`pulumi.stack` in the URN shows `prod` \u2713) and that no `dev` URNs appear in the steps. Changing prod sizing must not touch dev state.\n\n## Verdict: **BLOCK deployment**\n\n1. Remove secret from outputs (use `Output.secret` or Secrets Manager reference).\n2. Eliminate the bucket replacement (deterministic name) and enable `protect`.\n3. Enable `protect` on RDS; re-run preview and confirm only `same`/`update` ops on stateful resources.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-oq2idfjx/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-oq2idfjx/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-oq2idfjx/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-oq2idfjx/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-oq2idfjx/generated_2.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/pulumi-python/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

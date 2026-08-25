@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 634,
+    "output": 483
+  },
+  "content": "Please provide the Pulumi preview JSON output; it wasn\u2019t included in the request. Generate it with:\n\n```bash\npulumi preview --stack <stack> --json > preview.json\n```\n\nBefore posting, manually redact any credentials already exposed\u2014the review itself cannot undo disclosure.\n\nI\u2019ll check for:\n\n1. **Plaintext secrets**\n   - Database connection strings, passwords, access keys, tokens, or secret-bearing environment variables visible in `outputs`, `inputs`, or diagnostic messages.\n   - Secret values should be represented as Pulumi secret envelopes/redacted values, not ordinary strings.\n   - Any exposed credential should be considered compromised and rotated.\n\n2. **Stateful resource replacement**\n   - `replace`, `create-replacement`, or `delete-replaced` operations affecting resources such as:\n     - RDS instances/clusters\n     - S3 buckets\n     - EKS clusters/node groups\n   - Special attention to delete-before-create behavior and replacement-triggering fields.\n\n3. **Missing protection**\n   - Critical production resources should generally have Pulumi resource protection enabled:\n     ```python\n     opts=pulumi.ResourceOptions(protect=True)\n     ```\n   - At minimum, review protection for production RDS, asset buckets, and potentially the EKS cluster.\n   - RDS must also have AWS-side `deletion_protection=True`; Pulumi `protect` is complementary, not a substitute.\n\nI can also validate the preview against the broader acceptance criteria\u2014encryption, versioning, public access, backups, IAM wildcards, node sizing, HTTPS, and environment isolation\u2014if those properties are present in the JSON.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-5nfcgp5v/generated_0.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/pulumi-python/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

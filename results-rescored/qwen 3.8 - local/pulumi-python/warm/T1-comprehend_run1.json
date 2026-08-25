@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1024,
+    "output": 781
+  },
+  "content": "Based on the Pulumi documentation snippets and general Pulumi behavior regarding resource replacement, targeting, and secrets, here is the analysis:\n\n### 1. Which property triggered the replace?\nIn the context of an RDS PostgreSQL instance defined in Pulumi, a **replace** (delete and create new resource) occurs when a change to a property is incompatible with an in-place update.\n\nThe most common property that triggers a replacement for an RDS instance in Pulumi (and most IaC tools) is a change to the **`instance_class`** (e.g., from `db.t3.micro` to `db.t3.medium`) or a change to fundamental immutable properties such as:\n*   `engine` (e.g., PostgreSQL version change)\n*   `availability_zone` (if moving AZs requires replacement)\n*   `identifier` (changing the DB name)\n\nGiven the canonical scenario specifies different instance classes for Dev (`db.t3.micro`) vs Prod (`db.t3.medium`), if you are changing the **`instance_class`** property on an existing RDS resource, Pulumi will typically plan a **replace** rather than an update, because RDS instance classes often cannot be modified in-place without a stop/start or full replacement depending on the specific engine and version constraints.\n\n**Answer:** The property that triggered the replace is most likely **`instance_class`** (or potentially `identifier`, `engine`, or `availability_zone`, but `instance_class` is the most common sizing-related trigger).\n\n### 2. What does `pulumi up --target` skip?\n`pulumi up --target <resource>` limits the update to only the specified resource and its **dependencies** (resources that the target resource depends on). It **skips**:\n*   Any resources that are **not dependencies** of the targeted resource.\n*   Resources that **depend on** the targeted resource (unless explicitly targeted as well).\n\nIn other words, `--target` restricts the scope of the update to a specific subtree of the dependency graph rooted at the specified resource. All other resources in the stack are left unchanged, even if they have pending changes planned in the preview.\n\n**Answer:** `pulumi up --target` skips **all resources that are not dependencies of the targeted resource**.\n\n### 3. How does Pulumi handle secrets in outputs?\nAccording to the provided documentation snippet:\n*   Secrets are encrypted values in state.\n*   The common pitfall is \"Reading secrets as plain strings instead of `config.require_secret()`\".\n*   You must use `config.require_secret()` to read secrets.\n*   When exporting secrets as outputs, you should use `pulumi.export()` (or `pulumi.Export`) to ensure they are properly handled and marked as secret in the state and output.\n\nPulumi ensures that secrets are **encrypted at rest** in the state file (using the stack\u2019s secret backend, e.g., KMS, SOPS, or Pulumi Cloud). When a secret is exported as an output, it is marked as a **secret output** (`secret: true` in the state), and its value is obfuscated in the Pulumi CLI output (displayed as `****` or similar) to prevent accidental leakage. Accessing the value programmatically requires using the `Output` object and `.apply()` or similar deferred evaluation, not plain string access.\n\n**Answer:** Pulumi stores secrets **encrypted at rest** in the state file. When exported as outputs, they are marked as **secret** in the state and **obfuscated** in CLI output (e.g., displayed as `****`). To read them, you must use `config.require_secret()` and handle them as `Output` objects, not plain strings.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/pulumi-python/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

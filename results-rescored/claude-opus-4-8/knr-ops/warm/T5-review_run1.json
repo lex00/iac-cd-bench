@@ -1,0 +1,86 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 1444
+  },
+  "content": "# Security Review: PR Diff\n\nBased on the described diff, here's my review ranked by severity.\n\n---\n\n## \ud83d\udd34 CRITICAL\n\n### 1. Plaintext password in deployment env vars\n**Issue:** DB password committed to Git as plaintext in container `env`.\n\n**Why critical:**\n- Violates Acceptance Criteria #3 (\"Secret never stored in plaintext in Git; encrypted at rest via stack-native mechanism\").\n- Git history is effectively permanent \u2014 even if removed later, the credential remains in history and must be rotated.\n- Anyone with repo read access (or a leaked clone) obtains DB credentials.\n\n**Fix before merge:**\n- Use SOPS-encrypted secret (the knr-ops-native mechanism).\n- Reference it via `envFrom`/`secretKeyRef` from a `Secret` decrypted by Flux's SOPS integration.\n- **Rotate the exposed credential** \u2014 assume it is compromised the moment it lands in Git.\n\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: db-connection\n        key: password\n```\n\n### 2. S3 bucket policy granting public read access\n**Issue:** New bucket policy allows public `s3:GetObject` (e.g. `Principal: \"*\"`).\n\n**Why critical:**\n- Directly violates Acceptance Criteria #1 (\"no public access\").\n- Application assets bucket exposed to the internet \u2192 data leakage, potential hosting of unintended content, cost/abuse risk.\n\n**Fix before merge:**\n- Remove the public statement entirely.\n- Enable **S3 Block Public Access** at bucket + account level (belt-and-suspenders even if policy is fixed).\n- If assets must be publicly served, front them with **CloudFront + OAC/OAI** (matches spec's HTTPS/CloudFront exposure) rather than a public bucket.\n\n---\n\n## \ud83d\udfe1 WARNING\n\n### 3. Missing resource limits on containers\n**Issue:** No `resources.limits` / `requests` set.\n\n**Why warning (not critical):**\n- Not a direct data-exposure vuln, but a **denial-of-availability** risk: a runaway or compromised pod can exhaust node CPU/memory, causing noisy-neighbor eviction of other workloads.\n- Also blocks proper scheduling/QoS.\n\n**Fix before merge:**\n```yaml\nresources:\n  requests: { cpu: 100m, memory: 128Mi }\n  limits:   { cpu: 500m, memory: 512Mi }\n```\nSet in `base/`, tune per overlay (dev vs prod) since sizing differs.\n\n---\n\n## \ud83d\udd35 INFO\n\n### 4. RDS instance class change\n**Issue:** Instance class changed \u2014 flagged as no issue.\n\n**Notes / verify:**\n- Confirm the change is scoped to the correct **overlay** (dev vs prod) and doesn't cross-modify the other env (Acceptance Criteria #7, environment isolation).\n- Confirm this diff doesn't silently touch `deletion protection`, `backup retention (>=7d)`, or `publiclyAccessible=false` (Criteria #2) \u2014 instance-class edits sometimes ride along with other attribute drift. **No action if untouched.**\n\n---\n\n## Summary Table\n\n| # | Issue | Severity | Blocks merge? |\n|---|-------|----------|---------------|\n| 1 | Plaintext DB password in env | \ud83d\udd34 Critical | **Yes** + rotate secret |\n| 2 | Public-read S3 bucket policy | \ud83d\udd34 Critical | **Yes** |\n| 3 | Missing container resource limits | \ud83d\udfe1 Warning | Should fix |\n| 4 | RDS instance class change | \ud83d\udd35 Info | No (verify scope) |\n\n## Merge Recommendation\n\n**\u274c Block merge.** Two critical issues each independently fail the acceptance criteria. Require:\n1. Secret moved to SOPS + **credential rotated**.\n2. Public bucket policy removed + Block Public Access enabled.\n3. Add resource limits.\n4. Confirm RDS change is overlay-scoped and doesn't regress RDS security attributes.\n\nWant me to draft the corrected SOPS secret + kustomization wiring, or the hardened bucket policy?",
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/knr-ops/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

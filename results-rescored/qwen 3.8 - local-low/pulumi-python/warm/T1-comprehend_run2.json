@@ -1,0 +1,92 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1052,
+    "output": 2624
+  },
+  "content": "\n\n# Pulumi Preview Behavior: RDS Replace, `--target`, and Secrets\n\n## 1. Which Property Triggered the Replace on the DB?\n\nFor an `aws.rds.Instance` resource, Pulumi (delegating to the provider's schema) marks certain input properties as **replacement triggers**. Changing any of them forces destroy-then-create rather than an in-place update:\n\n| Property | Why it replaces |\n|---|---|\n| `availability_zone` | Physical relocation of the instance |\n| `multi_az` | Toggling between single-AZ and multi-AZ is a topology change |\n| `engine` | Different engine = different resource identity |\n| `engine_version` (major) | Major version upgrades aren't in-place |\n\n**Most likely culprit in this scenario:** `availability_zone` or `multi_az`.\n\nGiven the spec (dev = single AZ, prod = multi-AZ + encrypted), the classic footgun is:\n\n```python\n# prod.yaml\nconfig:\n  db:availabilityZone: us-east-1a\n  db:multiAz: \"true\"\n```\n\nIf a developer flips `multi_az` from `false` \u2192 `true` (or changes the AZ string), Pulumi's preview will show:\n\n```\n~ aws:sql:Instance db:\n      ~ multiAz: false -> true\n    + replacement required\n```\n\n**Why not `instance_class`?** Changing `db.t3.micro` \u2192 `db.t3.medium` is an *in-place* modify (`~`), not a replace. This is a common misconception.\n\n### How to confirm\n\n```bash\npulumi preview --diff\n```\n\nThe diff output explicitly annotates the line with `+ replacement required` and names the property.\n\n---\n\n## 2. What Does `pulumi up --target` Skip?\n\n```bash\npulumi up --target 'urn:pulumi:prod::my-stack::aws:sql:Instance:my-db'\n```\n\n**What it skips:**\n\n- Any resource in the stack that has a pending change (update, replace, create, delete) but is **not** the target **and not a dependency of the target**.\n\n**What it does NOT skip:**\n\n- Dependencies of the target that themselves need changes. For example, if your DB depends on a VPC security group and that SG also has a pending change, the SG update is included.\n\n### Concrete example\n\nSuppose `pulumi preview` shows:\n\n```\n+ aws:s3:Bucket assets-bucket         (create)\n~ aws:sql:Instance db                 (replace)\n~ aws:eks:Cluster k8s                 (update)\n~ aws:iam:Role service-role           (update)\n```\n\nRunning:\n\n```bash\npulumi up --target db\n```\n\n| Resource | Action taken? | Reason |\n|---|---|---|\n| `db` | \u2705 Replaced | It's the target |\n| Security group (dependency of `db`) | \u2705 Updated if needed | Dependency of target |\n| `assets-bucket` | \u274c Skipped | Pending create, not target, not a dependency |\n| `k8s` | \u274c Skipped | Pending update, not target, not a dependency |\n| `service-role` | \u274c Skipped | Pending update, not target, not a dependency |\n\n> **Key insight:** `--target` is a *filter*, not a *scope restriction on dependencies*. It's useful for partial rollouts or recovering from a partial failure without touching unrelated resources.\n\n---\n\n## 3. How Does Pulumi Handle Secrets in Outputs?\n\n### Storage & Propagation\n\n```python\nimport pulumi\n\ndb_password = pulumi.Config().require_secret(\"db:password\")\n\ndb = aws.rds.Instance(\"db\",\n    master_password=db_password,\n    # ...\n)\n\n# Exporting a secret as a stack output\npulumi.export(\"dbConnection\", db_password.apply(\n    lambda pw: f\"postgres://admin:{pw}@my-db.abc.us-east-1.rds.amazonaws.com:5432/app\"\n))\n```\n\n**Rules:**\n\n1. **Secrets propagate through `.apply()`** \u2014 if the input `Output` is marked secret, the resulting `Output` is also marked secret. No manual re-wrapping needed.\n2. **The state file stores the value encrypted** (via the stack's passphrase or a configured KMS key / Pulumi Cloud secret backend).\n3. **The output metadata** in the state includes `\"secret\": true`.\n\n### CLI Visibility\n\n| Command | What you see |\n|---|---|\n| `pulumi up` (during apply) | `+ dbConnection: [secret]` |\n| `pulumi preview` | `+ dbConnection: [secretpreview]` |\n| `pulumi stack output` | `dbConnection: [secret]` |\n| `pulumi stack output --show-secrets` | `dbConnection: postgres://admin:SuperSecret123@...` |\n| `pulumi stack output --json` | `{\"dbConnection\": \"[secret]\"}` (unless `--show-secrets`) |\n\n### In Terraform-style `terraform show` / state inspection\n\nThe encrypted blob is stored as a base64-encoded ciphertext in the `.json` state file:\n\n```json\n\"outputs\": {\n  \"dbConnection\": {\n    \"value\": \"1:AAABAA...encrypted...\",\n    \"secret\": true\n  }\n}\n```\n\nThe `1:` prefix indicates Pulumi's secret envelope format (version 1).\n\n### Common pitfalls (from the docs)\n\n| Pitfall | Fix |\n|---|---|\n| `pulumi.export(\"pw\", config.get(\"db:password\"))` \u2192 **not** a secret (`.get()` returns plain string) | Use `config.require_secret(\"db:password\")` |\n| Manually constructing a string with a secret: `f\"conn={pw}\"` outside `.apply()` | Always use `.apply()` to stay in the Output model; propagation is automatic |\n| Exposing a secret in a non-secret output by accident (e.g., passing it to a non-secret field on another resource) | Pulumi marks the *output* as secret, but if you assign it to a public attribute (like a CloudFront origin config), the value is still visible in the API call \u2014 audit carefully |\n\n### Acceptance Criteria Tie-In\n\nThis satisfies criterion #3: *\"never stored in plaintext in Git; encrypted at rest via stack-native mechanism.\"* The `require_secret()` call ensures the value is encrypted in the Pulumi state/backend, and the `[secret]` masking in CLI output prevents accidental logging in CI transcripts (as long as you don't use `--show-secrets` in logs).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-6gemoi9k/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-6gemoi9k/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-6gemoi9k/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-6gemoi9k/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-6gemoi9k/generated_0.json"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-python/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

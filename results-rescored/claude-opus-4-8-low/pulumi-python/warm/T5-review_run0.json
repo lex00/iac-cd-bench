@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1058,
+    "output": 1020
+  },
+  "content": "It looks like the actual Pulumi preview JSON wasn't included in your message \u2014 I only see the scenario spec and task description. Please paste the `pulumi preview --json` output (or attach it) and I'll review it.\n\nIn the meantime, here's exactly **what I'll be looking for** so you know what to include and can even pre-check:\n\n## Review checklist\n\n### 1. Secrets in plaintext outputs\nI'll scan the JSON for:\n- `\"outputs\"` / `\"newState\".\"outputs\"` containing DB connection strings, passwords, tokens as **plaintext** rather than `{\"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", \"plaintext\": \"...\"}` (Pulumi's secret sentinel).\n- Any `stackReferenceOutputs` or `additionalSecretOutputs` that *should* be marked secret but aren't.\n- `steps[].newState.inputs.password` / `masterPassword` (RDS) or `secretString` appearing as raw literals.\n- \u26a0\ufe0f Common leak: a resource property is a secret, but a computed output derived from it (e.g. `connectionString = f\"...{password}...\"`) is **not** wrapped with `Output.secret()`, so it appears plaintext.\n\n### 2. Replacement of stateful resources\nI'll examine each `steps[]` where:\n- `\"op\": \"replace\"` or `\"op\": \"create-replacement\"` / `\"delete-replaced\"`, **and**\n- the resource `type` is stateful: `aws:rds/instance:Instance`, `aws:s3/bucket:Bucket`, `aws:ec2/*` volumes, etc.\n- I'll check `\"replaceReasons\"` / `\"detailedDiff\"` to see *which* property forces replacement (e.g. changing `engineVersion`, `dbName`, `availabilityZone`, bucket name, KMS key). **RDS replacement = data loss risk.**\n\n### 3. Missing `protect` flag\n- For stateful resources (RDS, S3), I'll check `newState.protect` is `true`.\n- Combined with #2: a replacement on an **unprotected** stateful resource is a critical finding (silent data destruction).\n\n### Also cross-checking against your acceptance criteria\n- RDS `deletionProtection: true`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false`\n- S3 versioning + SSE + no public access\n- IAM no wildcard actions (esp. prod)\n- Stack isolation (confirming preview is scoped to one stack, not cross-modifying)\n\n---\n\n**Please paste the preview JSON**, and tell me **which stack** (`dev` or `prod`) it's from \u2014 severity differs (e.g. wildcard IAM or unprotected RDS is critical on prod). I'll return findings as a severity-ranked table with exact JSON paths and remediation snippets.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-python/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 796,
+    "output": 1128
+  },
+  "content": "Because the resource names and CRD schemas are not included, an exact valid patch cannot be produced safely. The following is the prod-only pattern for Upbound AWS resources, assuming:\n\n- The overlay contains one application `Deployment`\n- RDS uses `rds.aws.upbound.io` `DBInstance`\n- An existing `BucketReplicationConfiguration` already references the source bucket, destination bucket, and replication IAM role\n\nAppend these entries to the existing `patches:` list in `overlays/prod/kustomization.yaml`, preserving its current `resources`, Flux configuration, and other patches:\n\n```yaml\npatches:\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      labelSelector: app.kubernetes.io/component=web\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  - target:\n      group: rds.aws.upbound.io\n      kind: DBInstance\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/instanceClass\n        value: db.t3.medium\n      - op: add\n        path: /spec/forProvider/multiAz\n        value: true\n\n  - target:\n      group: s3.aws.upbound.io\n      kind: BucketReplicationConfiguration\n    patch: |-\n      - op: add\n        path: /spec/forProvider/rule/0/status\n        value: Enabled\n      - op: add\n        path: /spec/forProvider/rule/0/destination/0/region\n        value: us-west-2\n```\n\nThis does not modify or get referenced by `overlays/dev/kustomization.yaml`, so the dev rendering remains unchanged.\n\nImportant: S3 cross-region replication also requires a versioned destination bucket in `us-west-2` and an IAM replication role. Kustomize patches can only modify resources that already exist; they cannot create a missing destination bucket, IAM role, or `BucketReplicationConfiguration`. If those resources are not already present in the prod resource graph, the \u201conly modify `overlays/prod/kustomization.yaml` using patches\u201d constraint makes the replication requirement impossible. Resource manifests or their exact kinds/names would be needed to provide a repository-valid patch.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/knr-ops/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "all_stages_inapplicable: every enabled stage had nothing to act on \u2014 the run produced no output any gate could check"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

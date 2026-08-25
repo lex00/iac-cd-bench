@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-9bsqjyo2/generated_3.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\nSummary: 5 resources found in 4 files - Valid: 0, Invalid: 0, Errors: 1, Skipped: 4\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 677,
+    "output": 3129
+  },
+  "content": "\n\n# Adding a Second AWS Region (us-west-2) via ProviderConfig\n\n## Core Principle\n\nCrossplane's multi-region idiom is **ProviderConfig instances**. Each region (or account+region pair) gets its own `ProviderConfig`. Compositions are parameterized on `providerConfigRef`, so a new claim targeting the new region simply references the new `ProviderConfig`\u2014existing claims are untouched.\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  EXISTING (unchanged)                                           \u2502\n\u2502                                                                 \u2502\n\u2502  Claim: web-app-dev                                            \u2502\n\u2502    \u2514\u2500 providerConfigRef: awsconfig-default (us-east-1)         \u2502\n\u2502         \u2514\u2500 ProviderConfig: awsconfig-default                    \u2502\n\u2502              \u2514\u2500 region: us-east-1                               \u2502\n\u2502                                                                 \u2502\n\u2502  CompositionRevision: web-app (same for both)                   \u2502\n\u2502    \u2514\u2500 parameters.providerConfigRef \u2192 flows to all resources     \u2502\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502  NEW                                                            \u2502\n\u2502                                                                 \u2502\n\u2502  Claim: web-app-west                                           \u2502\n\u2502    \u2514\u2500 providerConfigRef: awsconfig-west (us-west-2)            \u2502\n\u2502         \u2514\u2500 ProviderConfig: awsconfig-west                       \u2502\n\u2502              \u2514\u2500 region: us-west-2                               \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n## Step 1 \u2014 New ProviderConfig for us-west-2\n\n```yaml\n# providerconfig-aws-west.yaml\napiVersion: aws.crossplane.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: awsconfig-west\n  labels:\n    crossplane.io/provider: provider-aws\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds\n      key: creds        # same shared credentials (IAM user with cross-region access)\n---\napiVersion: aws.crossplane.io/v1beta1\nkind: ProviderConfigUsage\nmetadata:\n  name: awsconfig-west-usage\nspec:\n  providerConfigRef:\n    name: awsconfig-west\n  providerRef:\n    name: provider-aws\n```\n\n> **Note:** `ProviderConfigUsage` is created automatically by the provider controller when a resource first references the config, but declaring it explicitly makes the intent visible and allows pre-validation.\n\n## Step 2 \u2014 Verify the Composition Is Parameterized\n\nThe composition **must** already accept `providerConfigRef` in its parameters. If it does, no changes are needed. Here's the canonical shape:\n\n```yaml\n# composition-webapp.yaml (EXISTS \u2014 shown for reference, NOT modified)\napiVersion: apiextensions.crossplane.io/v2\nkind: Composition\nmetadata:\n  name: webapp\n  namespace: crossplane-system\n  labels:\n    provider: aws\n  annotations:\n    crossplane.io/compositionRevision: \"1\"\nspec:\n  writableResources:\n    - kind: S3Bucket\n      apiVersion: s3.aws.crossplane.io/v1beta1\n    - kind: DBInstance\n      apiVersion: rds.aws.crossplane.io/v1beta1\n    - kind: Cluster\n      apiVersion: eks.aws.crossplane.io/v1beta1\n    # ...\n\n  mode: Pipeline\n  pipeline:\n    # \u2500\u2500\u2500 Step: Read claim parameters \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    - name: read-params\n      steps:\n        - name: get-claim\n          get:\n            apiVersion: example.org/v1alpha1\n            kind: WebAppClaim\n          transform:\n            - type: ToCompositionDetails\n              fields:\n                - source: spec.forProvider.providerConfigRef.name\n                  target: parameters.providerConfigRef\n                - source: spec.forProvider.env\n                  target: parameters.env\n                - source: spec.forProvider.region\n                  target: parameters.region\n\n    # \u2500\u2500\u2500 Step: Create S3 Bucket \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    - name: create-bucket\n      steps:\n        - name: create-s3\n          patch:\n            enable:\n              - type: FromCompositeResourcePath\n                from: spec.forProvider.providerConfigRef.name\n            patches:\n              - from: \"$(parameters.providerConfigRef)\"\n                to: spec.forProvider.providerConfigRef.name\n              - type: FromEnvironment\n                to: spec.forProvider.region\n                from: \"us-east-1\"   # \u2190 overridden by parameter in step below\n              - type: FromCompositionParameter\n                to: spec.forProvider.region\n                from: region\n              - type: FromEnvironment\n                to: spec.forProvider.versioning.status\n                from: \"Enabled\"\n              - type: FromEnvironment\n                to: spec.forProvider.serverSideEncryption.type\n                from: \"AES256\"\n              - type: FromEnvironment\n                to: spec.forProvider.publicAccessBlock.blockPublicAcls\n                from: true\n              - type: FromEnvironment\n                to: spec.forProvider.publicAccessBlock.blockPublicPolicy\n                from: true\n              - type: FromEnvironment\n                to: spec.forProvider.publicAccessBlock.ignorePublicAcls\n                from: true\n              - type: FromEnvironment\n                to: spec.forProvider.publicAccessBlock.restrictPublicBuckets\n                from: true\n\n    # \u2500\u2500\u2500 Step: Create RDS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    - name: create-rds\n      steps:\n        - name: create-db\n          patch:\n            enable:\n              - type: FromCompositeResourcePath\n                from: spec.forProvider.providerConfigRef.name\n            patches:\n              - from: \"$(parameters.providerConfigRef)\"\n                to: spec.forProvider.providerConfigRef.name\n              - type: FromCompositionParameter\n                to: spec.forProvider.region\n                from: region\n              - type: FromCompositionParameter\n                to: spec.forProvider.dbInstanceClass\n                from: dbInstanceClass    # sized per env\n              - type: FromEnvironment\n                to: spec.forProvider.deletionProtection\n                from: true\n              - type: FromEnvironment\n                to: spec.forProvider.backupRetentionPeriod\n                from: 7\n              - type: FromEnvironment\n                to: spec.forProvider.publiclyAccessible\n                from: false\n\n    # \u2500\u2500\u2500 Step: Create EKS \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n    - name: create-eks\n      steps:\n        - name: create-cluster\n          patch:\n            enable:\n              - type: FromCompositeResourcePath\n                from: spec.forProvider.providerConfigRef.name\n            patches:\n              - from: \"$(parameters.providerConfigRef)\"\n                to: spec.forProvider.providerConfigRef.name\n              - type: FromCompositionParameter\n                to: spec.forProvider.region\n                from: region\n              # ... node group sizing per env\n\n  # Crossplane v2 composite resource definition reference\n  compositeTypeRef:\n    apiVersion: example.org/v1alpha1\n    kind: WebApp\n```\n\n### Key line that makes multi-region work:\n\n```yaml\n- from: \"$(parameters.providerConfigRef)\"\n  to: spec.forProvider.providerConfigRef.name\n```\n\nEvery managed resource in the pipeline receives the `providerConfigRef` from the claim. This is what routes AWS API calls to the correct region.\n\n## Step 3 \u2014 New Claim for us-west-2\n\n```yaml\n# claim-webapp-west.yaml\napiVersion: example.org/v1alpha1\nkind: WebAppClaim\nmetadata:\n  name: webapp-west-prod\n  labels:\n    app: webapp\n    env: prod\n    region: us-west-2\nspec:\n  forProvider:\n    providerConfigRef:\n      name: awsconfig-west       # \u2190 routes to us-west-2\n    region: us-west-2\n    env: prod\n    dbInstanceClass: db.t3.medium\n    nodeInstanceType: t3.large\n    nodeCount: 4\n    s3Replication: true          # enables cross-region replication from us-east-1\n  resources:\n    - name: bucket\n      base:\n        apiVersion: s3.aws.crossplane.io/v1beta1\n        kind: S3Bucket\n      parameters:\n        bucketName: myapp-assets-west\n    - name: db\n      base:\n        apiVersion: rds.aws.crossplane.io/v1beta1\n        kind: DBInstance\n      parameters:\n        identifier: myapp-db-west\n    - name: cluster\n      base:\n        apiVersion: eks.aws.crossplane.io/v1beta1\n        kind: Cluster\n      parameters:\n        name: myapp-eks-west\n```\n\n## Step 4 \u2014 Cross-Region S3 Replication (Prod Only)\n\nSince the spec says prod's S3 bucket has cross-region replication to us-west-2, you extend the composition's pipeline with a conditional step:\n\n```yaml\n# Added to composition pipeline (conditional step)\n    - name: configure-replication\n      steps:\n        - name: check-flag\n          observe:\n            apiVersion: s3.aws.crossplane.io/v1beta1\n            kind: S3Bucket\n            namespace: crossplane-system\n            name: myapp-assets-east   # the source bucket in us-east-1\n          transform:\n            - type: ToCompositionDetails\n              fields:\n                - source: spec.forProvider.replication.enabled\n                  target: parameters.replicationEnabled\n\n        - name: add-destination\n          patch:\n            enable:\n              - type: FromCompositionParameter\n                from: s3Replication\n                variables:\n                  - name: flag\n                    type: Boolean\n                to: true\n            patches:\n              - type: FromEnvironment\n                to: spec.forProvider.replication.destination.bucket\n                from: \"myapp-assets-west\"\n              - type: FromEnvironment\n                to: spec.forProvider.replication.destination.region\n                from: \"us-west-2\"\n```\n\n## Step 5 \u2014 Verification\n\n```bash\n# Existing claim is unchanged\nkubectl get webappclaim webapp-dev -o yaml | grep providerConfigRef\n# \u2192 name: awsconfig-default\n\n# New claim targets the new region\nkubectl get webappclaim webapp-west-prod -o yaml | grep providerConfigRef\n# \u2192 name: awsconfig-west\n\n# Resources in us-west-2 are bound to the correct provider config\nkubectl get s3bucket -A | grep west\n# NAMESPACE          NAME                   READY   SYNCED   PROVIDERCONFIG\n# crossplane-system  myapp-assets-west       Ready   True     awsconfig-west\n\nkubectl get dbinstance -A | grep west\n# NAMESPACE          NAME              READY   SYNCED   PROVIDERCONFIG\n# crossplane-system  myapp-db-west     Ready   True     awsconfig-west\n\n# Confirm dev/prod in us-east-1 are untouched\nkubectl get webappclaim webapp-dev -o jsonpath='{.status.conditions[?(@.type==\"Synced\")].status}'\n# \u2192 True\n```\n\n## Why Existing Claims Are Unaffected\n\n| Mechanism | Explanation |\n|-----------|-------------|\n| **ProviderConfig is a value, not a reference to a mutable object** | `awsconfig-default` still points to us-east-1. Nothing about it changed. |\n| **Claims carry their own `providerConfigRef`** | Each claim independently specifies which ProviderConfig to use. There is no global \"default region\" that could be accidentally flipped. |\n| **Composition is stateless with respect to region** | The composition receives `providerConfigRef` and `region` as parameters. It has no hardcoded region. |\n| **Crossplane reconciliation is per-claim** | The composition engine reconciles each `WebApp` composite independently. Adding a new claim triggers a new reconciliation; it does not re-trigger existing ones. |\n\n## Summary of Files Changed / Added\n\n| File | Action |\n|------|--------|\n| `providerconfig-aws-west.yaml` | **New** \u2014 ProviderConfig + Usage for us-west-2 |\n| `composition-webapp.yaml` | **Unchanged** (already parameterized on `providerConfigRef`) |\n| `claim-webapp-west.yaml` | **New** \u2014 claim targeting `awsconfig-west` |\n| `composition-webapp.yaml` (replication step) | **Optional patch** \u2014 conditional S3 replication for prod |\n\nNo existing claims, no existing ProviderConfigs, no existing composition revisions are modified.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-9bsqjyo2/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-9bsqjyo2/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-9bsqjyo2/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-9bsqjyo2/generated_3.yaml"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/crossplane/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

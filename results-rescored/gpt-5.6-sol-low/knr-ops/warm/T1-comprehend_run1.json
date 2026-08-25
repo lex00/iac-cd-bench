@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1345,
+    "output": 1160
+  },
+  "content": "1. **What reconciles, and in what order?**\n\nAfter merge:\n\n1. The Flux `GitRepository` detects/fetches the new revision.\n2. Each affected Flux `Kustomization` builds its configured path.\n3. Kustomize applies bases and environment-specific patches, then Flux applies the rendered resources.\n4. Kubernetes controllers reconcile those resources:\n   - ACK RDS reconciles the changed RDS `Instance` CR against AWS.\n   - ACK S3 reconciles the new bucket CR and creates/configures the AWS bucket.\n   - The Kubernetes Deployment controller scales the prod app to four replicas.\n\nThe exact ordering cannot be determined from the repository structure alone. It is governed by `flux/kustomizations.yaml`, particularly `spec.dependsOn`. A typical chain would be:\n\n```text\ncluster/controllers \u2192 infrastructure \u2192 application\n```\n\nKubernetes resources within one Flux Kustomization should not be assumed to have a strict file or apply order.\n\nOnly rendered outputs that actually change reconcile materially. If `infra/rds/instance.yaml` is shared by both overlays, changing it from `db.t3.micro` to `db.t3.medium` can affect both dev and prod unless an overlay patches it back. That would violate the intended dev sizing. Likewise, the new S3 manifest is delivered only by overlays/Kustomizations that include it.\n\n---\n\n2. **Does the RDS instance get recreated?**\n\nNormally, no. ACK observes the changed `Instance` custom resource and requests an AWS RDS modification. `DBInstanceClass` is generally a mutable RDS property, so AWS resizes the existing instance rather than deleting and recreating it.\n\nOperationally, the change may:\n\n- be applied immediately or during the maintenance window, depending on the manifest/controller configuration;\n- cause a reboot or temporary interruption;\n- remain reported as pending while AWS performs the modification.\n\nRecreation would occur only if an immutable property were changed, the ACK API/controller required replacement for that field/version, or the resource were explicitly deleted and recreated. `deletionProtection` protects against deletion; it does not prevent an in-place class modification.\n\n---\n\n3. **What happens if the S3 manifest is deleted from Git?**\n\nIf the owning Flux Kustomization has `spec.prune: true`, Flux deletes the Kubernetes ACK `Bucket` resource because it is no longer in the rendered desired state. ACK then processes deletion of the corresponding AWS resource according to its deletion/adoption policy.\n\nImportant qualifications:\n\n- An S3 bucket generally cannot be deleted while it contains objects or object versions.\n- With versioning enabled, all versions and delete markers must usually be removed first.\n- A retention/orphan annotation or ACK policy can preserve the AWS bucket even when the Kubernetes object is removed.\n- With `prune: false`, Flux will not delete the Kubernetes resource merely because its manifest disappeared.\n\nThus, \u201cdeleted from Git\u201d does not unconditionally mean \u201cAWS bucket immediately disappears.\u201d The effective result depends on Flux pruning, ACK deletion policy, and whether AWS permits the bucket deletion.\n\n---\n\n4. **How is the prod-only replica change handled?**\n\nFlux builds the prod overlay, where Kustomize applies the patch to the matching Deployment and renders:\n\n```yaml\nspec:\n  replicas: 4\n```\n\nFlux applies that rendered Deployment to the prod cluster/namespace, and the Deployment controller scales toward four replicas.\n\nThe dev overlay is unaffected provided that:\n\n- dev and prod have separate Flux Kustomizations or independently rendered paths; and\n- the replica patch exists only in `overlays/prod`.\n\nFlux does not apply the patch directly as a standalone object; Kustomize merges it into the target during rendering. The target\u2019s name, namespace, group, version, and kind must match correctly or the Kustomize build/reconciliation may fail.\n\n---\n\n5. **What does `dependsOn` do?**\n\n`spec.dependsOn` establishes dependency ordering between Flux **Kustomizations**. A dependent Kustomization is not reconciled until its dependencies are considered ready.\n\nFor example:\n\n```text\nACK controllers/CRDs\n        \u2193\nAWS infrastructure CRs\n        \u2193\napplication resources\n```\n\nThis prevents infrastructure custom resources from being applied before their CRDs/controllers exist and can prevent the application layer from being applied before its infrastructure layer is ready.\n\nIt does **not**:\n\n- define ordering between individual YAML files inside one Kustomization;\n- inherently order individual S3, RDS, and IAM resources within the same Kustomization;\n- necessarily prove that an AWS service is fully usable unless readiness/health checks expose and validate that state.\n\nIf an upstream Kustomization fails\u2014for example, because SOPS decryption fails or an ACK CR is unhealthy\u2014the dependent Kustomization remains blocked. Once the dependency becomes ready, Flux proceeds with the dependent reconciliation.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/knr-ops/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

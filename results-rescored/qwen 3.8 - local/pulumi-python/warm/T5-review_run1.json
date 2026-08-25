@@ -1,0 +1,88 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 3432
+  },
+  "content": "```python\nimport pulumi\nimport pulumi_aws as aws\nimport pulumi_kubernetes as k8s\n\n# Retrieve stack configuration\nconfig = pulumi.Config()\nenv = config.require(\"environment\")  # 'dev' or 'prod'\n\n# Determine environment-specific values\nif env == \"dev\":\n    region = \"us-east-1\"\n    node_instance_type = \"t3.medium\"\n    node_count = 2\n    rds_instance_type = \"db.t3.micro\"\n    rds_multi_az = False\n    rds_encrypted = False\n    alb_internal = True\n    cloudfront_enabled = False\nelif env == \"prod\":\n    region = \"us-east-1\"\n    node_instance_type = \"t3.large\"\n    node_count = 4\n    rds_instance_type = \"db.t3.medium\"\n    rds_multi_az = True\n    rds_encrypted = True\n    alb_internal = False\n    cloudfront_enabled = True\nelse:\n    raise ValueError(f\"Unknown environment: {env}\")\n\npulumi.export(\"region\", region)\n\n# ---------------------------------------------------------------------------\n# S3 Bucket\n# ---------------------------------------------------------------------------\nbucket = aws.s3.Bucket(\n    \"app-assets\",\n    bucket= f\"app-assets-{env}\",\n    acl=\"private\",\n)\n\nbucket_versioning = aws.s3.BucketVersioning(\n    \"app-assets-versioning\",\n    bucket=bucket.id,\n    versioning_configuration={\n        \"status\": \"Enabled\",\n    },\n)\n\nbucket_encryption = aws.s3.BucketServerSideEncryptionConfiguration(\n    \"app-assets-encryption\",\n    bucket=bucket.id,\n    rules=[\n        {\n            \"apply_server_side_encryption_by_default\": {\n                \"sse_algorithm\": \"aws:kms\",\n            },\n        }\n    ],\n)\n\nbucket_public_access_block = aws.s3.BucketPublicAccessBlock(\n    \"app-assets-public-access-block\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# ---------------------------------------------------------------------------\n# IAM for service account\n# ---------------------------------------------------------------------------\nservice_account_role_name = f\"svc-{env}\"\n\nif env == \"prod\":\n    # OIDC trust policy for least-privilege role\n    issuer_url = \"https://oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE\"\n    trust_policy = {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n            {\n                \"Effect\": \"Allow\",\n                \"Principal\": {\n                    \"Federated\": \"arn:aws:iam::123456789012:role/eks-oidc-provider\"\n                },\n                \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n                \"Condition\": {\n                    \"StringEquals\": {\n                        f\"{issuer_url}:sub\": f\"system:serviceaccount:default:app-{env}\",\n                        f\"{issuer_url}:aud\": \"sts.amazonaws.com\",\n                    }\n                },\n            }\n        ],\n    }\nelse:\n    # Programmatic access: assume role by EC2 (EKS node)\n    trust_policy = {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n            {\n                \"Effect\": \"Allow\",\n                \"Principal\": {\n                    \"Service\": \"ec2.amazonaws.com\",\n                },\n                \"Action\": \"sts:AssumeRole\",\n            }\n        ],\n    }\n\nservice_account_role = aws.iam.Role(\n    \"service-account\",\n    name=service_account_role_name,\n    assume_role_policy=pulumi.Output.json.dumps(trust_policy),\n)\n\n# Least-privilege policy: no wildcard actions\nservice_account_policy = aws.iam.Policy(\n    \"service-account-policy\",\n    name=f\"svc-{env}-policy\",\n    policy=pulumi.Output.json.dumps({\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n            {\n                \"Effect\": \"Allow\",\n                \"Action\": [\n                    \"s3:GetObject\",\n                    \"s3:PutObject\",\n                    \"rds:DescribeDBInstances\",\n                ],\n                \"Resource\": [\n                    f\"arn:aws:s3:::app-assets-{env}/*\",\n                    \"arn:aws:rds:us-east-1:123456789012:db:app-db-*\",\n                ],\n            },\n        ],\n    }),\n)\n\naws.iam.RolePolicyAttachment(\n    \"service-account-policy-attach\",\n    role=service_account_role.name,\n    policy_arn=service_account_policy.arn,\n)\n\n# ---------------------------------------------------------------------------\n# RDS PostgreSQL\n# ---------------------------------------------------------------------------\ndb_subnet_group = aws.rds.SubnetGroup(\n    \"db-subnet-group\",\n    name=f\"db-subnet-{env}\",\n    subnet_ids=[\"subnet-aaa\", \"subnet-bbb\"],  # VPC subnets (example)\n)\n\ndb_security_group = aws.ec2.SecurityGroup(\n    \"db-security-group\",\n    name=f\"db-sg-{env}\",\n    description=\"RDS PostgreSQL security group\",\n    egress=[\n        {\n            \"protocol\": \"-1\",\n            \"from_port\": 0,\n            \"to_port\": 0,\n            \"cidr_blocks\": [\"0.0.0.0/0\"],\n        },\n    ],\n)\n\ndb_security_group_ingress = aws.ec2.SecurityGroupIngress(\n    \"db-security-group-ingress\",\n    security_group_id=db_security_group.id,\n    protocol=\"tcp\",\n    from_port=5432,\n    to_port=5432,\n    cidr_blocks=[\"10.0.0.0/8\"],  # VPC internal range\n)\n\n# Get VPC id (assumed existing or created elsewhere; for preview, use a placeholder)\nvpc_id = \"vpc-12345678\"\n\ndb_instance = aws.rds.Instance(\n    \"app-db\",\n    identifier=f\"app-db-{env}\",\n    engine=\"postgres\",\n    engine_version=\"15.0\",\n    instance_class=rds_instance_type,\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"appuser\",\n    password=config.require_secret(\"db_password\"),\n    multi_az=rds_multi_az,\n    storage_encrypted=rds_encrypted,\n    deletion_protection=True,\n    backup_retention_period=7,\n    publicly_accessible=False,\n    db_subnet_group_name=db_subnet_group.name,\n    vpc_security_group_ids=[db_security_group.id],\n    skip_final_snapshot=True,\n    final_snapshot_identifier=f\"final-snap-app-db-{env}\",\n)\n\n# ---------------------------------------------------------------------------\n# Kubernetes Cluster (EKS)\n# ---------------------------------------------------------------------------\neks_vpc = aws.ec2.Vpc(\n    \"eks-vpc\",\n    cidr_block=\"10.0.0.0/16\",\n    enable_dns_support=True,\n    enable_dns_hostnames=True,\n)\n\neks_subnet_1 = aws.ec2.Subnet(\n    \"eks-subnet-1\",\n    vpc_id=eks_vpc.id,\n    cidr_block=\"10.0.1.0/24\",\n    availability_zone=\"us-east-1a\",\n)\n\neks_subnet_2 = aws.ec2.Subnet(\n    \"eks-subnet-2\",\n    vpc_id=eks_vpc.id,\n    cidr_block=\"10.0.2.0/24\",\n    availability_zone=\"us-east-1b\",\n)\n\neks_role = aws.iam.Role(\n    \"eks-role\",\n    name=f\"eks-role-{env}\",\n    assume_role_policy=pulumi.Output.json.dumps({\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n            {\n                \"Effect\": \"Allow\",\n                \"Principal\": {\"Service\": \"eks.amazonaws.com\"},\n                \"Action\": \"sts:AssumeRole\",\n            }\n        ],\n    }),\n)\n\naws.iam.RolePolicyAttachment(\n    \"eks-role-aws-eks-cluster-policy\",\n    role=eks_role.name,\n    policy_arn=\"arn:aws:iam::aws:policy/AmazonEKSClusterPolicy\",\n)\n\neks_cluster = aws.eks.Cluster(\n    \"eks-cluster\",\n    name=f\"eks-{env}\",\n    role_arn=eks_role.arn,\n    vpc_config={\n        \"subnets\": [eks_subnet_1.id, eks_subnet_2.id],\n        \"security_groups\": [db_security_group.id],\n    },\n    version=\"1.28\",\n    enabled_cluster_log_types=[\"api\", \"authenticator\"],\n)\n\neks_node_role = aws.iam.Role(\n    \"eks-node-role\",\n    name=f\"eks-node-role-{env}\",\n    assume_role_policy=pulumi.Output.json.dumps({\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n            {\n                \"Effect\": \"Allow\",\n                \"Principal\": {\"Service\": \"ec2.amazonaws.com\"},\n                \"Action\": \"sts:AssumeRole\",\n            }\n        ],\n    }),\n)\n\naws.iam.RolePolicyAttachment(\n    \"eks-node-role-aws-eks-worker-policy\",\n    role=eks_node_role.name,\n    policy_arn=\"arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy\",\n)\n\naws.iam.RolePolicyAttachment(\n    \"eks-node-role-aws-eks-cni-policy\",\n    role=eks_node_role.name,\n    policy_arn=\"arn:aws:iam::aws:policy/AmazonEKSCNIPolicy\",\n)\n\neks_node_group = aws.eks.NodeGroup(\n    \"eks-node-group\",\n    cluster_name=eks_cluster.name,\n    node_role=eks_node_role.arn,\n    subnets=[eks_subnet_1.id, eks_subnet_2.id],\n    scaling_config={\n        \"desired_size\": node_count,\n        \"min_size\": 1,\n        \"max_size\": node_count,\n    },\n    instance_types=[node_instance_type],\n    disk_size=50,\n    capacity_type=\"ON_DEMAND\",\n)\n\n# ---------------------------------------------------------------------------\n# Load Balancer (ALB internal for dev, public for prod)\n# ---------------------------------------------------------------------------\nalb_security_group = aws.ec2.SecurityGroup(\n    \"alb-security-group\",\n    name=f\"alb-sg-{env}\",\n    description=\"ALB security group\",\n    egress=[\n        {\n            \"protocol\": \"-1\",\n            \"from_port\": 0,\n            \"to_port\": 0,\n            \"cidr_blocks\": [\"0.0.0.0/0\"],\n        },\n    ],\n)\n\nalb_security_group_ingress = aws.ec2.SecurityGroupIngress(\n    \"alb-security-group-ingress\",\n    security_group_id=alb_security_group.id,\n    protocol=\"tcp\",\n    from_port=443,\n    to_port=443,\n    cidr_blocks=[\"0.0.0.0/0\"],\n)\n\n# ALB does not exist in pulumi_aws as a single resource; use aws.lb.LoadBalancer\nalb = aws.lb.LoadBalancer(\n    \"alb\",\n    name=f\"alb-{env}\",\n    internal=alb_internal,\n    load_balancer_type=\"application\",\n    security_groups=[alb_security_group.id],\n    subnets=[eks_subnet_1.id, eks_subnet_2.id],\n)\n\nalb_listener_443 = aws.lb.Listener(\n    \"alb-listener-443\",\n    load_balancer_arn=alb.arn,\n    port=443,\n    protocol=\"HTTPS\",\n    ssl_policy=\"ELBSecurityPolicy-2016-08\",\n    certificates=[{\n        \"certificate_arn\": \"arn:aws:acm:us-east-1:123456789012:certificate/example\",\n    }] if cloudfront_enabled else [],\n    default_actions=[\n        {\n            \"type\": \"forward\",\n            \"target_group_arns\": [],  # Will be set after target group creation\n        },\n    ],\n)\n\nalb_target_group = aws.lb.TargetGroup(\n    \"alb-target-group\",\n    name=f\"alb-tg-{env}\",\n    port=80,\n    protocol=\"HTTP\",\n    vpc_id=eks_vpc.id,\n    target_type=\"ip\",\n    health_check={\n        \"enabled\": True,\n        \"path\": \"/healthz\",\n        \"port\": \"traffic-port\",\n        \"protocol\": \"HTTP\",\n        \"healthy_threshold\": 2,\n        \"unhealthy_threshold\": 3,\n        \"timeout\": 5,\n        \"interval\": 30,\n    },\n)\n\n# Update listener to point to target group\nalb_listener_443_options = aws.lb.ListenerDefaultAction(\n    \"alb-listener-default-action\",\n    listener_arn=alb_listener_443.arn,\n    type=\"forward\",\n    target_group_arns=[alb_target_group.arn],\n)\n\n# ---------------------------------------------------------------------------\n# CloudFront (prod only)\n# ---------------------------------------------------------------------------\nif cloudfront_enabled:\n    cloudfront_distribution = aws.cloudfront.Distribution(\n        \"cloudfront-dist\",\n        enabled=True,\n        comment=f\"CloudFront distribution for {env}\",\n        price_class=\"PriceClass_100\",\n        default_root_object=\"index.html\",\n        origins=[\n            {\n                \"domain_name\": alb.dns_name,\n                \"origin_id\": \"alb-origin\",\n            },\n        ],\n        default_cache_behavior={\n            \"target_origin_id\": \"alb-origin\",\n            \"viewer_protocol_policy\": \"https-only\",\n            \"allowed_methods\": [\n                \"GET\", \"HEAD\", \"OPTIONS\", \"PUT\", \"PATCH\", \"POST\", \"DELETE\",\n            ],\n            \"cached_methods\": [\"GET\", \"HEAD\"],\n            \"forwarded_values\": {\n                \"query_string\": True,\n                \"cookie\": {\n                    \"forward\": \"all\",\n                },\n            },\n            \"min_ttl\": 0,\n            \"default_ttl\": 3600,\n            \"max_ttl\": 86400,\n        },\n        restrictions={\n            \"geo_restriction\": {\n                \"restriction_type\": \"none\",\n            },\n        },\n        viewer_certificate={\n            \"cloudfront_default_certificate\": False,\n            \"acm_certificate_arn\": \"arn:aws:acm:us-east-1:123456789012:certificate/example\",\n        },\n    )\n    pulumi.export(\"cloudfront_domain\", cloudfront_distribution.domain_name)\nelse:\n    pulumi.export(\"alb_dns\", alb.dns_name)\n\n# ---------------------------------------------------------------------------\n# Secret (DB connection string) - using Pulumi ConfigSecret\n# ---------------------------------------------------------------------------\ndb_password = config.require_secret(\"db_password\")\ndb_conn_string = pulumi.secret(pulumi.interpolate.f\"postgres://appuser:{db_password}@{db_instance.endpoint}:5432/appdb\")\n\npulumi.export(\"db_connection_string_secret\", db_conn_string)\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-dc6gtvzx/generated_0.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/pulumi-python/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-a2q5wj4q/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-a2q5wj4q/index.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-types"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n============================== 2 passed in 0.01s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1081,
+    "output": 1185
+  },
+  "content": "Use `.apply()` to transform Pulumi outputs and obtain the database password from encrypted stack configuration rather than wrapping a plaintext literal.\n\n### `index.ts`\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") ?? pulumi.getStack();\n\nif (env !== \"dev\" && env !== \"prod\") {\n    throw new Error(`Unsupported environment \"${env}\"; expected \"dev\" or \"prod\".`);\n}\n\nconst isProd = env === \"prod\";\n\n// Must be configured with `pulumi config set --secret dbPassword ...`.\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\n// S3 bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: {\n        enabled: true,\n    },\n    serverSideEncryptionConfiguration: {\n        rule: {\n            applyServerSideEncryptionByDefault: {\n                sseAlgorithm: \"AES256\",\n            },\n        },\n    },\n    tags: {\n        Environment: env,\n        Project: \"myapp\",\n    },\n});\n\nnew aws.s3.BucketPublicAccessBlock(\"app-bucket-public-access-block\", {\n    bucket: bucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n});\n\n// Transform the Output with apply; do not await it.\nconst bucketUrl = bucket.bucketRegionalDomainName.apply(\n    hostname => `https://${hostname}`,\n);\n\n// RDS PostgreSQL\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app-user\",\n    password: dbPassword,\n\n    multiAz: isProd,\n    storageEncrypted: isProd,\n    publiclyAccessible: false,\n    deletionProtection: true,\n    backupRetentionPeriod: 7,\n\n    // Retain a final snapshot if the instance is intentionally destroyed.\n    skipFinalSnapshot: false,\n    finalSnapshotIdentifier: `myapp-${env}-final-snapshot`,\n\n    tags: {\n        Environment: env,\n        Project: \"myapp\",\n    },\n});\n\nexport const bucketEndpoint = bucketUrl;\nexport const dbEndpoint = db.endpoint;\n```\n\nConfigure each stack independently:\n\n```bash\npulumi stack select dev\npulumi config set env dev\npulumi config set aws:region us-east-1\npulumi config set --secret dbPassword '<dev-password>'\n\npulumi stack select prod\npulumi config set env prod\npulumi config set aws:region us-east-1\npulumi config set --secret dbPassword '<prod-password>'\n```\n\nThis fixes both preview issues:\n\n- `bucketUrl` is now an `Output<string>`, produced via `.apply()`, rather than a `Promise`.\n- `dbPassword` is a secret `Output<string>` backed by encrypted Pulumi stack configuration, not plaintext wrapped with `pulumi.output()`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-a2q5wj4q/index.ts"
+  ],
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.6666666666666666
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/pulumi-typescript/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.6666666666666666,
+      "attempted_stages": 3,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.6666666666666666
+    },
+    "corrected_composite_no_idiom": 0.75,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}
