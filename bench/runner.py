@@ -31,10 +31,16 @@ GROUNDING_STACKS = frozenset({"knr-ops", "crossplane"})
 log = logging.getLogger(__name__)
 
 
-def validate_grounding_stacks(stacks: list[str], grounding: bool = False) -> None:
-    """Reject grounding runs that include stacks without Kubernetes schemas."""
+def validate_grounding_stacks(
+    stacks: list[str],
+    grounding: bool = False,
+    results_tag: str | None = None,
+) -> None:
+    """Validate grounding's required result isolation and supported stacks."""
     if not grounding:
         return
+    if not results_tag or not results_tag.strip():
+        raise ValueError("--grounding requires a non-empty --results-tag")
     unsupported = sorted(set(stacks) - GROUNDING_STACKS)
     if unsupported:
         names = ", ".join(unsupported)
@@ -567,7 +573,7 @@ def main() -> None:
     # Parse stacks
     stacks = [args.stack] if args.stack else (ALL_STACKS if args.stacks == "all" else args.stacks.split(","))
     try:
-        validate_grounding_stacks(stacks, args.grounding)
+        validate_grounding_stacks(stacks, args.grounding, args.results_tag)
     except ValueError as exc:
         parser.error(str(exc))
 

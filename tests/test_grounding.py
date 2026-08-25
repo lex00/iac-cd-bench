@@ -35,14 +35,15 @@ class FakeTransport:
 def test_client_calls_get_schema_with_kind_and_apiversion():
     response = FakeResponse(
         '{"jsonrpc": "2.0", "id": 1, "result": '
-        '{"content": [{"type": "text", "text": "{\\"description\\": \\"x\\"}"}]}}'
+        '{"content": [{"type": "text", "text": "{\\"type\\": \\"object\\", '
+        '\\"properties\\": {\\"spec\\": {\\"type\\": \\"object\\"}}}"}]}}'
     )
     transport = FakeTransport([response])
 
     client = MCPClient(transport=transport)
     output = client.get_schema("Kustomization", "kustomize.toolkit.fluxcd.io/v1")
 
-    assert output.startswith("{")
+    assert json.loads(output)["type"] == "object"
     sent = transport.posts[0]
     assert sent["url"] == "https://schemas.fluxoperator.dev/mcp"
     assert sent["headers"] == {
@@ -62,6 +63,57 @@ def test_client_calls_get_schema_with_kind_and_apiversion():
         },
     }
     assert sent["timeout"] == 60.0
+
+
+def test_get_schema_rejects_non_json_schema_text():
+    response = FakeResponse(
+        '{"jsonrpc":"2.0","id":1,"result":{"content":['
+        '{"type":"text","text":"upstream temporarily unavailable"}]}}'
+    )
+
+    with pytest.raises(RuntimeError, match="get_schema.*valid JSON"):
+        MCPClient(transport=FakeTransport([response])).get_schema(
+            "Kustomization", "kustomize.toolkit.fluxcd.io/v1"
+        )
+
+
+def test_get_schema_rejects_tool_error_or_limit_json():
+    response = FakeResponse(
+        '{"jsonrpc":"2.0","id":1,"result":{"content":['
+        '{"type":"text","text":"{\\"error\\":\\"rate limit exceeded\\", '
+        '\\"limit\\":100}"}]}}'
+    )
+
+    with pytest.raises(RuntimeError, match="error/limit payload"):
+        MCPClient(transport=FakeTransport([response])).get_schema(
+            "Kustomization", "kustomize.toolkit.fluxcd.io/v1"
+        )
+
+
+def test_get_schema_rejects_unrecognized_json_object():
+    response = FakeResponse(
+        '{"jsonrpc":"2.0","id":1,"result":{"content":['
+        '{"type":"text","text":"{\\"unexpected\\":\\"value\\"}"}]}}'
+    )
+
+    with pytest.raises(RuntimeError, match="recognizable JSON Schema"):
+        MCPClient(transport=FakeTransport([response])).get_schema(
+            "Kustomization", "kustomize.toolkit.fluxcd.io/v1"
+        )
+
+
+def test_schema_cache_does_not_write_rejected_mcp_schema(tmp_path):
+    response = FakeResponse(
+        '{"jsonrpc":"2.0","id":1,"result":{"content":['
+        '{"type":"text","text":"not JSON"}]}}'
+    )
+    client = MCPClient(transport=FakeTransport([response]))
+    cache = SchemaCache(tmp_path)
+
+    with pytest.raises(RuntimeError, match="grounding cannot continue"):
+        cache.get("Kustomization", "kustomize.toolkit.fluxcd.io/v1", client.get_schema)
+
+    assert not (tmp_path / "Kustomization_kustomize.toolkit.fluxcd.io_v1.json").exists()
 
 
 def test_client_calls_grep_catalog_with_query():
