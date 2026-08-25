@@ -31,6 +31,10 @@ LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
     "pulumi-typescript": [
         ("tsc", ["--noEmit", "--skipLibCheck"], "tsc check"),
     ],
+    "chant": [
+        ("chant", ["lint", "."], "chant lint"),
+        ("tsc", ["--noEmit", "--skipLibCheck"], "tsc check"),
+    ],
 }
 
 
@@ -50,7 +54,7 @@ def run_lint(workspace: Path, stack: str) -> dict:
         # If no YAML files exist, lint passes (nothing to lint)
         if not files:
             return {"passed": True, "logs": "no YAML files in workspace"}
-    elif stack == "pulumi-typescript":
+    elif stack in ("pulumi-typescript", "chant"):
         files = [str(f) for f in workspace.rglob("*.ts")]
         # If no TS files exist, lint passes (nothing to lint)
         if not files:
@@ -61,6 +65,10 @@ def run_lint(workspace: Path, stack: str) -> dict:
     for cmd, args, description in commands:
         if stack in ("knr-ops", "crossplane", "pulumi-typescript"):
             cmd_args: list[str] = [cmd] + args + files
+        elif stack == "chant":
+            # "chant lint ." already targets the workspace itself; only tsc
+            # (which needs explicit inputs) gets the discovered .ts files.
+            cmd_args = [cmd] + args + files if cmd == "tsc" else [cmd] + args
         else:
             cmd_args = [cmd] + args
         log.info("Running lint: %s (%s)", cmd, description)

@@ -27,6 +27,8 @@ def run_static(workspace: Path, stack: str) -> dict:
         all_passed &= _terraform_static(workspace, results)
     elif stack in ("pulumi-python", "pulumi-typescript"):
         all_passed &= _pulumi_static(workspace, results)
+    elif stack == "chant":
+        all_passed &= _chant_static(workspace, results)
     else:
         results.append(f"no static commands for stack: {stack}")
 
@@ -164,5 +166,60 @@ def _pulumi_static(workspace: Path, results: list[str]) -> bool:
         passed = False
     except FileNotFoundError:
         results.append("NOT FOUND: pulumi")
+
+    return passed
+
+
+def _chant_static(workspace: Path, results: list[str]) -> bool:
+    """Build the chant workspace to YAML, then validate the emitted manifests
+    with kubeconform (mirrors knr-ops's kubeconform usage)."""
+    passed = True
+
+    build_out = workspace / "build" / "manifests.yaml"
+
+    log.info("chant build -f yaml")
+    try:
+        build_out.parent.mkdir(parents=True, exist_ok=True)
+        proc = subprocess.run(
+            ["chant", "build", ".", "-f", "yaml", "-o", str(build_out)],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(workspace),
+        )
+        results.append(f"chant build -f yaml: exit={proc.returncode}")
+        if proc.stdout:
+            results.append(proc.stdout[:500])
+        if proc.stderr:
+            results.append(f"ERR: {proc.stderr[:500]}")
+        if proc.returncode != 0:
+            passed = False
+    except subprocess.TimeoutExpired:
+        results.append("TIMEOUT: chant build -f yaml")
+        passed = False
+    except FileNotFoundError:
+        results.append("NOT FOUND: chant")
+        return passed
+
+    if not build_out.exists():
+        results.append("chant build produced no manifest; skipping kubeconform")
+        return passed
+
+    log.info("kubeconform %s", build_out)
+    try:
+        proc = subprocess.run(
+            ["kubeconform", "-summary", "-ignore-missing-schemas", str(build_out)],
+            capture_output=True, text=True, timeout=60,
+        )
+        results.append(f"kubeconform {build_out.name}: exit={proc.returncode}")
+        if proc.stdout:
+            results.append(proc.stdout[:500])
+        if proc.stderr:
+            results.append(f"ERR: {proc.stderr[:500]}")
+        if proc.returncode != 0:
+            passed = False
+    except subprocess.TimeoutExpired:
+        results.append(f"TIMEOUT: kubeconform {build_out}")
+        passed = False
+    except FileNotFoundError:
+        results.append("NOT FOUND: kubeconform")
 
     return passed
