@@ -159,7 +159,10 @@ def test_sampled_historical_composites_match_pinned_corrections():
             f"{rel_path}: the recorded pre-guard composite no longer "
             "reproduces — the fixture itself changed"
         )
-        assert compute_score(result)["composite"] == new_composite, (
+        # approx, not ==: the last bit of a repeating fraction differs between
+        # macOS and Linux, so exact equality made this pass locally and fail in
+        # CI on 0.37037037037037035 vs 0.3703703703703704.
+        assert compute_score(result)["composite"] == pytest.approx(new_composite), (
             f"{rel_path}: composite drifted from the pinned corrected value"
         )
 

@@ -66,6 +66,23 @@ def _ensure_stack_prereqs(stack: str) -> None:
         pytest.skip(f"chant node_modules unavailable and could not be built: {exc}")
 
 
+def _aws_credentials_present() -> bool:
+    """Can the AWS provider validate credentials here?
+
+    `pulumi preview` is not offline: the AWS provider calls STS before it will
+    preview a resource. Dummy values do not satisfy it, and the provider's
+    skipCredentialsValidation setting did not take effect through the gate. So
+    the pulumi arms genuinely require real credentials to be *statically*
+    checked, which is worth knowing before reading a pulumi verdict as a
+    statement about the model.
+    """
+    import os
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        return True
+    shared = os.environ.get("AWS_SHARED_CREDENTIALS_FILE") or os.path.expanduser("~/.aws/credentials")
+    return Path(shared).is_file()
+
+
 def _materialize(stack: str) -> Path:
     """Copy the golden the way a run would, preserving symlinks.
 
@@ -98,6 +115,15 @@ def test_golden_passes_its_own_gates(stack):
     missing = [b for b in STACK_BINARIES.get(stack, ()) if shutil.which(b) is None]
     if missing:
         pytest.skip(f"toolchain missing for {stack}: {missing}")
+
+    if stack.startswith("pulumi-") and not _aws_credentials_present():
+        pytest.skip(
+            f"{stack} static runs `pulumi preview`, whose AWS provider validates "
+            "credentials against STS before previewing anything. Without them the "
+            "gate fails for the environment rather than the artifact, so this is "
+            "an environment prerequisite like a missing binary — not a gate defect. "
+            "See docs/result-integrity.md."
+        )
 
     _ensure_stack_prereqs(stack)
 

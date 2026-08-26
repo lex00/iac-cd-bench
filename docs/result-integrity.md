@@ -287,6 +287,15 @@ unaffected here, because `_historical_results()` filters out runs carrying
   (`"safety" not in output.lower()` in `bench/stages/semantic.py`) is not a
   real safety gate either, and both want replacing together with an
   unmeasurable-composite sentinel rather than a 0.0.
+- **The pulumi arms' static gate needs real AWS credentials.** `pulumi preview`
+  is not offline: the AWS provider validates against STS before previewing
+  anything, dummy values do not satisfy it, and `skipCredentialsValidation` did
+  not take effect through the gate. So pulumi static passes on a machine with
+  `~/.aws/credentials` and fails without — the environment deciding the verdict,
+  which is #81's defect in new clothes. `tests/test_golden_gates.py` skips those
+  arms when credentials are absent rather than reporting a gate defect, and CI
+  therefore does not exercise them. Read a pulumi static verdict knowing it was
+  produced somewhere with credentials.
 - **Independence / tool-use evidence.** aws-bench audits the agent trajectory
   to prove the arm's own CLI ran. This harness is one-shot and has no
   trajectory, so there is nothing equivalent to audit; the validity gate is a
