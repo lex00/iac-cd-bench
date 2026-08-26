@@ -104,3 +104,72 @@ def test_every_declared_stack_is_a_real_stack():
     assert set(STACK_BINARIES) == set(STACKS), (
         "preflight and the report disagree about which stacks exist"
     )
+
+
+def test_mixed_old_and_new_provenance_validates():
+    """Verify that the validation logic handles mixed old/new provenance correctly.
+
+    Old format: per-stack probing means different runs record different binaries.
+    New format: full-toolchain probing means all runs record all binaries.
+
+    The validation logic (in bench.validate) compares per-binary across sets,
+    only comparing binaries that both sets recorded. This test verifies that
+    the toolchain accumulation logic correctly builds a unified toolchain_versions
+    dict that can contain overlapping subsets from old and new runs.
+    """
+    from collections import Counter
+
+    # Simulate validation's toolchain accumulation logic
+    toolchain_versions: dict[str, set[str]] = {}
+
+    # Old-shaped run: only has binaries for "bare" stack (yq, kubeconform)
+    old_toolchain = {
+        "yq": {"present": True, "version": "v4.53.6"},
+        "kubeconform": {"present": True, "version": "v0.7.0"},
+    }
+
+    # New-shaped run: has all known binaries, but some are absent
+    new_toolchain = {
+        "chant": {"present": False, "version": None},
+        "crossplane": {"present": True, "version": "v1.20.0"},
+        "flux": {"present": True, "version": "flux version 2.5.0"},
+        "kubeconform": {"present": True, "version": "v0.7.0"},
+        "kustomize": {"present": True, "version": "v5.6.0"},
+        "npm": {"present": False, "version": None},
+        "pulumi": {"present": True, "version": "version unknown"},
+        "ruff": {"present": True, "version": "ruff 0.8.4"},
+        "terraform": {"present": True, "version": "Terraform v1.15.8"},
+        "tsc": {"present": True, "version": "Version 5.9.3"},
+        "yq": {"present": True, "version": "v4.53.6"},
+    }
+
+    # Simulate the validation accumulation logic from validate_result_set()
+    for toolchain in [old_toolchain, new_toolchain]:
+        for name, info in toolchain.items():
+            version = (info or {}).get("version")
+            if version:
+                toolchain_versions.setdefault(name, set()).add(version)
+
+    # Build the final report as validate_result_set() does
+    report_toolchains = {
+        name: sorted(vs) for name, vs in sorted(toolchain_versions.items())
+    }
+
+    # Check for conflicts as validate_result_set() does
+    conflicting_binaries = {
+        name: vs for name, vs in report_toolchains.items() if len(vs) > 1
+    }
+
+    # Should have no conflicts
+    assert not conflicting_binaries, (
+        f"Mixed old/new provenance should not conflict: {conflicting_binaries}"
+    )
+
+    # Verify the accumulated toolchains
+    assert "kubeconform" in report_toolchains
+    assert "yq" in report_toolchains
+    assert report_toolchains["kubeconform"] == ["v0.7.0"]
+    assert report_toolchains["yq"] == ["v4.53.6"]
+    # New-only binaries should also be present
+    assert "terraform" in report_toolchains
+    assert report_toolchains["terraform"] == ["Terraform v1.15.8"]

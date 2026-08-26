@@ -103,6 +103,16 @@ class PreflightError(RuntimeError):
         self.report = report
 
 
+def all_known_binaries(include_e2e: bool = False) -> list[str]:
+    """Union of all binaries across all stacks, sorted for stable reporting."""
+    known: set[str] = set()
+    for binaries in STACK_BINARIES.values():
+        known.update(binaries)
+    if include_e2e:
+        known.update(E2E_BINARIES)
+    return sorted(known)
+
+
 def required_binaries(stacks: Iterable[str], include_e2e: bool = False) -> list[str]:
     """Union of binaries the given stacks need, sorted for stable reporting."""
     needed: set[str] = set()
@@ -149,9 +159,16 @@ def probe_binary(name: str) -> dict[str, Any]:
     return {"present": True, "path": path, "version": version}
 
 
-def probe_toolchain(stacks: Iterable[str], include_e2e: bool = False) -> dict[str, Any]:
-    """Probe every binary the selected stacks need. No refusal, just facts."""
-    return {name: probe_binary(name) for name in required_binaries(stacks, include_e2e)}
+def probe_toolchain(include_e2e: bool = False) -> dict[str, Any]:
+    """Probe every known binary across all stacks. No refusal, just facts.
+
+    Always probes the full toolchain regardless of which stacks will actually
+    be run, so that fingerprints are uniformly shaped and comparable by
+    construction. A missing binary for a stack you are not running must still
+    not block the run — that gate is enforced only on required binaries in
+    check(), not here.
+    """
+    return {name: probe_binary(name) for name in all_known_binaries(include_e2e)}
 
 
 def check(
@@ -161,33 +178,40 @@ def check(
 ) -> dict[str, Any]:
     """Run the tooling-health preflight and return its report.
 
-    Raises PreflightError when a required binary is absent and `allow_missing`
-    is False. With `allow_missing=True` the report carries `partial: True`,
-    which bench.runner stamps onto every run's provenance and bench.validate
-    turns into a `partial` verdict for the whole set.
+    Probes the full toolchain (all known binaries) regardless of which stacks
+    will be run. Raises PreflightError when a binary required by the targeted
+    stacks is absent and `allow_missing` is False. Missing binaries for stacks
+    not in the targeted set do not block the run.
+
+    With `allow_missing=True` the report carries `partial: True`, which
+    bench.runner stamps onto every run's provenance and bench.validate turns
+    into a `partial` verdict for the whole set.
     """
     stacks = list(stacks)
-    toolchain = probe_toolchain(stacks, include_e2e)
-    missing = sorted(n for n, info in toolchain.items() if not info["present"])
+    # Probe the full toolchain regardless of which stacks will run
+    toolchain = probe_toolchain(include_e2e)
+    # But only fail on binaries required for the targeted stacks
+    required = required_binaries(stacks, include_e2e)
+    missing_required = sorted(n for n in required if not toolchain[n]["present"])
 
     report: dict[str, Any] = {
         "stacks": stacks,
         "include_e2e": include_e2e,
         "toolchain": toolchain,
-        "missing": missing,
-        "passed": not missing,
-        "partial": bool(missing) and allow_missing,
+        "missing": missing_required,
+        "passed": not missing_required,
+        "partial": bool(missing_required) and allow_missing,
         "override": bool(allow_missing),
     }
 
-    if not missing:
+    if not missing_required:
         log.info(
-            "Preflight OK: %d binaries present for stacks %s",
-            len(toolchain), ", ".join(stacks),
+            "Preflight OK: %d binaries probed (required: %d) for stacks %s",
+            len(toolchain), len(required), ", ".join(stacks),
         )
         return report
 
-    detail = ", ".join(missing)
+    detail = ", ".join(missing_required)
     message = (
         f"Preflight FAILED: required binaries missing for stacks "
         f"{', '.join(stacks)}: {detail}. A stage whose binary is absent cannot "
