@@ -30,7 +30,6 @@ from typing import Any
 import yaml
 
 from bench import validity
-from bench.provenance import toolchain_fingerprint
 from bench.score import stage_attempted, stage_inapplicable
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -247,7 +246,7 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
 
     per_task: Counter[tuple[str, str]] = Counter()
     harness_commits: set[str] = set()
-    toolchains: set[str] = set()
+    toolchain_versions: dict[str, set[str]] = {}
     providers: set[str] = set()
     efforts: set[str] = set()
 
@@ -268,9 +267,17 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
                     harness_commits.add(
                         f"{commit}-dirty" if (prov.get("harness") or {}).get("dirty") else commit
                     )
-                fp = toolchain_fingerprint(prov.get("toolchain") or {})
-                if fp:
-                    toolchains.add(fp)
+                # Recorded per binary, not as one fingerprint over the whole
+                # toolchain dict: preflight only probes the binaries a stack
+                # actually needs, so a multi-stack set legitimately records a
+                # different binary set per run (a `bare` run never touches
+                # `tsc`; a `chant` run never touches `flux`). A real drift is
+                # one binary's OWN version disagreeing across runs, not the
+                # member lists of two stacks differing from each other.
+                for name, info in (prov.get("toolchain") or {}).items():
+                    version = (info or {}).get("version")
+                    if version:
+                        toolchain_versions.setdefault(name, set()).add(version)
                 if prov.get("provider"):
                     providers.add(str(prov["provider"]))
                 efforts.add(str(prov.get("reasoning_effort")))
@@ -290,7 +297,10 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
     report["errored"] = errored
     report["error_share"] = errored / total
     report["harness_commits"] = sorted(harness_commits)
-    report["toolchains"] = sorted(toolchains)
+    # {binary: [versions observed in this set]} — one binary can legitimately
+    # be absent from a stack's toolchain probe, but if present its version
+    # must agree with every other run's, in this set or another.
+    report["toolchains"] = {name: sorted(vs) for name, vs in sorted(toolchain_versions.items())}
     report["providers"] = sorted(providers)
     report["efforts"] = sorted(efforts)
 
@@ -325,10 +335,16 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
         report["problems"].append(
             f"mixed harness commits within one set: {', '.join(sorted(harness_commits))}"
         )
-    if len(toolchains) > 1:
+    conflicting_binaries = {
+        name: vs for name, vs in report["toolchains"].items() if len(vs) > 1
+    }
+    if conflicting_binaries:
+        detail = "; ".join(
+            f"{name} ({' vs '.join(vs)})" for name, vs in sorted(conflicting_binaries.items())
+        )
         report["problems"].append(
-            f"mixed toolchain versions within one set ({len(toolchains)} distinct "
-            "fingerprints) — the runs were produced against different binaries"
+            f"mixed toolchain versions within one set: {detail} — the same "
+            "binary was recorded at different versions across runs"
         )
     if len(providers) > 1:
         report["problems"].append(
@@ -375,8 +391,8 @@ def comparability(reports: list[dict[str, Any]]) -> dict[str, Any]:
 
     chant-bench's rule: two runs are comparable when they share a harness
     commit and a briefing SHA — different either, different experiment. Here
-    the axes are harness commit, toolchain fingerprint, provider and reasoning
-    effort. The model is deliberately not an axis: differing models is what a
+    the axes are harness commit, toolchain, provider and reasoning effort.
+    The model is deliberately not an axis: differing models is what a
     comparison is *for*.
 
     A set with no provenance at all cannot be shown to differ, which is not
@@ -385,7 +401,6 @@ def comparability(reports: list[dict[str, Any]]) -> dict[str, Any]:
     """
     axes = {
         "harness commit": "harness_commits",
-        "toolchain": "toolchains",
         "provider": "providers",
         "reasoning effort": "efforts",
     }
@@ -405,6 +420,29 @@ def comparability(reports: list[dict[str, Any]]) -> dict[str, Any]:
                 f"{name}={', '.join(vals) or '?'}" for name, vals in sorted(observed.items())
             )
             conflicts.append(f"{label} differs across sets ({detail})")
+
+    # Toolchain is its own axis, compared per binary rather than as one
+    # opaque value per set: `report["toolchains"]` is {binary: [versions
+    # observed in that set]}, and different sets legitimately probe different
+    # binaries (a bare-manifests set never touches `tsc`; a chant set never
+    # touches `flux`) — same reasoning as the within-set check above. Two
+    # sets disagree on toolchain only when a binary they BOTH recorded shows
+    # up at a different version in each.
+    toolchain_observed = {r["label"]: r.get("toolchains") or {} for r in reports}
+    missing_toolchain = [name for name, vals in toolchain_observed.items() if not vals]
+    if missing_toolchain:
+        unverifiable.append(
+            f"toolchain: not recorded for {', '.join(sorted(missing_toolchain))}"
+        )
+    binaries = {b for vals in toolchain_observed.values() for b in vals}
+    for binary in sorted(binaries):
+        per_set = {
+            name: vals[binary] for name, vals in toolchain_observed.items() if vals.get(binary)
+        }
+        distinct_versions = {v for vs in per_set.values() for v in vs}
+        if len(distinct_versions) > 1:
+            detail = "; ".join(f"{name}={', '.join(vs)}" for name, vs in sorted(per_set.items()))
+            conflicts.append(f"toolchain differs across sets on {binary} ({detail})")
 
     return {
         "comparable": not conflicts,
