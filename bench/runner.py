@@ -32,13 +32,18 @@ log = logging.getLogger(__name__)
 
 
 def validate_grounding_stacks(
-    stacks: list[str], grounding: bool = False, condition: str = "warm"
+    stacks: list[str],
+    grounding: bool = False,
+    condition: str = "warm",
+    results_tag: str | None = None,
 ) -> None:
-    """Validate grounding's required cold condition and supported stacks."""
+    """Validate grounding's cold condition, result isolation, and supported stacks."""
     if not grounding:
         return
     if condition != "cold":
         raise ValueError("--grounding requires --condition cold")
+    if not results_tag or not results_tag.strip():
+        raise ValueError("--grounding requires a non-empty --results-tag")
     unsupported = sorted(set(stacks) - GROUNDING_STACKS)
     if unsupported:
         names = ", ".join(unsupported)
@@ -571,7 +576,7 @@ def main() -> None:
     # Parse stacks
     stacks = [args.stack] if args.stack else (ALL_STACKS if args.stacks == "all" else args.stacks.split(","))
     try:
-        validate_grounding_stacks(stacks, args.grounding, args.condition)
+        validate_grounding_stacks(stacks, args.grounding, args.condition, args.results_tag)
     except ValueError as exc:
         parser.error(str(exc))
 
