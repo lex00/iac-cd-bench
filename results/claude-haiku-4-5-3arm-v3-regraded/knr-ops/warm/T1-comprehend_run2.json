@@ -1,0 +1,169 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "b3122c3b4be49c31",
+      "spec_sha256": "cb1cc8ee25154a53",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 2044,
+    "output": 2939
+  },
+  "content": "# Delivery Behavior Analysis: knr-ops PR #42\n\n## 1. Reconciliation Order on Merge\n\nWhen PR #42 merges, the `GitRepository` source controller detects the change and triggers a cascade of reconciliations following the dependency graph in `flux/kustomizations.yaml`.\n\n**Expected order:**\n1. **Cluster API (CAPI)** \u2014 EKS cluster provisioning (foundational; other resources depend on it)\n2. **IAM** \u2014 Service accounts and roles (`infra/iam/access.yaml`)\n3. **RDS** \u2014 Modified instance manifest (parallel with S3 if no dependency between them)\n4. **S3** \u2014 New bucket manifest (parallel with RDS)\n5. **App Deployment** \u2014 Base deployment, then overlays apply patches\n\nThis order is enforced by `dependsOn` fields in the kustomizations. If your `flux/kustomizations.yaml` lacks explicit `dependsOn` declarations, reconciliation becomes unordered (risky), and Flux may attempt to deploy the app before infrastructure is ready.\n\n---\n\n## 2. RDS Instance Recreation: NO\n\n**The instance is NOT recreated.** The ACK RDS controller modifies it in-place.\n\n**Why:**\n- ACK controllers are _resource management_ controllers, not _replace-on-every-change_ systems\n- When `instanceClass` changes from `db.t3.micro` \u2192 `db.t3.medium`, the controller calls AWS's `modify-db-instance` API, not delete/create\n- The RDS instance ID, endpoint, and data remain intact\n- Single-AZ instances experience ~1\u20132 minutes of downtime during the modification window; multi-AZ instances may use blue-green deployment to minimize downtime\n\n**Deletion only occurs if:**\n- The `Instance` CRD is deleted from Git **and** Flux pruning is enabled\n- You explicitly set `DeletionPolicy: delete` on the ACK resource (which it is by default)\n\n---\n\n## 3. S3 Bucket Deletion Behavior\n\n**Depends on pruning configuration:**\n\n| Scenario | Outcome |\n|----------|---------|\n| **Pruning enabled** (recommended) | Flux removes the ACK `Bucket` CRD from cluster \u2192 ACK S3 controller deletes the S3 bucket in AWS \u2192 **data loss** |\n| **Pruning disabled** | The CRD persists in Kubernetes; the S3 bucket orphans in AWS; no Git-driven deletion occurs |\n\n**Best practice:**\n- Enable pruning for GitOps correctness (Git is the source of truth)\n- Add `DeletionPolicy: retain` to the `Bucket` CRD spec if you want to preserve the AWS resource after Git deletion:\n  ```yaml\n  apiVersion: s3.aws.amazonaws.com/v1alpha1\n  kind: Bucket\n  metadata:\n    name: app-assets\n  spec:\n    deletionPolicy: retain  # Survives CRD deletion\n  ```\n\n---\n\n## 4. Prod-Only Replica Change\n\nThe kustomize overlay system isolates the change to prod:\n\n**Directory structure:**\n```\nbase/\n  deployment.yaml              # replicas unset or = 1\noverlays/\n  prod/\n    kustomization.yaml         # references ../../../base + applies patch\n    patches/\n      deployment.yaml          # patch: spec.replicas = 4\n```\n\n**Reconciliation:**\n- Each cluster (dev, prod) runs its own Flux `Kustomization` controller\n- Prod's kustomization points to `overlays/prod/`\n- Kustomize builds the base + applies the prod patch \u2192 replicas: 4\n- Dev's kustomization points to `overlays/dev/` (or different patch) \u2192 keeps base replicas\n\n**Result:** Dev and prod deployments are independently configured; no cross-environment contamination.\n\n---\n\n## 5. Role of `dependsOn`\n\nThe `dependsOn` field in Kustomization CRDs enforces **reconciliation ordering** and **health-aware sequencing:**\n\n```yaml\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: app\nspec:\n  dependsOn:\n    - name: rds\n    - name: s3\n    - name: iam\n```\n\n**What it does:**\n1. **Blocks reconciliation**: Flux will not attempt to reconcile `app` until `rds`, `s3`, and `iam` report `Ready=True`\n2. **Prevents cascading failures**: If the `rds` modification fails (e.g., invalid parameter), the `app` deployment won't proceed while RDS is in a failed state\n3. **Parallelization**: Resources without inter-dependencies (RDS \u2194 S3) reconcile in parallel, then `app` waits for both\n\n**In PR #42 context:**\n- If the RDS `instanceClass` change fails reconciliation (e.g., instance doesn't exist), the app kustomization stays blocked\n- This prevents deploying an app manifest that references a non-existent or misconfigured database\n- Once RDS reconciliation succeeds, `app` proceeds\n- Without `dependsOn`, the app might deploy before RDS is ready, causing runtime failures\n\n**Visual dependency graph:**\n```\nCAPI cluster (base)\n    \u2193\n  [IAM]\n    \u2193\n[RDS, S3] \u2190 can run in parallel; no interdependency\n    \u2193\n  [App]    \u2190 waits for both RDS and S3\n```\n\n---\n\n## Summary\n\n| Question | Answer |\n|----------|--------|\n| **Order** | Cluster \u2192 IAM \u2192 [RDS, S3] \u2192 App, governed by `dependsOn` |\n| **RDS recreation** | No; modified in-place by ACK controller |\n| **S3 deletion** | Deleted if Git-deleted and pruning enabled; use `deletionPolicy: retain` to preserve |\n| **Prod replicas** | Kustomize overlays isolate patch to prod only; dev unaffected |\n| **`dependsOn` role** | Enforces reconciliation order, prevents cascading failures, enables health-aware sequencing |",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-pivg1fy_/flux/kustomizations.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-pivg1fy_/infra/iam/access.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-pivg1fy_/generated_2.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 5029,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 5029,
+      "fenced_blocks": 4,
+      "extracted_files": 3,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.875,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies that Flux reconciles kustomizations on Git merge",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission clearly states 'GitRepository source controller detects the change and triggers a cascade of reconciliations' when PR merges, correctly identifying Flux reconciliation of kustomizations on Git merge."
+      },
+      {
+        "criterion": "Correctly predicts reconciliation order (dev before prod due to dependsOn)",
+        "weight": 2.0,
+        "score": 0.5,
+        "justification": "Submission understands dependsOn concept and explains ordering (CAPI\u2192IAM\u2192[RDS,S3]\u2192App), but fails to predict the specific dev\u2192prod ordering or identify that prod's kustomization depends on dev. Reference requires this explicit prediction."
+      },
+      {
+        "criterion": "Identifies that RDS instanceClass change is in-place update, not recreate",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission correctly states 'NOT recreated,' identifies the AWS modify-db-instance API call (not delete/create), and confirms instance ID/endpoint/data remain intact\u2014matching reference answer precisely."
+      },
+      {
+        "criterion": "States that ACK operator deletes S3 bucket when manifest is removed (pruning)",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission correctly states pruning-enabled flow: 'Flux removes the ACK Bucket CRD from cluster \u2192 ACK S3 controller deletes the S3 bucket in AWS,' explicitly connecting pruning to deletion behavior."
+      },
+      {
+        "criterion": "Explains that prod overlay patches are scoped to prod kustomization only",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission clearly explains 'Kustomize builds the base + applies the prod patch \u2192 replicas: 4' to prod only, and states 'Dev and prod deployments are independently configured,' fully addressing scope isolation."
+      }
+    ]
+  },
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.875,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.4107142857142857
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": null,
+    "stages": [
+      "static"
+    ],
+    "before": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "after": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "stage_verdicts": {
+      "static": {
+        "before": null,
+        "after": null
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.4107142857142857,
+    "composite_after": 0.4107142857142857
+  }
+}

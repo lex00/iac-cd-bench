@@ -1,0 +1,159 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T1-comprehend",
+  "stack": "bare",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "2c52b32d82e96f26",
+      "spec_sha256": "d200ea0b988b1f75",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 3620,
+    "output": 3314
+  },
+  "content": "# Analysis: `kubectl apply -f prod/` Behavior with PR Changes\n\n## 1. File Processing Order and Why It Matters (or Doesn't)\n\n**Order:** `kubectl apply -f prod/` processes files in **lexicographic order**:\n1. `00-namespaces.yaml`\n2. `app.yaml`\n3. `s3-bucket.yaml`\n4. `workers.yaml`\n\n**Why this order matters (partially):**\n- The namespace file *must* apply first, since every other manifest depends on its namespaces (`clusters`, `infra`, `app`) existing.\n- Within the PR's three changes themselves, **order does NOT critically matter** because:\n  - All three target already-existing objects (no forward dependencies)\n  - The Deployment selector change, Bucket deletion, and replica scale-up are independent operations\n  - None wait for or depend on output from the others\n\nThe lexicographic ordering is protective by convention (00- prefix ensures namespaces first) but doesn't otherwise constrain this PR's outcome.\n\n---\n\n## 2. Workers Replica Change: Yes, Succeeds\n\n**Result:** The `MachineDeployment` replica change from 4 \u2192 6 **succeeds without error**.\n\n**Cluster consequence:**\n- The CAPI MachineDeployment controller reads the updated spec and reconciles\n- 2 new t3.large EC2 instances are launched (and registered as worker nodes in the cluster)\n- Existing 4 nodes remain running and unmodified\n- The cluster transitions from 4 to 6 worker nodes\n- This is a straightforward, idempotent scale-up\n\n---\n\n## 3. app.yaml Selector Change: Succeeds (at apply time) \u2014 But Causes Runtime Breakage\n\n**What kubectl apply does:**\nThe apply succeeds at the technical level. It updates the live Deployment object with the new selector:\n```yaml\nselector:\n  matchLabels:\n    app: myapp\n    env: prod\n    version: v2          # \u2190 NEW\ntemplate:\n  metadata:\n    labels:\n      app: myapp\n      env: prod          # \u2190 UNCHANGED (no version: v2)\n```\n\n**Critical mismatch:**\n- The selector now requires pods to carry the label `version: v2`\n- But the template does not apply that label to new pods it creates\n- Existing pods (already running) have labels `app: myapp, env: prod` only \u2014 they no longer match the selector\n\n**Runtime consequence:**\n- The Deployment's ReplicaSet sees 0 pods matching its selector (all existing pods are excluded)\n- It immediately begins launching replacement pods to reach the desired replica count\n- Old pods are orphaned; duplicates appear\n- **The Deployment is broken, but the `kubectl apply` command itself reports success**\n\n**What happens to the other three files in the same invocation:**\nThey apply independently and successfully:\n- `00-namespaces.yaml`: No-op (unchanged)\n- `s3-bucket.yaml`: Proceeds to process (see Q4)\n- `workers.yaml`: Proceeds to process (see Q2)\n\nThe entire `kubectl apply -f prod/` completes and exits 0, even though the Deployment's live state is now contradictory. The breakage only manifests when you later observe pod proliferation and selector mismatches.\n\n---\n\n## 4. myapp-assets-prod-replica Bucket Deletion\n\n**Does the object still exist after the apply?** **Yes, it remains in the cluster.**\n\n**Why:**\n`kubectl apply` **does not delete objects merely because they are removed from the manifest files.** It only applies objects that are present in the files you pass. Orphaned objects persist.\n\nTo actually delete the Bucket CR and the AWS S3 bucket it provisioned, you would need to:\n- Use explicit `kubectl delete -f <old-file>`, or\n- Use `kubectl delete Bucket myapp-assets-prod-replica -n infra`, or\n- Use `kubectl apply -f prod/ --prune` with label selectors to mark objects for deletion\n\n**Result:**\n- `myapp-assets-prod-replica` Bucket CR remains in the Kubernetes cluster (namespace `infra`)\n- The ACK controller still sees the CR and does not delete the underlying AWS S3 bucket\n- The S3 bucket `myapp-assets-prod-replica` continues to exist in us-west-2\n- The replication rule in `myapp-assets-prod` continues to reference it, but that rule is now orphaned (its destination exists, but is no longer managed by the manifest)\n\n---\n\n## 5. Does This PR Affect dev/?\n\n**No. Not directly, and not indirectly.**\n\n**Why:**\n- `dev/` and `prod/` are two completely independent directory trees\n- Each contains its own fully-written-out manifests with environment-qualified names (`myapp-dev` vs. `myapp-prod`, separate namespaces, different sizing)\n- The PR touches only `prod/*` files\n- `kubectl apply -f prod/` reads and processes *only* the `prod/` directory\n- The `dev/` directory is never consulted, never modified, never affected\n\nThe context explicitly states:\n> Two environments: `dev` and `prod`. Each has the same resource topology but different sizing and region. Environment isolation: dev and prod are independently deployable; changing prod does not modify dev state\n\nThis PR demonstrates that principle: changes to prod are siloed entirely within prod/.\n\n---\n\n## Summary Table\n\n| Aspect | Outcome |\n|--------|---------|\n| **File order** | Lexicographic; namespaces first; order otherwise non-critical for this PR |\n| **Workers scale 4\u21926** | \u2705 Succeeds; 2 new t3.large nodes launch |\n| **App selector + unmatched template** | \u2705 Apply succeeds; \u274c Deployment breaks at runtime (pod mismatches) |\n| **Bucket deletion** | \u274c Object is NOT deleted; CR and S3 bucket remain (no `--prune` used) |\n| **dev/ impact** | \u274c None; environments are independent |",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 5314,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 5314,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.6666666666666666,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies that kubectl apply -f prod/ processes files in lexical filename order (00-namespaces.yaml first because of its numeric prefix), not a dependency graph",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Correctly identifies lexicographic filename order with 00-namespaces.yaml first, explicitly states no dependency graph, and correctly notes order doesn't matter for this PR."
+      },
+      {
+        "criterion": "Correctly states the workers.yaml replica change (4 to 6) applies successfully in place, since replicas is a mutable field",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Correctly states the replica change (4\u21926) succeeds and applies in place, with accurate outcome: 2 new worker nodes provisioned. Outcome is unambiguously correct."
+      },
+      {
+        "criterion": "Correctly states the app.yaml selector change is rejected by the API server because spec.selector is immutable on an existing Deployment, and that the other three files in the same kubectl apply -f prod/ invocation still apply independently",
+        "weight": 3.0,
+        "score": 0.0,
+        "justification": "Claims selector change 'succeeds at technical level' and updates the object, contradicting the rubric requirement. Reference answer is explicit: API server rejects immutable field changes with validation error."
+      },
+      {
+        "criterion": "States that kubectl apply has no prune step by default, so the myapp-assets-prod-replica Bucket object and the AWS S3 bucket it manages are NOT deleted merely because the manifest was removed from Git",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Correctly states no pruning by default, Bucket CR and S3 bucket are NOT deleted when manifest removed, and explains explicit deletion would require `kubectl delete` or `--prune`."
+      },
+      {
+        "criterion": "Recognizes dev/ and prod/ are fully independent, duplicated directories with no shared base, so nothing in this PR can affect dev/",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Correctly recognizes dev/ and prod/ are fully independent directory trees with no shared base, and that PR changes to prod/ cannot affect dev/."
+      }
+    ]
+  },
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.6666666666666666,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.38095238095238093
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": null,
+    "stages": [
+      "static"
+    ],
+    "before": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "after": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "stage_verdicts": {
+      "static": {
+        "before": null,
+        "after": null
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.38095238095238093,
+    "composite_after": 0.38095238095238093
+  }
+}

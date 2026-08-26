@@ -1,0 +1,135 @@
+{
+  "model": "claude-opus-5",
+  "task": "T2-generate",
+  "stack": "bare",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "b870b4fe89ff9404",
+      "spec_sha256": "0aa384baa7f37e91",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Role\nmetadata:\n  # Same name as the Role declared in prod/iam.yaml (OIDC trust policy lives\n  # there and is unchanged). This file only adds the logs policy ARN.\n  name: myapp-sa-prod\n  namespace: myapp\nspec:\n  name: myapp-sa-prod\n  policies:\n    - arn:aws:iam::222222222222:policy/myapp-assets-access-prod\n    - arn:aws:iam::222222222222:policy/myapp-logs-access-prod\n---\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-l\n[validate CRDs] kubeconform: exit=0\nSummary: 6 resources found in 6 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 6\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kubeconform -strict logs-policy-attachment.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-xpp4t6bv/prod/logs-policy-attachment.yaml - Role myapp-sa-prod is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/iam.services.k8s.aws/role_v1alpha1.json#' - at '/spec': missing property 'assumeRolePolicyDocument'\nSummary: 1 resource found in 1 f\nkubeconform -strict logs-bucket.yaml: exit=0\nSummary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0\n\nkubeconform -strict logs-policy.yaml: exit=0\nSummary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0\n\nkubeconform -strict logs-policy-attachment.yaml: exit=0\nSummary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0\n\nkubeconform -strict logs-bucket.yaml: exit=0\nSummary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0\n\nkubeconform -strict logs-policy.yaml: exit=0\nSummary: 1 resource found in 1 file - Valid: 1, Invalid: 0, Errors: 0, Skipped: 0\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 6 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_dev_logs_bucket_exists PASSED [ 16%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_prod_logs_bucket_exists PASSED [ 33%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_versioning PASSED [ 50%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_encryption PASSED [ 66%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_public_access_blocked PASSED [ 83%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_logs_scoped_iam_grant_present_both_envs PASSED [100%]\n\n============================== 6 passed in 0.01s ===============================\n",
+      "passed_count": 6,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 2483
+  },
+  "content": "Below are the four new files \u2014 two per environment, added independently since this arm has no shared base.\n\n`dev/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-dev\n  namespace: myapp\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    environment: dev\nspec:\n  name: myapp-logs-dev\n  versioning:\n    status: Enabled\n  encryption:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n        bucketKeyEnabled: true\n  publicAccessBlock:\n    blockPublicACLs: true\n    blockPublicPolicy: true\n    ignorePublicACLs: true\n    restrictPublicBuckets: true\n```\n\n`dev/logs-policy.yaml`\n```yaml\n# Grants the existing dev service-account User (see dev/iam.yaml) object-level\n# access to the logs bucket only. Kept as a separate managed Policy + attachment\n# so the assets-bucket policy in dev/iam.yaml is untouched.\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-access-dev\n  namespace: myapp\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    environment: dev\nspec:\n  name: myapp-logs-access-dev\n  description: Read/write objects in myapp-logs-dev only\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Sid\": \"LogsObjectAccess\",\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-dev/*\"\n        }\n      ]\n    }\n```\n\nIf your `dev/iam.yaml` `User` lists its policies inline via `spec.policies`, add\n`arn:aws:iam::<account-id>:policy/myapp-logs-access-dev` to that list instead of\nusing the attachment below.\n\n`dev/logs-policy-attachment.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: User\nmetadata:\n  # Same name as the User declared in dev/iam.yaml \u2014 this file only adds the\n  # logs policy ARN to its policies list. If you prefer a single source of\n  # truth, merge this policies entry into dev/iam.yaml and delete this file.\n  name: myapp-sa-dev\n  namespace: myapp\nspec:\n  name: myapp-sa-dev\n  policies:\n    - arn:aws:iam::111111111111:policy/myapp-assets-access-dev\n    - arn:aws:iam::111111111111:policy/myapp-logs-access-dev\n```\n\n`prod/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\n  namespace: myapp\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    environment: prod\nspec:\n  name: myapp-logs-prod\n  versioning:\n    status: Enabled\n  encryption:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n        bucketKeyEnabled: true\n  publicAccessBlock:\n    blockPublicACLs: true\n    blockPublicPolicy: true\n    ignorePublicACLs: true\n    restrictPublicBuckets: true\n```\n\n`prod/logs-policy.yaml`\n```yaml\n# Grants the existing prod service-account Role (see prod/iam.yaml) object-level\n# access to the logs bucket only. No wildcard actions, no wildcard resources.\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-access-prod\n  namespace: myapp\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    environment: prod\nspec:\n  name: myapp-logs-access-prod\n  description: Read/write objects in myapp-logs-prod only\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Sid\": \"LogsObjectAccess\",\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-prod/*\"\n        }\n      ]\n    }\n```\n\n`prod/logs-policy-attachment.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Role\nmetadata:\n  # Same name as the Role declared in prod/iam.yaml (OIDC trust policy lives\n  # there and is unchanged). This file only adds the logs policy ARN.\n  name: myapp-sa-prod\n  namespace: myapp\nspec:\n  name: myapp-sa-prod\n  policies:\n    - arn:aws:iam::222222222222:policy/myapp-assets-access-prod\n    - arn:aws:iam::222222222222:policy/myapp-logs-access-prod\n```\n\nNotes:\n\n- Replace the placeholder account IDs (`111111111111`, `222222222222`) with your\n  real dev/prod account IDs, and the existing assets policy ARNs with whatever\n  is currently listed in each `iam.yaml`. The attachment files must repeat the\n  full `policies` list because `kubectl apply` replaces the field wholesale \u2014\n  omitting the assets ARN would revoke assets access.\n- Cleanest alternative: skip the two `*-policy-attachment.yaml` files entirely\n  and append the logs policy ARN directly to the `policies` list in\n  `dev/iam.yaml` and `prod/iam.yaml`. That avoids two objects fighting over the\n  same `spec.policies` field.\n- If your ACK IAM controller version exposes `Resource` only as a string, the\n  documents above are already single-string form; a list (`[\"arn:...:/*\"]`) is\n  equally valid.\n- The `dev/` and `prod/` edits are fully duplicated by design: applying\n  `kubectl apply -f dev/` touches nothing in prod, and vice versa. The cost of\n  this arm is exactly that duplication \u2014 four resource definitions where a\n  shared base would need one bucket template and one policy template.\n- Neither policy references `arn:aws:s3:::myapp-assets-*`, so assets-bucket\n  access is unchanged. Neither grants `s3:ListBucket`; add it on the bucket ARN\n  (without `/*`) only if the application actually enumerates objects.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-7fgy1138/dev/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-7fgy1138/dev/logs-policy.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-7fgy1138/dev/logs-policy-attachment.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-7fgy1138/prod/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-7fgy1138/prod/logs-policy.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-7fgy1138/prod/logs-policy-attachment.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 5508,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 5508,
+      "fenced_blocks": 6,
+      "extracted_files": 6,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.6666666666666666
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "83832e55734b",
+    "stages": [
+      "static"
+    ],
+    "before": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 6
+    },
+    "after": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 6
+    },
+    "stage_verdicts": {
+      "static": {
+        "before": false,
+        "after": false
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.6666666666666666,
+    "composite_after": 0.6666666666666666
+  }
+}

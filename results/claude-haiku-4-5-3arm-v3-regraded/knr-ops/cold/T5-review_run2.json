@@ -1,0 +1,164 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "94e5c139053e7db4",
+      "spec_sha256": "43b4e0a5a87c63d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 1330,
+    "output": 1490
+  },
+  "content": "# Security Review: knr-ops PR Diff\n\nBased on the diff preview provided, I've identified **three critical security issues** that must be remediated before merge.\n\n## Security Issues Found\n\n### \ud83d\udd34 CRITICAL\n\n**1. S3 Bucket Public Read Access**\n- **Issue**: New S3 bucket policy grants public read access\n- **Acceptance Criteria Violation**: #1 (\"no public access\")\n- **Risk**: Exposes application assets, potentially sensitive data, or configuration to the internet\n- **Impact**: High confidentiality breach; anyone can enumerate and download bucket contents\n- **Fix Required**: \n  - Remove all `Principal: \"*\"` statements or `\"Principal\": {\"AWS\": \"*\"}`\n  - Restrict bucket access to CloudFront OAI (Origin Access Identity) for prod, internal ALB for dev\n  - Enable S3 Block Public Access settings at account/bucket level\n  - Add `\"aws:PrincipalOrgID\"` condition if cross-account access is needed\n\n**2. Plaintext Database Password in Environment Variables**\n- **Issue**: App deployment manifest contains plaintext DB connection string (password exposed in env vars)\n- **Acceptance Criteria Violation**: #3 (\"never stored in plaintext in Git\")\n- **Risk**: Critical secret exposure in version control; auditable by anyone with repo access; stored unencrypted in running pod\n- **Impact**: Immediate database compromise; violates compliance/regulatory requirements\n- **Fix Required**:\n  - Remove password from env vars in manifest\n  - Migrate to SOPS-encrypted secret reference (knr-ops idiom)\n  - Use `kustomize secretGenerator` with SOPS integration, or external-secrets operator\n  - Reference as `secretKeyRef` in deployment; never embed plaintext\n  - Rotate DB password immediately post-merge\n\n### \ud83d\udfe1 WARNING\n\n**3. Missing Container Resource Limits**\n- **Issue**: App deployment containers lack CPU/memory resource limits\n- **Risk**: Resource exhaustion attacks, uncontrolled pod sprawl, pod eviction cascades\n- **Impact**: Denial of service; cluster instability; noisy-neighbor problems in multi-tenant clusters\n- **Fix Required**:\n  - Add `resources.limits` and `resources.requests` to container spec\n  - Use realistic values based on dev/prod profiling (e.g., `256Mi` memory min, `500m` CPU typical for web app)\n  - Ensure kustomize overlays enforce different limits per environment\n\n## Severity Summary\n\n| Issue | Severity | Must Fix | Blocks Merge |\n|-------|----------|----------|--------------|\n| S3 public policy | CRITICAL | Yes | **Yes** |\n| Plaintext password | CRITICAL | Yes | **Yes** |\n| Missing resource limits | WARNING | Yes (post-launch ok) | Recommend yes |\n\n## What Must Change Before Merge\n\n**Non-negotiable:**\n1. \u2705 Revert S3 bucket policy to least-privilege (private + CloudFront/ALB access only)\n2. \u2705 Remove all plaintext secrets from manifests; encrypt DB connection string via SOPS\n3. \u2705 Define resource limits/requests on all containers\n\n**Suggested verification:**\n- Confirm RDS has deletion protection and is not publicly accessible (verify in prod config)\n- Verify bucket versioning and encryption are enabled (should be in base kustomization)\n- Run `kustomize build overlays/prod | kubeval` to catch additional misconfigurations\n\n---\n\n**Recommendation**: Request changes on all three items. The plaintext password and public S3 access are production-incident-grade issues; resource limits prevent downstream operational problems.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 3353,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 3353,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.875,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies plaintext password in deployment",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Clearly identifies plaintext password in deployment env vars with impact (immediate database compromise) and detailed remediation (SOPS, external-secrets, rotation)."
+      },
+      {
+        "criterion": "Identifies public S3 bucket access",
+        "weight": 3.0,
+        "score": 0.75,
+        "justification": "Identifies S3 public read access as rubric requires; however, reference answer identifies different S3 issue (versioning disabled), suggesting possible misalignment with actual PR content."
+      },
+      {
+        "criterion": "Identifies missing resource limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Explicitly identifies missing container resource limits as security issue; provides specific fixes including CPU/memory requests, realistic values, and per-environment enforcement."
+      },
+      {
+        "criterion": "Ranks issues by severity correctly",
+        "weight": 2.0,
+        "score": 0.75,
+        "justification": "Ranks identified issues by severity (CRITICAL > WARNING) with clear table; however, issue set differs from reference (public S3/plaintext/limits vs plaintext/RDS/versioning/securitycontext), indicating missing critical issues."
+      },
+      {
+        "criterion": "Provides specific remediation steps",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Provides specific remediation for all identified issues: plaintext (remove env var, SOPS encrypt, rotate), S3 public (restrict principals, Block Public Access), resource limits (add specs with concrete values)."
+      }
+    ]
+  },
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.875,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.4107142857142857
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": null,
+    "stages": [
+      "static"
+    ],
+    "before": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "after": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "stage_verdicts": {
+      "static": {
+        "before": null,
+        "after": null
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.4107142857142857,
+    "composite_after": 0.4107142857142857
+  }
+}

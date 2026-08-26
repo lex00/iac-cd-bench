@@ -79,8 +79,8 @@ SAMPLED_HISTORICAL_JSONS = [
 # `skipped` flags. Pinned so a later change to VACUOUS_LOG_MARKERS, or a
 # stage runner quietly changing a log body, shows up as a test failure
 # rather than as a moved leaderboard.
-EXPECTED_TOTAL_RUNS = 1290
-EXPECTED_VACUOUS_RUNS = 781
+EXPECTED_TOTAL_RUNS = 1362
+EXPECTED_VACUOUS_RUNS = 789
 EXPECTED_FULLY_VACUOUS_RUNS = 127
 EXPECTED_CHANGED_COMPOSITES = 791
 
@@ -124,7 +124,11 @@ def _historical_results():
             result = json.loads(json_path.read_text())
         except (json.JSONDecodeError, OSError):
             continue
-        if not isinstance(result, dict) or "stages" not in result:
+        # A run record maps stage name -> stage result. Other JSONs live in
+        # results/ too and some carry a `stages` key of their own —
+        # regrade_offline's `_regrade_summary.json` lists the stage *names* it
+        # recomputed — so presence of the key is not enough to identify a run.
+        if not isinstance(result, dict) or not isinstance(result.get("stages"), dict):
             continue
         if any(
             isinstance(sr, dict) and "skipped" in sr

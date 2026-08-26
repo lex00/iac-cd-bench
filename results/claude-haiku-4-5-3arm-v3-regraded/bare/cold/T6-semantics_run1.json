@@ -1,0 +1,127 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "bare",
+  "run": 1,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1a23107b88261579",
+      "spec_sha256": "7affb32886e4c84e",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "d mention immutability, got 'Kubernetes API validation requires spec.selector.matchLabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks'\n    assert 'immutable' in 'kubernetes api validation requires spec.selector.matchlabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks'\n     +  where 'kubernetes api validation requires spec.selector.matchlabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks' = _norm('Kubernetes API validation requires spec.selector.matchLabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks')\n     +    where 'Kubernetes API validation requires spec.selector.matchLabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks' = <built-in method get of dict object at 0x10b728240>('reason', '')\n     +      where <built-in method get of dict object at 0x10b728240> = {'succeeds': False, 'reason': 'Kubernetes API validation requires spec.selector.matchLabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks'}.get\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T6-semantics/tests/test_task.py:91: AssertionError: q4 reason should mention immutability, got 'Kubernetes API validation requires spec.selector.matchLabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T6-semantics/tests/test_task.py::test_q4_immutable_selector_rejected\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 2925
+  },
+  "content": "```json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\"deleted\": false, \"reason\": \"kubectl apply without --prune does not delete resources when their manifests are removed from disk; it has no tracking of 'formerly applied' resources across invocations\"},\n  \"q3\": \"exists\",\n  \"q4\": {\"succeeds\": false, \"reason\": \"Kubernetes API validation requires spec.selector.matchLabels to be a subset of spec.template.metadata.labels; the selector adds tier: backend which the template lacks\"},\n  \"q5\": \"client-side\",\n  \"q6\": {\"namespace_first\": true, \"reason\": \"kubectl apply processes files in alphanumeric order; 00-namespaces.yaml sorts first, ensuring Namespace creation before namespaced dependents\"},\n  \"q7\": {\"blocked\": false, \"reason\": \"Plain kubectl apply has no cross-directory dependency tracking, health gates, or dependsOn logic; it applies only the specified manifests and ignores other directories\"}\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 902,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 902,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.8571428571428571,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.746031746031746
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "b8cb7b709453",
+    "stages": [
+      "static"
+    ],
+    "before": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 7
+    },
+    "after": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 7
+    },
+    "stage_verdicts": {
+      "static": {
+        "before": null,
+        "after": null
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.746031746031746,
+    "composite_after": 0.746031746031746
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "source": "/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/results/claude-haiku-4-5-3arm-v3",
+  "out": "/private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/v3-final/claude-haiku-4-5-3arm-v3",
+  "stages": [
+    "static"
+  ],
+  "runs": 108,
+  "regraded": 108,
+  "skipped": 0,
+  "fail_to_pass": 0,
+  "pass_to_fail": 0,
+  "unchanged": 108,
+  "assertion_delta": 0,
+  "stage_flips": {
+    "static": {
+      "fail_to_pass": 5,
+      "pass_to_fail": 0
+    }
+  },
+  "extraction_refusals": 0,
+  "changed": [
+    {
+      "run": "bare/cold/T4-debug_run1.json",
+      "model": "claude-haiku-4-5",
+      "stack": "bare",
+      "task": "T4-debug",
+      "condition": "cold",
+      "direction": "unchanged",
+      "stage_flips": {
+        "static": "False -> True"
+      },
+      "assertions": "2/2 -> 2/2",
+      "composite": "0.667 -> 0.778"
+    },
+    {
+      "run": "bare/cold/T4-debug_run2.json",
+      "model": "claude-haiku-4-5",
+      "stack": "bare",
+      "task": "T4-debug",
+      "condition": "cold",
+      "direction": "unchanged",
+      "stage_flips": {
+        "static": "False -> True"
+      },
+      "assertions": "2/2 -> 2/2",
+      "composite": "0.667 -> 0.778"
+    },
+    {
+      "run": "bare/warm/T4-debug_run1.json",
+      "model": "claude-haiku-4-5",
+      "stack": "bare",
+      "task": "T4-debug",
+      "condition": "warm",
+      "direction": "unchanged",
+      "stage_flips": {
+        "static": "False -> True"
+      },
+      "assertions": "2/2 -> 2/2",
+      "composite": "0.667 -> 0.778"
+    },
+    {
+      "run": "bare/warm/T4-debug_run2.json",
+      "model": "claude-haiku-4-5",
+      "stack": "bare",
+      "task": "T4-debug",
+      "condition": "warm",
+      "direction": "unchanged",
+      "stage_flips": {
+        "static": "False -> True"
+      },
+      "assertions": "2/2 -> 2/2",
+      "composite": "0.667 -> 0.778"
+    },
+    {
+      "run": "knr-ops/warm/T2-generate_run1.json",
+      "model": "claude-haiku-4-5",
+      "stack": "knr-ops",
+      "task": "T2-generate",
+      "condition": "warm",
+      "direction": "unchanged",
+      "stage_flips": {
+        "static": "False -> True"
+      },
+      "assertions": "6/6 -> 6/6",
+      "composite": "0.667 -> 0.778"
+    }
+  ]
+}

@@ -1,0 +1,165 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T5-review",
+  "stack": "bare",
+  "run": 2,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "2b3940fbd51e98f3",
+      "spec_sha256": "debfcea6b8aad5d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 1807,
+    "output": 2448
+  },
+  "content": "# Security Review: Critical Issues Found\n\nThis PR introduces **five serious security issues**, four of which are **CRITICAL**. I recommend **REJECT and do not merge** in its current form.\n\n---\n\n## Issues Ranked by Severity\n\n### 1. **CRITICAL: Plaintext Database Password Committed to Git**\n- **File/Field:** `prod/db-secret.yaml` \u2192 `stringData.password`\n- **Issue:** The actual production database password `\"Summer2026!Prod#db\"` is now in version control history in plaintext. This violates the canonical spec requirement: *\"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism.\"* Once committed, the credential is permanently compromised even if later reverted\u2014it exists in Git history forever.\n- **Required Change:** \n  - Revert to the placeholder value immediately\n  - Use the stack's native secret encryption: SOPS-encrypted files, Crossplane ProviderSecret, Terraform `-var-file`, Pulumi `ConfigSecret`, or referenced-provenance secret refs (no ciphertext in repo)\n  - Rotate this database password immediately in production (treat as breached)\n  - Add `.gitignore` rules or pre-commit hooks to prevent real secrets from being committed\n\n---\n\n### 2. **CRITICAL: S3 Bucket Made Publicly Readable**\n- **File/Field:** `prod/s3-bucket.yaml` \u2192 `spec.policy` (removed `publicAccessBlock`)\n- **Issue:** Removes all public access blocks and replaces them with an S3 bucket policy that grants `\"Principal\": \"*\"` (anyone on the internet) `s3:GetObject` permission on all objects (`arn:aws:s3:::myapp-assets-prod/*`). Violates: *\"Bucket: no public access.\"* All application assets are now world-readable.\n- **Required Change:**\n  - Restore `publicAccessBlock` with all four blocks set to `true`:\n    ```yaml\n    publicAccessBlock:\n      blockPublicACLs: true\n      blockPublicPolicy: true\n      ignorePublicACLs: true\n      restrictPublicBuckets: true\n    ```\n  - Remove the wildcard bucket policy entirely, or if public read access is genuinely required (e.g., for CloudFront distribution), use a restrictive principal (CloudFront distribution account/origin access identity, not `\"*\"`)\n\n---\n\n### 3. **CRITICAL: RDS Instance Exposed to Public Internet**\n- **File/Field:** `prod/rds.yaml` \u2192 `spec.publiclyAccessible`\n- **Issue:** Changes from `false` to `true`, placing the production PostgreSQL database directly on the public internet. Violates: *\"RDS: no publicly accessible.\"* Exposes the database to direct network attacks and brute-force login attempts. Combined with issue #4 (no deletion protection), this is extremely high risk.\n- **Required Change:**\n  - Revert to `publiclyAccessible: false`\n  - Ensure application connects via private VPC endpoint or internal ALB/service discovery only\n\n---\n\n### 4. **CRITICAL: RDS Deletion Protection Disabled**\n- **File/Field:** `prod/rds.yaml` \u2192 `spec.deletionProtection`\n- **Issue:** Changes from `true` to `false`, removing the safeguard against accidental or malicious deletion of the production database. Violates: *\"RDS: deletion protection on.\"* Production data can now be destroyed with a single API call.\n- **Required Change:**\n  - Revert to `deletionProtection: true`\n  - Maintain this safeguard in prod at all times\n\n---\n\n### 5. **HIGH: Missing Resource Requests and Limits**\n- **File/Field:** `prod/app.yaml` \u2192 removed `spec.containers[].resources`\n- **Issue:** Deletion of CPU/memory requests and limits. While not explicitly in the acceptance criteria, this is a critical operational security issue:\n  - Without **requests**, Kubernetes scheduler cannot properly bin-pack workloads \u2192 increased node sprawl and cost\n  - Without **limits**, a misbehaving or compromised container can consume all node resources \u2192 DoS against sibling pods and cluster stability\n  - Increases vulnerability to resource exhaustion attacks\n- **Required Change:**\n  - Restore resource constraints. For prod, use:\n    ```yaml\n    resources:\n      requests:\n        cpu: 100m\n        memory: 128Mi\n      limits:\n        cpu: 500m\n        memory: 256Mi\n    ```\n  - Or higher limits if load testing justifies it; the point is to have *explicit* bounds\n\n---\n\n## Summary\n\n| Severity | Count | Files Affected |\n|----------|-------|-----------------|\n| CRITICAL | 4 | `db-secret.yaml`, `s3-bucket.yaml`, `rds.yaml` (\u00d72 issues) |\n| HIGH     | 1 | `app.yaml` |\n\n**Recommendation:** **REJECT this PR.** All five changes degrade security posture significantly and violate the canonical acceptance criteria. Request the author:\n1. Revert all changes\n2. Implement secrets via the stack's native encryption mechanism (not plaintext in Git)\n3. Restore public access blocks on S3\n4. Restore `publiclyAccessible: false` and `deletionProtection: true` on RDS\n5. Restore resource requests/limits on the app container\n\nThis is a bare stack with no CI policy engine, so the human reviewer (you) is the sole gate. **Do not approve.**",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 4877,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 4877,
+      "fenced_blocks": 2,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 1.0,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies the plaintext database password committed to prod/db-secret.yaml, replacing the documented out-of-band placeholder",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies plaintext password in prod/db-secret.yaml replacing documented placeholder (REPLACE_OUT_OF_BAND_NEVER_COMMIT_REAL_VALUE) with real credential Summer2026!Prod#db, with correct impact and remediation."
+      },
+      {
+        "criterion": "Identifies that prod/s3-bucket.yaml removes the public access block and adds a bucket policy granting s3:GetObject to Principal '*' (public read exposure)",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission correctly identifies removal of publicAccessBlock in prod/s3-bucket.yaml and addition of bucket policy granting s3:GetObject to Principal '*', explicitly stating public read exposure."
+      },
+      {
+        "criterion": "Identifies that prod/rds.yaml sets publiclyAccessible: true and deletionProtection: false on the production database",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission identifies both required RDS changes: publiclyAccessible changed from false to true, and deletionProtection changed from true to false, though split into separate issues #3 and #4."
+      },
+      {
+        "criterion": "Identifies that prod/app.yaml drops the container's resource requests/limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies removal of resource requests/limits from prod/app.yaml container spec, noting the specific field path spec.containers[].resources."
+      },
+      {
+        "criterion": "Ranks the four issues by severity in an order consistent with: plaintext password and public bucket as the most severe, RDS exposure next, missing resource limits least severe",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission ranks issues in correct order: plaintext password #1, S3 bucket #2, RDS issues #3-4, missing limits #5, consistent with criterion requirement of password/bucket most severe, RDS next, limits least severe."
+      },
+      {
+        "criterion": "Provides a specific, concrete remediation for each issue identified (not just 'fix this')",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "All five issues have specific concrete remediation: plaintext needs out-of-band secret mechanism with password rotation; S3 needs publicAccessBlock restore with specific YAML; RDS needs explicit false/true reversions; app needs specific CPU/memory request and limit values."
+      }
+    ]
+  },
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 1.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.42857142857142855
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": null,
+    "stages": [
+      "static"
+    ],
+    "before": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "after": {
+      "passed": false,
+      "passed_count": 0,
+      "total_count": 0
+    },
+    "stage_verdicts": {
+      "static": {
+        "before": null,
+        "after": null
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.42857142857142855,
+    "composite_after": 0.42857142857142855
+  }
+}

@@ -1,0 +1,133 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T2-generate",
+  "stack": "bare",
+  "run": 2,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "b870b4fe89ff9404",
+      "spec_sha256": "0aa384baa7f37e91",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\n# Assume your existing Role is named 'myapp' \u2014 adjust if different\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Role\nmetadata:\n  name: myapp\nspec:\n  assumeRolePolicyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Principal\": {\n            \"Service\": \"ec2.amazonaws.com\"\n          },\n          \"Action\": \"sts:AssumeRole\"\n        }\n      ]\n    }\n---\n# Add this new RolePolicy resource for logs-only access\napiVersion: iam.servi\n[validate CRDs] kubeconform: exit=0\nSummary: 6 resources found in 4 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 6\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kubeconform -strict iam.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-s4kj049u/prod/iam.yaml - RolePolicy myapp-logs-policy failed validation: could not find schema for RolePolicy\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-s4kj049u/prod/iam.yaml - Role myapp is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report\nkubeconform -strict logs-bucket.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-s4kj049u/prod/logs-bucket.yaml - Bucket myapp-logs-prod is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/s3.services.k8s.aws/bucket_v1alpha1.json#' - at '/spec': missing property 'name' - at '/spec': additional properties 'bucketName', 'publicA\nkubeconform -strict iam.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-s4kj049u/dev/iam.yaml - UserPolicy myapp-logs-policy failed validation: could not find schema for UserPolicy\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-s4kj049u/dev/iam.yaml - User myapp is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-f\nkubeconform -strict logs-bucket.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-s4kj049u/dev/logs-bucket.yaml - Bucket myapp-logs-dev is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/s3.services.k8s.aws/bucket_v1alpha1.json#' - at '/spec': missing property 'name' - at '/spec': additional properties 'publicAccessBlockConfig"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 6 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_dev_logs_bucket_exists PASSED [ 16%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_prod_logs_bucket_exists PASSED [ 33%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_versioning PASSED [ 50%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_encryption PASSED [ 66%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_public_access_blocked PASSED [ 83%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_logs_scoped_iam_grant_present_both_envs PASSED [100%]\n\n============================== 6 passed in 0.01s ===============================\n",
+      "passed_count": 6,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1760,
+    "output": 9987
+  },
+  "content": "# ACK S3 Logs Bucket \u2014 dev and prod\n\nI'll provide manifests for the new logs buckets and the required IAM permission grants. Since you don't have the existing `iam.yaml` files visible, I'm providing edited versions that assume the service principals are named `myapp` (a common pattern). Adjust the `userName` / `roleName` references to match your actual existing User/Role names.\n\n---\n\n`dev/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-dev\nspec:\n  bucketName: myapp-logs-dev\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n---\n\n`prod/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\nspec:\n  bucketName: myapp-logs-prod\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n---\n\n`dev/iam.yaml`\n```yaml\n# Assume your existing User is named 'myapp' \u2014 adjust if different\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: User\nmetadata:\n  name: myapp\nspec: {}\n---\n# Add this new UserPolicy resource for logs-only access\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: UserPolicy\nmetadata:\n  name: myapp-logs-policy\nspec:\n  userName: myapp\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-dev/*\"\n        }\n      ]\n    }\n```\n\n---\n\n`prod/iam.yaml`\n```yaml\n# Assume your existing Role is named 'myapp' \u2014 adjust if different\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Role\nmetadata:\n  name: myapp\nspec:\n  assumeRolePolicyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Principal\": {\n            \"Service\": \"ec2.amazonaws.com\"\n          },\n          \"Action\": \"sts:AssumeRole\"\n        }\n      ]\n    }\n---\n# Add this new RolePolicy resource for logs-only access\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: RolePolicy\nmetadata:\n  name: myapp-logs-policy\nspec:\n  roleName: myapp\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-prod/*\"\n        }\n      ]\n    }\n```\n\n---\n\n## Notes\n\n- **UserPolicy / RolePolicy**: These are new ACK inline policy resources that attach only to your logs bucket. They do **not** widen access to the existing assets bucket.\n- **Idiomatic for your stack**: Because dev/ and prod/ are independent, each new policy resource is applied only in its directory and has no effect on the other environment.\n- **Apply with kubectl**: `kubectl apply -f dev/` applies both the bucket and the new policy; `kubectl apply -f prod/` applies them separately. Environment isolation is preserved.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-nadtz53h/dev/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-nadtz53h/prod/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-nadtz53h/dev/iam.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-nadtz53h/prod/iam.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 3452,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 3452,
+      "fenced_blocks": 4,
+      "extracted_files": 4,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.6666666666666666
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "83832e55734b",
+    "stages": [
+      "static"
+    ],
+    "before": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 6
+    },
+    "after": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 6
+    },
+    "stage_verdicts": {
+      "static": {
+        "before": false,
+        "after": false
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.6666666666666666,
+    "composite_after": 0.6666666666666666
+  }
+}
