@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 637,
+    "output": 817
+  },
+  "content": "I don't see the preview JSON attached \u2014 only the task description. Paste the `pulumi preview --json` output and I'll review it directly.\n\nIn the meantime, here's exactly what I'll check against your spec, so you can pre-scan too:\n\n## 1. Secret in plaintext outputs\n\n**Red flags in the JSON:**\n- `\"secret\": false` on an output whose key/value contains a connection string (e.g., `dbConnectionString`, `databaseUrl`) while its properties are exposed in plaintext.\n- A resource type like `aws:secretsmanager:Secret` where the `secretString` property appears literally (`\"postgresql://admin:hunter2@...\"`).\n\n**Expected instead (per your spec):**\n```json\n\"outputs\": {\n  \"dbConnectionString\": {\n    \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\",\n    \"value\": \"...\" \n  }\n}\n```\n\u2026or the secret sourced via `ConfigSecret` (`pulumi config set --secret`) rather than `new pulumi.Config().get()` or a literal string in code.\n\n```bash\n# quick scan\njq '.. | objects | select(.secret == false) | keys[]' preview.json | grep -iE 'conn|pass|secret|key|token'\n```\n\n## 2. Replacement of stateful resources\n\nLook for:\n- `\"diffReasons\"` / `\"propertyDiff\"` on `aws:rds:Instance`, EKS node group root volumes, S3 bucket names\n- Replacement diffs like:\n\n```json\n\"aws:rds/instance:Instance::prod-db\": {\n  \"diffs\": [\"replace\"],\n  \"propertyDiff\": { \"instanceClass\": {\"createBeforeDestroy\": true}, \"availabilityZone\": [\"update-replace\"] }\n}\n```\n\n- **RDS replacement = data loss risk** even with deletion protection; check for `createBeforeDestroy` absence, missing snapshot final identifiers (`finalSnapshotIdentifier`), and whether deletion protection diff is present at all (it should be `true` per acceptance criteria #2).\n- Same scrutiny for `backupRetentionPeriod` (<7 \u2192 violation), `publiclyAccessible`.\n\n## 3. Missing `protect` flag\n\nThe JSON doesn't include protect explicitly in recent versions unless something changed it, so verify:\n- RDS instances, EKS clusters, and S3 buckets should be wrapped with `protect: true` in code; if you pass `--show-config` or inspect the program, confirm. In older output you may see `protect` under `properties` of the resource state.\n- Practical proxy: any stateful resource appearing with a `\"delete\"` or `\"replace\"` operation in `resourceChanges` without a comment of intent is a candidate.\n\n## Quick triage checklist\n\n| Check | Pass condition |\n|---|---|\n| Outputs | All secret-typed outputs show encrypted blob marker (`1b4706...`) not plaintext |\n| RDS | No replacement; deletionProtection=true; retention \u2265 7; multi-AZ in prod |\n| S3 | Versioning + SSE enabled; no replace on prod bucket; replication role intact |\n| IAM | No `*:*` actions in `aws:iam:RolePolicy` inline policies |\n| Cluster | Node sizes/counters match env table |\n| Isolation | Diff touches only one stack scope |\n\nSend over the actual JSON and I'll produce findings with line-level evidence and recommended fixes (including the corrected TypeScript snippets for `protect: true`, `additionalSecretOutputs`, and `Pulumi.Config.getSecret`).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-4y2jtnx6/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-4y2jtnx6/generated_1.json"
+  ]
+}

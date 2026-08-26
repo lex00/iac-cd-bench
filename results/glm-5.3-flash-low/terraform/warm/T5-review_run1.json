@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 650,
+    "output": 1027
+  },
+  "content": "# Terraform Plan Review: Hidden Destructive Changes\n\n## Why this needs a structured review\n\n`terraform plan` output (the human-readable one) is easy to skim wrong \u2014 a `replace` line can scroll past among dozens of `update in-place` no-ops. The tfplan JSON should be analyzed programmatically.\n\n## Step 1 \u2014 Surface destructive changes with jq\n\n```bash\nterraform show -json tfplan > plan.json\n\n# Every resource where an attribute would be DESTROYED\njq -r '\n  .resource_changes[] |\n  . as $rc |\n  [ .change.actions[], .change.before, .change.after ] |\n  strings | select(test(\"delete|destroy\")) | $rc.address\n' plan.json\n```\n\nMore reliable \u2014 check **actions**, not attribute text:\n\n```bash\n# Destroy or replace = the danger zone\njq -r '.resource_changes[]\n  | select(.change.actions | any(. == \"delete\" or . == \"replace\"))\n  | \"\\(.address)\\t\\(.change.actions)\"' plan.json\n\n# Count by action type for the \"40 changes\" sanity view\njq -r '[.resource_changes[].change.actions[]] | group_by(.) \n  | map({(.[0]): length}) | add' plan.json\n```\n\n**Flags specific to the DB recreate:** look at `.change.replace_paths` (present in newer plans) to see *why* it's replacing:\n\n```bash\njq -r '.resource_changes[]\n  | select((.change.actions | index(\"delete\"))) |\n  {address: .address, replace_paths: (.change.replace_paths // \"n/a\")}' plan.json\n```\n\nTypical culprits that force DB replacement: `engine_version` change without preview, `instance_class` cross-family changes, **toggling `storage_encrypted` from false\u2192true** (forces replacement), multi-AZ flip on some engines, subnet group membership change.\n\n## Step 2 \u2014 Catch the open security group\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(.type == \"aws_security_group\" or .type == \"aws_vpc_security_group_ingress_rule\")\n  | select(.change.after != null)\n  | .address as $a\n  | ((.change.after.ingress // .change.after.cidr_ipv4) ) as $i\n  | select(($i | tostring) | test(\"0\\\\.0\\\\.0\\\\.0/0\"))\n  | $a' plan.json\n```\n\nAlso diff before/after explicitly:\n\n```bash\njq -r '.resource_changes[]\n  | select(.type | startswith(\"aws_vpc_security_group\") or .type == \"aws_security_group\")\n  | {addr: .address,\n     before: .change.before.ingress,\n     after: .change.after.ingress}' plan.json | jq .\n```\n\nA `0.0.0.0/0` addition will usually appear as a new list element in `ingress[].cidr_blocks`.\n\n## Step 3 \u2014 Verdict against acceptance criteria\n\nGiven this plan:\n\n| Finding | Assessment | Blocker? |\n|---|---|---|\n| RDS destroy+create among no-ops | **Yes** \u2014 violates AC #2 if deletion protection was on; even if not, prod data loss risk. Must be reviewed out-of-band or replaced with in-place strategy (`prevent_destroy` lifecycle block should have made this plan fail). | \u2705 Block |\n| SG accepts 0.0.0.0/0 | Violates intent of AC #1/#2 posture; restrict CIDRs or route via ALB only. | \u2705 Block |\n\nRecommended hardening regardless of this plan:\n\n- `lifecycle { prevent_destroy = true }` on `aws_db_instance` (prod workspace/tfvars only)\n- Explicit `block` on RDS non-updatable attributes, e.g. pin `storage_encrypted`, `engine`\n- CI gate: fail pipeline when plan contains any `delete` action touching tag-scoped-prod resources without a manual approval label, plus an OPA/Sentinel policy banning `cidr == \"0.0.0.0/0\"` on port ranges other than 80/443 on public-facing LBs (or entirely).\n\n## Bottom line\n\n40 changes \u2260 boring. This plan contains two critical regressions: an **RDS replacement** (destroy+create \u2192 data loss; blocked also because deletion protection per AC #2 means either state drift or protection is off) and a **world-open ingress rule**. Do not apply; fix root causes (encrypted-at-rest toggle / instance-class change, and the SG module default), then re-plan and confirm `delete` count is zero before proceeding."
+}

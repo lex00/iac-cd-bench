@@ -1,0 +1,35 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hymsaoz7/generated_0.ts(1,43): error TS1109: Expression expected.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hymsaoz7/generated_0.ts(2,48): error TS1109: Expression expected.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 637,
+    "output": 1095
+  },
+  "content": "# Pulumi Preview JSON Security Review\n\n## Sample Preview (trimmed)\n\n```json\n{\n  \"version\": 3,\n  \"stepGeneration\": {\n    \"steps\": [\n      { \"op\": \"replace\", \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::db\",\n        \"provider\": \"urn:pulumi:prod::app::pulumi:providers:aws::default\",\n        \"oldState\": { \"outputs\": {} },\n        \"newState\": { \"inputs\": {\n          \"identifier\": \"app-db-prod\",\n          \"engine\": \"postgres\",\n          \"instanceClass\": \"db.t3.medium\",\n          \"multiAz\": true,\n          \"storageEncrypted\": true,\n          \"deletionProtection\": true,\n          \"backupRetentionPeriod\": 7,\n          \"publiclyAccessible\": false,\n          \"masterPassword\": { \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", \"value\": \"[secret]\" }\n        } },\n        \"propertyChanges\": { \"securityGroupIds\": { \"old\": [\"sg-0aaa111\"], \"new\": [\"sg-0bbb222\"] } }\n      },\n      { \"op\": \"create\", \"urn\": \"urn:pulumi:prod::app::s3/bucket:Bucket::assets\",\n        \"newState\": { \"inputs\": {\n          \"bucket\": \"app-assets-prod\",\n          \"acl\": null,\n          \"versioning\": { \"enabled\": true },\n          \"serverSideEncryptionConfiguration\": [{ \"sseAlgorithm\": \"AES256\" }]\n        }, \"protect\": false }\n      },\n      { \"op\": \"create\", \"urn\": \"urn:pulumi:prod::app::iam/user:User::svc-user\",\n        \"newState\": { \"inputs\": { \"name\": \"app-svc\", \"forceDestroy\": false } }\n      }\n    ]\n  },\n  \"config\": {},\n  \"output\": {\n    \"dbUrl\": \"postgres://app:Sup3rS3cret!@app-db-prod.xxxx.us-east-1.rds.amazonaws.com:5432/app\"\n  }\n}\n```\n\n## Findings\n\n### \ud83d\udd34 HIGH \u2014 Plaintext secret in stack output\n```json\n\"output\": { \"dbUrl\": \"postgres://app:Sup3rS3cret!@...\" }\n```\nThe DB connection string (containing the master password) is exposed as plaintext output. It will be stored unencrypted in the state service's output metadata and shown in CLI output.\n\n**Fix:** export only via `pulumi.export(\"dbUrl\", pulumi.secret(...))` or `Output.createSecret()`, ideally referencing `ConfigSecret` rather than interpolating credentials. Prefer never emitting the password; construct the URL from secret-less components.\n\n### \ud83d\udfe0 MEDIUM \u2014 Replacement of stateful resource\n```json\n{ \"op\": \"replace\", \"urn\": \"...rds/instance:Instance::db\" }\n```\n`replace` means a **destroy-then-create** of the prod database \u2014 data loss window, downtime, and a failover-cutover risk (endpoint changes unless you use an address that tolerates replacement). The diff (`securityGroupIds`) suggests the SG was recreated, cascading into the DB.\n\n**Fix:** SG IDs should usually be treated as an update (`pulumi up` with attention) or attach DB to a stable, shared SG that isn't recreated per-app change. If replacement is truly needed, use `create_before_delete` on dependent resources plus a snapshot-based migration plan for prod.\n\n### \ud83d\udfe0 MEDIUM \u2014 Missing protect flag on stateful resources\nThe preview shows `\"protect\": false` on the S3 bucket (and implicitly nothing set anywhere). Neither the prod RDS instance nor the bucket is protected against accidental deletion.\n\n**Fix:** add to prod config or code:\n```ts\nconst db = new aws.rds.Instance(\"db\", {...}, { protect: opts.isProd });\nconst assets = new aws.s3.Bucket(\"assets\", {...}, { protect: opts.isProd });\n```\n\n### \ud83d\udfe1 LOW \u2014 Prod still uses an IAM user with programmatic access\nPreview creates `iam:user:User::svc-user`, but spec requires OIDC-federated least-privilege role for prod.\n\n**Fix:** replace user + access keys with an IAM role trusted to the EKS cluster OIDC provider (IRSA), scoped to S3/RDS-specific actions only.\n\n## What looks correct \u2705\n\n- RDS: deletion protection \u2713, backup retention 7 \u2713, multi-AZ \u2713, encrypted storage \u2713, not publicly accessible \u2713\n- Bucket: versioning \u2713, SSE \u2713, no public access block visible as disabled (verify it's explicit)\n- Config separation: diff targets `prod` stack; dev state untouched \u2713\n\n## Verdict\n**Block deployment.** Fix the plaintext output and the unintended RDS replacement before running `up`; then set `protect` in prod.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hymsaoz7/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hymsaoz7/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hymsaoz7/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-hymsaoz7/generated_0.ts"
+  ]
+}

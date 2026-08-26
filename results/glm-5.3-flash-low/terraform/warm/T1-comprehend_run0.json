@@ -1,0 +1,35 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\n\u001b[0m\u001b[1mInitializing provider plugins found in the configuration...\u001b[0m\n- Finding latest version of hashicorp/aws...\n- Installing hashicorp/aws v6.61.0...\n- Installed hashicorp/aws v6.61.0 (signed by HashiCorp)\n\n\n\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mError refreshing state: 2 problems:\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m- Unsupported state file format: The state file could not be parsed as JSON: syntax error at byte offset 2.\n\u001b[31m\u2502\u001b[0m \u001b[0m- Unsupported state file format: The state file does not have a \"version\" attribute, which is required to identify the format version.\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mMissing required provider\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0mThis configuration requires provider registry.terraform.io/hashicorp/aws,\n\u001b[31m\u2502\u001b[0m \u001b[0mbut that provider isn't available. You may be able to install it\n\u001b[31m\u2502\u001b[0m \u001b[0mautomatically by running:\n\u001b[31m\u2502\u001b[0m \u001b[0m  terraform init\n\u001b[31m\u2575\u001b[0m\u001b[0m\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 1007
+  },
+  "content": "# Terraform Plan Behavior: Predicting the Outcome\n\n## Scenario Setup\n\nAssume this configuration in workspace `dev`:\n\n```hcl\nvariable \"environment\" {\n  default = \"dev\"\n}\n\nresource \"aws_db_instance\" \"app\" {\n  identifier           = \"app-${var.environment}\"\n  instance_class       = var.environment == \"prod\" ? \"db.t3.medium\" : \"db.t3.micro\"\n  multi_az             = var.environment == \"prod\"\n  deletion_protection  = true\n  backup_retention_period = 7\n  publicly_accessible  = false\n}\n```\n\nAnd `prod.tfvars` flips `environment = \"prod\"`.\n\n---\n\n## 1. What does the next plan show when the variable flips?\n\nRunning `terraform plan -var-file=prod.tfvars` (or switching workspaces) produces:\n\n```\n~ aws_db_instance.app\n    ~ instance_class: \"db.t3.micro\" -> \"db.t3.medium\"\n    ~ multi_az:       false -> true\n```\n\n**Key points:**\n- `~` means **in-place update** \u2014 RDS instance class and multi-AZ are modifiable attributes, so Terraform plans an update, not a replacement.\n- The RDS instance will be **rebooted** during apply (instance class changes require downtime for single-AZ; negligible with multi-AZ being enabled first).\n- If a resource contained a `force_new` attribute (e.g., changing `engine_version.postgres` from \"14\" to \"15\" on some settings, or bucket region), you'd see:\n  ```\n  -/+ aws_db_instance.app (new resource required)\n  ```\n  meaning **destroy + create**, destroying data unless `prevent_destroy` / safeguards exist.\n\n---\n\n## 2. What happens if the state file is deleted?\n\nDeleting `terraform.tfstate` does **not** delete infrastructure, but Terraform loses all memory of it. Consequences:\n\n1. **Next plan shows everything as NEW**: every resource appears with `+` (create). Terraform compares empty state vs. config.\n2. **Apply will fail or duplicate**: AWS returns \"already exists\" errors (`DBInstanceAlreadyExists`, `BucketAlreadyOwnedByYou`) because real resources exist but aren't in state.\n3. **No drift detection**: any manual changes are invisible.\n\n**Recovery options:**\n```bash\n# Readopt existing resources one by one\nterraform import aws_db_instance.app app-dev\n\n# Or restore remote backend state\nterraform state pull > backup.tfstate   # should have been done beforehand\n```\nThis is why **remote backends (S3 + DynamoDB locking)** with versioning and state locking are standard practice.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\nFor `db.t3.micro \u2192 db.t3.medium` specifically:\n\n| Attribute | Behavior |\n|---|---|\n| `instance_class` | **In-place update** via AWS ModifyDBInstance API; brief reboot |\n| `multi_az false \u2192 true` | In-place update; no reboot, but synchronous snapshot taken |\n| Ordering | Terraform (and AWS) apply both changes together during apply |\n\nHowever, if instead the **region or identifier** changed:\n```\n-/+ aws_db_instance.app (new resource required)\n```\nThat's a destroy-create cycle: data loss (mitigated only by final snapshots/backups), so `create_before_destroy` lifecycle blocks or Blue/Green-style strategies would be needed.\n\nBecause dev and prod use separate tfvars/workspaces, applying prod's class change touches **only prod state** \u2014 dev is untouched (acceptance criterion 7).\n\n---\n\n## 4. What is the difference between state and configuration?\n\n| | Configuration (.tf) | State (.tfstate) |\n|---|---|---|\n| **What it is** | Human-authored desired state | Terraform's record of real deployed resources |\n| **Format** | HCL, version-controlled | JSON, sensitive (may contain secrets!), stored in backend |\n| **Contents** | Resources, variables, modules | Resource IDs, attributes as deployed, dependency graph, metadata |\n| **Source of truth** | You / Git | Cloud provider reality, as observed by Terraform |\n\n**How they interact:**\n- `plan` = refresh(real world) + diff(state \u2194 config)\n- Drift occurs when real infrastructure changes out-of-band; `terraform plan` detects it because refreshing state reveals mismatches\n- Config is what you *want*; state is what Terraform *believes exists*; the cloud is what actually *exists*. Plan reconciles all three.\n\n**Practical implication:** Never edit `.tfstate` manually, never commit it to Git (it can contain DB connection strings unencrypted), and always keep it in a locked remote backend so two engineers don't hold divergent views of reality.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-1yrxxw4q/prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-1yrxxw4q/terraform.tfstate",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-1yrxxw4q/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-1yrxxw4q/generated_0.txt"
+  ]
+}

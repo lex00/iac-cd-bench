@@ -1,0 +1,35 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.01s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1006,
+    "output": 1043
+  },
+  "content": "# Fixed Pulumi Stack\n\n## Defects fixed\n\n1. **Secret read as plain string** \u2192 `config.require_secret(\"dbPassword\")` returns a proper `Output`-wrapped secret that's encrypted in state.\n2. **`.apply()` misuse** \u2192 removed; a plain `Output` (`bucket.bucket`) is used directly where an `Output` is expected. (Also the original URL was wrong \u2014 an ARN isn't a hostname.)\n\n## `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.get(\"env\", \"dev\")\nregion = config.get(\"region\", \"us-east-1\")\n\n# FIX 1: secret read as Secret -> encrypted at rest in state,\n# flows through the program as Output[str], never plaintext\ndb_password = config.require_secret(\"dbPassword\")\n\nis_prod = env == \"prod\"\n\n# --- S3 Bucket ---\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}-{region}\",\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\n    server_side_encryption_configuration=aws.s3.BucketServerSideEncryptionConfigurationArgs(\n        rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n            apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                sse_algorithm=\"AES256\",\n            )\n        )\n    ),\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\n)\n\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-pab\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# FIX 2: no .apply() needed \u2014 bucket.bucket IS an Output[str].\n# Passing it where an Output is expected works natively:\nbucket_url = pulumi.Output.concat(\n    \"https://\", bucket.bucket, \".s3.\", region, \".amazonaws.com/\"\n)\n# If you DID need to transform values inside an apply, returning a string\n# from it still yields an Output \u2014 never assign/return None.\n\n# --- RDS ---\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.large\" if is_prod else \"db.t3.micro\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app-user\",\n    password=db_password,           # Secret/Output \u2014 valid here\n    multi_az=is_prod,\n    storage_encrypted=True,\n    deletion_protection=is_prod,    # on in prod per acceptance criteria\n    backup_retention_period=7 if is_prod else 7,\n    publicly_accessible=False,\n    skip_final_snapshot=not is_prod,\n    final_snapshot_identifier=f\"myapp-final-{env}\" if is_prod else None,\n)\n\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n```\n\n## `Pulumi.dev.yaml` / `Pulumi.prod.yaml`\n\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  aws:region: us-east-1\n  myapp:env: dev\nsecretsprovider: awskms://alias/pulumi-secrets   # or passphrases provider\n```\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  aws:region: us-east-1\n  myapp:env: prod\n```\n\nSet the secret once so it's stored encrypted in the stack backend:\n\n```bash\npulumi config set --secret dbPassword '<value>'\n```\n\n## Why the original crashed\n\n- `config.get(\"dbPassword\")` returns a plain `str` \u2014 the password was written **unencrypted into state** and would fail any downstream code expecting an `Output` (e.g., `get_output`, Pulumi Cloud secret display).\n- Once you switch to `require_secret`, the password becomes `Output[str]`; all consumers must stay Output-compatible. The `.apply()` line itself wasn't invalid in form \u2014 the real bug was mixing plain strings and Outputs inconsistently (the ARN-in-URL composition was also simply wrong). Rule of thumb: **pass Outputs through directly when possible; only use `.apply()` to transform values, always returning a value (never `None`).**",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-2sr_5eod/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-2sr_5eod/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-2sr_5eod/Pulumi.prod.yaml"
+  ]
+}

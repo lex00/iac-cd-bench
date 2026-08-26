@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 739
+  },
+  "content": "# Terraform Plan Behavior \u2014 Scenario Walkthrough\n\n## 1. What does the next plan show when a variable flips?\n\nSay `environment = \"prod\"` flips (or the RDS instance class var changes from `db.t3.micro` \u2192 `db.t3.medium`):\n\n```\n~ aws_db_instance.main\n      instance_class: \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\n- Plan is a **diff between state and configuration**.\n- Attributes that change are marked `~` (in-place update).\n- If an attribute forces replacement, the plan shows `# forces replacement` and plans **destroy + create** (`-/+`), e.g., changing some RDS engine/storage params.\n- Other resources whose inputs don't change are shown as **no-op** \u2014 flipping one var does not touch unrelated resources (env isolation holds, since each env has its own state via workspace/var-file).\n\n## 2. What happens if the state file is deleted?\n\nTerraform loses all memory of deployed resources:\n\n- Next `plan` shows **everything as `+` (create)** \u2014 Terraform believes nothing exists.\n- Running `apply` tries to create duplicate resources; most will fail with `BucketAlreadyExists`, `DBInstanceAlreadyExists`, etc., because the real AWS resources still exist.\n- State \u2260 infrastructure: deleting state doesn't delete anything in AWS, but makes Terraform unable to manage or destroy what it created.\n\n**Recovery:** `terraform import aws_db_instance.main <db-id>` (etc.) to rebuild the mapping \u2014 this matches the docs note on adopting existing resources. A better setup avoids this entirely by using remote backend state (S3 + DynamoDB locking).\n\n## 3. How does Terraform handle the RDS instance class change?\n\n`instance_class` is a **modifiable attribute** for RDS:\n\n1. Provider marks it updateable-in-place.\n2. Plan shows `~ aws_db_instance.main ... instance_class: \"db.t3.micro\" -> \"db.t3.medium\"`.\n3. Apply issues a ModifyDBInstance call; AWS applies the resize with only a brief reboot (no replacement).\n4. Also verify spec compliance survives: `deletion_protection = true`, `backup_retention_period >= 7`, `publicly_accessible = false`, plus `multi_az = true` in prod \u2014 those flags stay untouched by the class change.\n\nContrast: changing `engine` or `allocated_storage` below allocated size may force replacement \u2192 plan shows `-/+`, apply destroys the DB (data loss unless safeguards like `prevent_destroy`/`create_before_destroy` lifecycle blocks are set).\n\n## 4. What is the difference between state and configuration?\n\n| | Configuration (.tf) | State (.tfstate) |\n|---|---|---|\n| Meaning | **Desired** state | **Recorded actual** deployed state |\n| Stored in | Git, human-authored | Backend (local/S3), machine-written |\n| Content | HCL: variables, resources, modules | Resource IDs, attributes, metadata, dependencies |\n| Role in plan | The target | The baseline |\n\nPlan = configuration interpreted+refreshed vs. state (`refresh` updates state from real infra first; drift shows up as diffs). State maps real-world resource addresses (`aws_rds.main`) to provider IDs; without state you can't compute a diff or destroy reliably. Workspaces/var-files give each environment its own config inputs and its own state file \u2014 which is how prod changes never touch dev state.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-4ieizo3l/generated_0.txt"
+  ]
+}

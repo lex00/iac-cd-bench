@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-1j27339k/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-1j27339k/index.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-types"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1079,
+    "output": 709
+  },
+  "content": "## Fixed `index.ts`\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") || \"dev\";\nconst region = config.get(\"region\") || \"us-east-1\";\n\n// S3 Bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: { enabled: true },\n    tags: { Environment: env, Project: \"myapp\" },\n});\n\n// FIX 1: Use .apply() on the Output instead of async/await.\n// Outputs cannot be awaited \u2014 .apply() is the correct way to\n// transform a resolved value while keeping it an Output.\nconst bucketUrl = bucket.arn.apply(arn =>\n    `https://s3.${region}.amazonaws.com/${arn.split(\":\")[-1] ?? arn}`\n);\n// Simpler and more correct (arn isn't the bucket name):\nconst bucketEndpoint = bucket.arn.apply(arn => {\n    const name = arn.split(\":\").pop()!;\n    return `https://s3.${region}.amazonaws.com/${name}`;\n});\n\n// FIX 2: Never hardcode secrets, even wrapped in output().\n// Pulumi will happily encrypt secret Outputs in state, but a plaintext\n// literal is still a secret-management defect. Use requireSecret(),\n// which reads from stack config (encrypted at rest) and yields a secret Output.\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\n// RDS Instance\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: \"db.t3.medium\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app-user\",\n    password: dbPassword,\n    skipFinalSnapshot: env === \"dev\",\n    deletionProtection: env === \"prod\",   // acceptance criterion #2\n    backupRetentionPeriod: 7,\n    publiclyAccessible: false,\n    storageEncrypted: true,\n});\n\n// Output \u2014 bucketEndpoint is now a proper pulumi.Output<string>\nexport const appBucketEndpoint = bucketEndpoint;\nexport const dbEndpoint = db.endpoint;\n```\n\n### What was wrong\n\n1. **Async misuse:** `await` inside a plain function on a `pulumi.Output<string>` returns a `Promise`, not an `Output`. At preview time the promise can't resolve (values aren't known), and exporting it breaks Pulumi's serialization contract. The idiomatic transform for Outputs is `.apply()`.\n\n2. **Wrong `pulumi.output()` wrapping:** `pulumi.output(\"plain-text-password\")` wraps a *plaintext string literal* in an Output \u2014 it does nothing useful and embeds the secret in source code and state unencrypted. Secrets must come via `config.requireSecret(\"key\")` set with `pulumi config set --secret dbPassword <value>`, yielding a properly encrypted secret Output.\n\nAlso fixed while touching the file (acceptance criteria): deletion protection/backup retention/public-access flags per spec.\n\nSet the secret per stack:\n\n```bash\npulumi config set --secret dbPassword '<password>' --stack dev\npulumi config set --secret dbPassword '<password>' --stack prod\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-1j27339k/index.ts"
+  ]
+}

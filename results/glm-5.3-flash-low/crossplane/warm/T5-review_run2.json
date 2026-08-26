@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 636
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## \ud83d\udd34 Blockers\n\n### 1. Bucket versioning dropped\nVersioning is an acceptance-criterion requirement (criterion #1). If versioning was removed from the Composition (likely in the `s3.aws.crossplane.io/Bucket` resources' `versioningConfiguration` patch or hardcoded field), prod is now out of compliance \u2014 this also breaks the cross-region replication prerequisite (versioning must be enabled on source and destination buckets).\n\n**Fix:** Restore `versioningConfiguration: [{status: Enabled}]` in the composed Bucket resources, or verify it's patched from the XRD `spec` rather than silently removed.\n\n### 2. Environment isolation vs. `deletionPolicy: Delete`\nA **provider-wide** `deletionPolicy: Delete` on composed resources means a Composition revision rollout that drifts or misfires can delete real infrastructure \u2014 including dev's RDS and buckets while iterating on prod, violating criterion #7. This is especially dangerous for:\n- RDS instances (data loss)\n- S3 buckets (data loss)\n- The DB connection Secret\n\nCrossplane's default `deletionPolicy: Orphan` exists precisely so composition churn doesn't cascade into resource deletion.\n\n**Fix:** Scope it narrowly if needed at all:\n```yaml\n# Default to Orphan; only opt-in per resource class where recreation is safe\ndeletionPolicy: Delete   # e.g., only ephemeral dev-only resources\n```\nIf intent is \"cleanup test leftovers,\" do it via claim deletion semantics or labels + a controller, not blanket `Delete`.\n\n## \ud83d\udfe1 Warnings\n\n### 3. Check what drives env differences\nConfirm the diff doesn't touch the patches feeding environment parameters (`region`, node type/count, multi-AZ, encryption flags). A composition refactor that flattens patch paths can silently collapse dev/prod sizing or drop `storageEncryptionEnabled` on RDS / encryption config on the bucket \u2014 worth diffing the rendered XR/compositions for both environments.\n\n### 4. Deletion protection interplay\nEven with `deletionPolicy: Orphan`, ensure RDS retains `deletionProtection: true` at the provider level (criterion #2). The two mechanisms are complementary, not substitutes \u2014 don't let `deletionPolicy: Delete` be rationalized as \"it's fine because we have DeletionProtection.\"\n\n### 5. Revision upgrade policy\nWith destructive policies in play, set/verify `compositionRevisionUpgradePolicy: Manual` (or tighten `revisionActivationPolicy`) so bad revisions don't auto-propagate.\n\n## \u2705 Approve only after\n\n1. Versioning restored on all Bucket compositions (verify with `kubectl describe bucket` post-apply).\n2. `deletionPolicy` reverted to `Orphan` globally; any `Delete` scoped with justification comments.\n3. Rendered output checked for both dev and prod claims to confirm no regression in sizing/encryption.\n\n**Verdict: Request changes.** Both changes independently violate stated acceptance criteria (#1 and #7) and together make accidental prod data loss materially more likely."
+}

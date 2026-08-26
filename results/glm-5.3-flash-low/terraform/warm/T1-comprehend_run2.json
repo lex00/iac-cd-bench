@@ -1,0 +1,34 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mInitializing provider plugins found in the configuration...\u001b[0m\n\n\n\n\n\u001b[0m\u001b[1m\u001b[32mTerraform has been successfully initialized!\u001b[0m\u001b[32m\u001b[0m\n\u001b[0m\u001b[32m\nYou may now begin working with Terraform. Try running \"terraform plan\" to see\nany changes that are required for your infrastructure. All Terraform commands\nshould now work.\n\nIf you ever set or change modules or backend configuration for Terraform,\nrerun this command to reinitialize your working directory. If you forget, other\ncommands will d\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 735
+  },
+  "content": "# Terraform Plan Behavior: Predicting What Happens\n\n## 1. Flipping a Variable (e.g., prod RDS class)\n\nGiven `terraform apply -var-file=prod.tfvars` with a variable change like:\n\n```hcl\nvariable \"rds_instance_class\" {\n  type    = string\n  default = \"db.t3.micro\"\n}\n# prod.tfvars: rds_instance_class = \"db.t3.medium\"\n```\n\n**Next plan shows:**\n\n```\n~ aws_db_instance.main\n    instance_class: \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\n- A `~` (in-place update), **not** `replace` \u2014 instance_class is an updatable attribute for RDS.\n- Terraform stops and restarts the DB briefly during the modification.\n- If you also flipped an immutable attribute (e.g., changing the engine version in some paths, or the storage_type on certain providers), you'd see `-/+ destroy and then create replacement` instead. Always read the plan line carefully: `~` vs `-/+` is the difference between downtime and data loss risk.\n\n## 2. Deleting the State File\n\n`.terraform.tfstate` deleted \u2192 Terraform loses all memory of deployed resources.\n\nOn the next plan, every resource shows `+` (create):\n\n```\n+ aws_db_instance.main\n+ aws_s3_bucket.assets\n+ aws_eks_cluster.main\n...\nPlan: 27 to add, 0 to change, 0 to destroy.\n```\n\nBecause state IS Terraform's record of what exists, it would attempt to **create duplicates of everything already running**.\n\nRecovery options:\n- Restore from backup (`terraform.tfstate.backup`, S3 backend versioning)\n- Or rebuild state from real infra via `terraform import` per resource\n\nNote: deleting the local file does **nothing to the actual cloud resources** \u2014 they keep running; orphaned.\n\n## 3. RDS Instance Class Change Handling\n\nPer the canonical scenario (dev: db.t3.micro, prod: db.t3.medium):\n\n- The flip is an **in-place modify**: AWS modifies instance class, causing a brief restart managed by RDS\n- With `multi_az` enabled in prod, failover minimizes downtime\n- If the resource had `prevent_destroy = true` lifecycle block, any plan that says \"destroy\" is blocked\n- Deletion protection (acceptance criteria) protects against `terraform destroy`, but an intentional resize still applies normally\n\n## 4. State vs Configuration\n\n| | Configuration (.tf) | State (.tfstate) |\n|---|---|---|\n| Represents | **Desired** state (\"what I want\") | **Actual** tracked deployed state (\"what I know exists\") |\n| Human-authored? | Yes, versioned in Git | No \u2014 JSON, often stored remotely (S3 backend) |\n| Contains | Resources, variables, logic | Resource IDs, attribute values, dependency metadata |\n| Drift behavior | Immutable history | Can be stale if someone changes infra out-of-band |\n\nThe plan is precisely the diff between these two, plus what the provider API reports for refresh. Three possible discrepancies explain most surprising plans:\n\n1. Config changed \u2192 diff appears (expected)\n2. Real infrastructure drifted manually \u2192 refresh reveals diff even though config didn't change\n3. State lost/stale \u2192 Terraform proposes wrong actions (creates or destroys)\n\n**Key takeaway:** configuration answers *what do I want*; state answers *what does Terraform think is there*; plan is the reconciliation between them.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-q08t6e_t/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-q08t6e_t/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-q08t6e_t/generated_1.txt"
+  ]
+}

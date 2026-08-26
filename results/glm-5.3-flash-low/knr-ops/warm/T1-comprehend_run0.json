@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1352,
+    "output": 857
+  },
+  "content": "# PR #42 Delivery Prediction\n\n## 1. What reconciles, and in what order?\n\nAfter merge, Flux's `GitRepository` source detects the new commit (up to its interval/ webhook), then each `Kustomization` reconciles in dependency order (via `dependsOn`):\n\n1. **infra S3/RDS/IAM kustomization** \u2014 applies the ACK CRs:\n   - New `Bucket` manifest \u2192 ACK S3 controller creates the bucket in AWS\n   - Modified RDS `Instance` (`instanceClass: db.t3.medium`) \u2192 ACK patches the DB instance\n2. **App kustomization (prod overlay)** \u2014 the prod Kustomization builds `overlays/prod`, applying the Deployment patch (`replicas: 4`) to the prod cluster.\n3. Flux garbage-collects/prunes anything no longer present per overlay.\n\nNote dev is untouched by this PR (unless the base was edited rather than prod-only changes) \u2014 environment isolation holds.\n\n## 2. Does the RDS instance get recreated?\n\n**No.** Changing `instanceClass` is an **in-place update**. The ACK RDS controller sees a spec drift on the existing `Instance` CR and issues a ModifyDBInstance with `db.t3.medium` \u2014 AWS resizes without recreating. Recreation only happens for immutable fields (e.g., identifier change, engine change). Also note the Kustomization apply is a patch of the same resource (same name/namespace), not delete+create. Expect brief downtime only if it's multi-AZ failover during resize; deletion protection is unaffected.\n\n## 3. Deleting the bucket manifest from Git\n\nFlux **pruning** removes the `Bucket` CR from the cluster once it disappears from the rendered overlay. Then ACK attempts to **delete the actual S3 bucket** in AWS.\n\nPractical caveats:\n- Deletion fails if the bucket is non-empty (or versioned with object versions) \u2014 the Bucket CR will hang in deleting state until emptied or `deletionPolicy: orphan` / `retain` is set.\n- This is exactly why deletion protection + retention policies matter per the acceptance criteria; safest pattern is setting `deletionPolicy: Orphan` on prod buckets so Git removal decouples the K8s resource from AWS destruction.\n\n## 4. Prod-only replica change\n\nThe base `deployment.yaml` stays at whatever replica count it defines. The prod overlay kustomization contains a **patch**:\n\n```yaml\npatches:\n  - target:\n      kind: Deployment\n      name: app\n    patch: |\n      - op: replace\n        path: /spec/replicas\n        value: 4\n```\n\nFlux builds `overlays/prod` with kustomize \u2192 rendered manifests have `replicas: 4` \u2192 applied only to the prod cluster's Kustomization. Dev continues reconciling from `overlays/dev` with its own replica count. No manual `kubectl scale`: if someone scales manually, Flux reverts on next reconcile (server-side apply ownership).\n\n## 5. Role of `dependsOn`\n\nKustomizations declare dependencies so ordering is enforced:\n\n```yaml\nkind: Kustomization\nmetadata:\n  name: infra\nspec: ...\n---\nkind: Kustomization\nmetadata:\n  name: app-prod\nspec:\n  dependsOn:\n    - name: infra\n```\n\n- The **app/prod kustomization won't reconcile until infra reports Ready** \u2014 guaranteeing the new S3 bucket and updated RDS exist before the app rolls out against them.\n- If infra reconciliation fails, dependent kustomizations block (retry each interval), preventing apps deploying against missing backends.\n- Without `dependsOn`, all kustomizations reconcile independently/concurrently and ordering would be race-prone.\n\n---\n\n**Summary:** merge \u2192 Flux fetches \u2192 infra kustomization applies ACK CRs (bucket created, RDS resized in place) \u2192 then prod kustomization applies the replicas=4 patch, gated by `dependsOn`. Nothing in dev changes; Git-deleting the bucket prunes the CR and triggers ACK deletion unless retain/orphan is configured."
+}

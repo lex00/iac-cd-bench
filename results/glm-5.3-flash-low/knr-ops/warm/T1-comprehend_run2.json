@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1352,
+    "output": 816
+  },
+  "content": "# PR #42 Delivery Analysis\n\n## 1. What reconciles, and in what order?\n\n1. **GitRepository** source picks up the new commit (on interval or webhook).\n2. **Kustomization controllers** reconcile in `dependsOn` order \u2014 typically: infra-level kustomizations first (S3, IAM), then RDS (may depend on bucket/IAM if referencing secrets/ARNs), then the app/env overlays:\n   - `infra/s3/bucket.yaml` \u2192 new ACK `Bucket` CR applied \u2192 ACK controller creates the S3 bucket in AWS.\n   - `infra/rds/instance.yaml` \u2192 ACK RDS controller sees modified spec (`db.t3.micro` \u2192 `db.t3.medium`) and issues an AWS `ModifyDBInstance`.\n   - `overlays/prod/` \u2192 prod Kustomization applies the deployment patch \u2192 Deployment scales to 4 replicas.\n   - Dev remains untouched \u2014 the patch is only in the prod overlay, satisfying env isolation.\n3. **Pruning** runs after each successful apply of each Kustomization.\n\n## 2. Does the RDS instance get recreated?\n\n**No.** `instanceClass` is an in-place modifiable attribute. The ACK controller detects the drift between spec and actual, calls `ModifyDBInstance`, and AWS performs an online class change (brief failover; near-instant for single-AZ). Recreation only occurs on immutable fields (e.g., engine, DB name, identifiers), or if deletionProtection were somehow bypassed \u2014 with deletion protection and backup retention \u22657 days per spec, accidental replacement is also guarded.\n\n## 3. What happens to the S3 bucket manifest deleted from Git?\n\nFlux **pruning** removes the ACK `Bucket` CR from the cluster, and the ACK controller then **deletes the S3 bucket in AWS** (subject to ACK's deletion policy / finalizers \u2014 e.g., empty-bucket requirement). This is a classic GitOps pitfall for stateful resources:\n\n- Mitigation 1: annotation `kustomize.toolkit.fluxcd.io/prune: disabled` on the Bucket CR.\n- Mitigation 2: ACK field/CR deletion policies (`deletionPolicy: Orphan`) so removal from Git abandons but doesn't delete AWS state.\n\nSo without safeguards, deleting the manifest deletes production storage.\n\n## 4. How does Flux handle the prod-only replica change?\n\nThe patch lives only in `overlays/prod/kustomization.yaml`. Flux applies the rendered overlay to the prod cluster namespace only:\n\n- `kustomize build overlays/prod/` renders `replicas: 4`; the controller applies it; HPA absence means replicas are directly managed \u2014 note this will fight any HorizontalPodAutoscaler unless `replicas` is omitted from base or an HPA excludes it.\n- Dev's Kustomization still renders the old replica count; reconciling dev does not touch prod. Each cluster has its own set of Kustomizations pointing at its own overlay path, so \"changing prod does not modify dev.\"\n\n## 5. Role of `dependsOn`\n\n`dependsOn` enforces ordering between Flux Kustomizations on the same cluster: a dependent Kustomization won't reconcile until its dependencies report ready, and it won't reconcile at all while a dependency is failing/retrying. For PR #42 this matters because:\n\n- **App deployment depends on secrets/RDS**: the app should not roll out before the DB connection secret (decrypted via SOPS) and RDS endpoint exist; otherwise pods crash-loop on startup.\n- **RDS may depend on IAM/security resources** it references.\n- Without `dependsOn`, all Kustomizations reconcile concurrently in arbitrary order \u2192 race conditions where consumers land before their providers.\n\nIt also creates fault isolation: a bad prod patch blocks downstream deps but not independent infra kustomizations, and rollback is a Git revert that re-converges everything deterministically."
+}

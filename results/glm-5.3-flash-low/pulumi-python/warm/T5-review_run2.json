@@ -1,0 +1,36 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `pulumi`\n --> generated_0.py:1:1\n  |\n1 | pulumi.export(\"db_connection_string\",\n  | ^^^^^^\n2 |     pulumi.Output.secret(\n3 |         Output.concat(\"postgres://\", db.username, \":\",\n  |\n\nF821 Undefined name `pulumi`\n --> generated_0.py:2:5\n  |\n1 | pulumi.export(\"db_connection_string\",\n2 |     pulumi.Output.secret(\n  |     ^^^^^^\n3 |         Output.concat(\"postgres://\", db.username, \":\",\n4 |                       config.require_secret(\"db_password\"),\n  |\n\nF821 Undefined name `Out"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 636,
+    "output": 975
+  },
+  "content": "# Pulumi Preview JSON \u2014 Security Review\n\n**Scope:** `pulumi preview --json` diff for the **prod** stack against the canonical spec (EKS, S3, RDS, IAM, secret handling).\n\n---\n\n## Finding 1 \u2014 DB credential exposed as plaintext stack output \ud83d\udd34\n\n**Preview excerpt (abridged):**\n```json\n{\n  \"steps\": [{\n    \"op\": \"create\",\n    \"urn\": \"urn:pulumi:prod::app::pulumi:pulumi:Stack::app-prod\",\n    \"outputProperties\": {\n      \"dbConnectionString\": {\n        \"value\": \"postgresql://appadmin:S3cureP@ssw0rd2024@rds-prod.us-east-1.rds.amazonaws.com:5432/app\",\n        \"secret\": false\n      }\n    }\n  }]\n}\n```\n\n**Issue:** `secret: false` on `dbConnectionString` means the password will be persisted in plaintext in the Pulumi service state and displayed via CLI/GitHub steps. Violates Acceptance Criterion 3.\n\n**Fix:** Use a stack-secret-injected value (`pulumi config set --secret dbPassword`) and mark the export:\n\n```python\npulumi.export(\"db_connection_string\",\n    pulumi.Output.secret(\n        Output.concat(\"postgres://\", db.username, \":\",\n                      config.require_secret(\"db_password\"),\n                      \"@\", db.endpoint, \"/app\")))\n```\n\n---\n\n## Finding 2 \u2014 Replacement of stateful RDS instance \ud83d\udd34\n\n**Preview excerpt:**\n```json\n{\n  \"steps\": [{\n    \"op\": \"replace\",\n    \"provider\": \"aws::rds_instance\",\n    \"urn\": \"...:aws:rds/instance:Instance::db-prod\",\n    \"propertyDiff\": {\n      \"engineVersion\": {\"diff\": \"update-replace\"},\n      \"multiAz\": {\"diff\": \"true\"}\n    }\n  }]\n}\n```\n\n**Issue:** A **replace** op on production RDS destroys the existing database \u2014 unacceptable even with multi-AZ and backups. Also note: replacement happens *before* old resource deletion unless create-before-delete is arranged; standalone `Instance` has no such option. This changes prod independently, but it is a destructive change to shared state.\n\n**Fix:** \n- Switch to `aws.rds.Instance` with in-place-upgradable settings, or stage engine version upgrades explicitly.\n- Since deletion protection is required by Criterion 2, confirm `delete_protection=True` / `deletion_protection` is actually being applied (see Finding 3). If enabled, AWS would block the delete leg of replace \u2014 verify that flag is present.\n- Take a manual snapshot before approving.\n\n---\n\n## Finding 3 \u2014 Missing `protect=True` on stateful resources \ud83d\udfe0\n\nThe preview shows no `protect` meta-attribute on:\n\n```json\n{\"urn\": \"...:aws:rds/instance:Instance::db-prod\",   /* no protect */\n \"urn\": \"...:aws:s3/bucketV2:BucketV2::assets-prod\" /* no protect */}\n```\n\n**Issue:** Without `protect=True`, a follow-up `destroy` or an accidental `replace` will succeed without operator intervention. RDS and S3 are stateful and must be protected.\n\n**Fix:**\n```python\ndb = aws.rds.Instance(\"db-prod\", ..., opts=pulumi.ResourceOptions(protect=True))\nbucket = aws.s3.BucketV2(\"assets-prod\", ..., opts=pulumi.ResourceOptions(protect=True))\n```\nNote: `protect=True` will *also* refuse this replace in Finding 2 \u2014 correct behavior; you'd run `pulumi unprotect` deliberately after reviewing.\n\n---\n\n## Cross-checks (passing)\n\n\u2705 Bucket preview shows versioning + SSE-S3 + public-access-block (Criterion 1)\n\u2705 RDS: `publicly_accessible: false`, `backup_retention_period: 14` (Criterion 2, partially \u2014 see Finding 2 re deletion protection)\n\u2705 Prod IAM role uses OIDC trust policy, actions scoped to `s3:GetObject` on specific ARNs \u2014 no wildcards (Criterion 4)\n\u2705 Node group preview: 4 \u00d7 t3.large managed node group (Criterion 5)\n\u2705 Prod resources namespaced `*-prod`; dev stack untouched (Criterion 7)\n\n## Verdict\n\n**Do not approve this preview.** Fix plaintext secret output (#1), convert the RDS change to an in-place update or schedule with snapshot (#2), and add `protect=True` to RDS/S3 (#3), then re-run preview.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a5f7m_ma/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a5f7m_ma/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a5f7m_ma/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a5f7m_ma/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-a5f7m_ma/generated_1.py"
+  ]
+}

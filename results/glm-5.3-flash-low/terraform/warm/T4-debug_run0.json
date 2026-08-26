@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T4-debug",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\u001b[0mTerraform encountered problems during initialisation, including problems\n\u001b[31m\u2502\u001b[0m \u001b[0mwith the configuration, described below.\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mThe Terraform configuration must be valid before initialization so that\n\u001b[31m\u2502\u001b[0m \u001b[0mTerraform can determine which modules and providers need to be installed.\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mDuplicate required providers configuration\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on main.tf line 6, in terraform:\n\u001b[31m\u2502\u001b[0m \u001b[0m   6:   \u001b[4mrequired_providers\u001b[0m {\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mA module may have only one required providers configuration. The required\n\u001b[31m\u2502\u001b[0m \u001b[0mproviders were previously configured at generated_0.tf:2,3-21.\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mDuplicate pro"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 3 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_no_circular_dependency PASSED [ 33%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_deletion_protection_in_prod PASSED [ 66%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T4-debug/tests/test_task.py::test_for_each_or_count_consistent PASSED [100%]\n\n============================== 3 passed in 0.01s ===============================\n",
+      "passed_count": 3,
+      "total_count": 3,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1050,
+    "output": 742
+  },
+  "content": "# Fixed Terraform\n\nTwo defects to address:\n\n1. **count/for_each error**: `count = length(var.envs)` makes instances addressable as `main[0]`, `main[1]` \u2014 renaming or reordering the list forces destructive replacement. Idiomatic fix for per-env resources is `for_each`.\n2. **Circular/dead dependency**: the output on `main[0]` hardcodes a fragile index, and combined with `count` produce plan churn (\"instance created before output references it\"). Using stable keys removes it entirely.\n3. Bonus: `deletion_protection = false` violates acceptance criteria #2 \u2014 fixed with an env conditional.\n\n```hcl\nterraform {\n  required_providers {\n    aws = {\n      source  = \"hashicorp/aws\"\n      version = \"~> 5.0\"\n    }\n  }\n}\n\nprovider \"aws\" {\n  region = var.region\n}\n\n# Single resource, environment-keyed via for_each.\n# Stable map keys mean adding/removing/reordering environments\n# only affects that environment's instance \u2014 no index shifts,\n# no destructive replacement (unlike count).\nresource \"aws_db_instance\" \"main\" {\n  for_each = toset([var.env])\n\n  identifier        = \"${var.env}-db\"\n  allocated_storage = 20\n  engine            = \"postgres\"\n  engine_version    = \"16.1\"\n  instance_class    = var.instance_class\n\n  db_name  = var.db_name\n  username = var.db_user\n  password = var.db_password\n\n  multi_az               = var.env == \"prod\"   # spec: prod multi-AZ\n  storage_encrypted      = true                 # spec: prod encrypted\n\n  deletion_protection     = var.env == \"prod\"   # acceptance criteria #2\n  backup_retention_period = 7                   # acceptance criteria #2\n  publicly_accessible     = false               # acceptance criteria #2\n\n  skip_final_snapshot = false                   # keep final snapshot; protection aligned\n}\n\n# Output now uses the stable key instead of a positional index [0].\n# No forward reference: the resource is fully defined above,\n# so the graph has a single direction (output -> db_instance).\noutput \"db_endpoint\" {\n  value = aws_db_instance.main[var.env].endpoint\n}\n```\n\n## Usage\n\n```bash\nterraform workspace select prod || terraform workspace new prod\nterraform apply -var=\"env=prod\" -var-file=envs/prod.tfvars\n```\n\n## Why this works\n\n| Defect | Cause | Fix |\n|---|---|---|\n| count type/count-plan churn | `count = length(var.envs)` treats envs as positional | `for_each = toset([var.env])` \u2014 resources keyed by name |\n| Circular/fragile reference | Output via hardcoded `[0]` breaks whenever ordering changes | Key-based lookup `main[var.env]`, single forward-free graph edge |\n| AC #2 violation | `deletion_protection = false`, `skip_final_snapshot = true` | Env-conditional deletion protection, retention \u2265 7 days, private DB |\n\nEnvironment isolation (#7) is preserved because each workspace/state (dev vs prod) owns its own instance; changing prod's tfvars never touches dev state.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kch9etyk/generated_0.tf"
+  ]
+}

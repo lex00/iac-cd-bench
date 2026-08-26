@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 989,
+    "output": 841
+  },
+  "content": "# Pulumi Preview Analysis\n\n## 1. Which property triggered the replace?\n\nA preview shows `replace` when a property is marked with **`ForceNew`** in the provider schema \u2014 i.e., it cannot be updated in place.\n\nFor the RDS instance in this spec, common replace-triggering properties:\n\n- `instanceClass` \u2014 dev (`db.t3.micro`) \u2192 prod-style change (or vice versa) forces replacement\n- `engine` / `engineVersion` (unless `allow_major_version_upgrade` applies)\n- `storageType` / allocated storage below current in some cases\n- `dbSubnetGroupName`, `availabilityZone`, `multiAz` is *in-place* \u2014 but `allocated_storage` decreases can replace\n- Also relevant: changing `autoScalling`/`kmsKeyId` on encryption forces replacement\n\n**How to confirm:** run `pulumi preview --diff` and look at the `~ [replace: urn:...::RdsInstance]` line. The diff shows each changed property annotated, and ForceNew properties get comments like:\n\n```\n[diff: ~instanceClass]; 1 unchanged-diff\n@ Pulumi notices: instanceClass has replacement triggered because property is ForceNew\n```\n\nThe provider SDK docs for `aws.rds.Instance` list which inputs have `:force-new` semantics \u2014 those are the candidates. Any *other* property diff would produce an `update`, not a `replace`.\n\nNote that replacing RDS will *not* cascade to dependents unless they also have Diff properties \u2014 but dependent resources show as \"replaced\" parents cause recreation of URNs? No \u2014 dependents are recreated if their inputs reference the replaced resource's computed outputs.\n\n## 2. What does `pulumi up --target` skip?\n\n`pulumi up --target urn:pulumi:stack::project::aws:rds/instance:Instance::db` means:\n\n- **Skips everything not in the target list**: no evaluation, execution of their definition, or modification of other resources \u2014 including resources registered after the target in dependency order.\n- Dependent resources whose inputs come from the target are shown as needing updates but are **skipped** (they'll be `pending-operations` until you run another `up`; Pulumi records them).\n- Resources listed as targets (and only those) are created/updated/replaced; parents of targeted children are implicitly included.\n- Everything skipped retains its last-known state \u2014 nothing is deleted.\n\nCaveat: because outputs from a skipped dependency aren't recomputed, you may need `--target-dependents` to include resources that consume the target's outputs, otherwise you end up with pending operations requiring a follow-up `pulumi refresh` / second `up`.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **Secrets entered via `config.require_secret(\"db_password\")`** are stored encrypted in state using the stack's **secrets provider** (default: Pulumi Cloud managed passphrase/service-side encryption; can be `passphrase`-based local encryption, KMS, etc.). Each secret is independently encrypted.\n- **Resource output properties flagged secret by the provider** (e.g., RDS `master_password`, generated credentials) are automatically treated as secrets \u2014 Pulumi encrypts them in the state file and masks them.\n- In the **CLI output** during `preview`/`up`, secrets never appear in plaintext \u2014 they render as `[secret]`.\n- Programmatically: wrapping any value in `Output.secret(...)` propagates secrecy through `.apply()` chains \u2014 derived values stay secret. Exporting via `pulumi.export()` preserves the secret flag; `pulumi stack output db_url` requires `--show-secrets` to reveal plaintext.\n- For this spec's DB connection string secret: construct it like `pulumi.Output.all(host, port, user).apply(...)`, wrap with `Output.secret()`, then `pulumi.export`. It's stored encrypted in state, masked in CLI, and distinct from storing it plaintext in config which you must avoid per acceptance criterion #3.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-pxjkdfrk/generated_0.txt"
+  ]
+}
