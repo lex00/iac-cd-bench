@@ -302,6 +302,13 @@ def test_run_task_skips_grounding_section_when_no_kinds_discovered(tmp_path, mon
     assert "error" not in grounded[0]
 
 
+def test_openai_compat_default_api_key_is_ascii():
+    # httpx encodes header values as ascii; a non-ascii default key crashes
+    # header construction before any request is attempted.
+    adapter = runner.OpenAICompatAdapter("m", "http://localhost:8000")
+    adapter.api_key.encode("ascii")
+
+
 def test_task_dirs_exist():
     """All 30 task directories exist."""
     stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
