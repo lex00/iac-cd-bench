@@ -15,9 +15,14 @@ spec:
     # ──────────────────────────────────────────────────────
     # Step 1: Patch and Transform — creates and configures resources
     # ──────────────────────────────────────────────────────
-    - function: xpkg.upbound.io/crossplane/function-patch-and-transform:v0.2.0
+    # Pipeline mode takes a step name and a reference to an installed Function
+    # by name — never an image. `- function: <image>` parsed as neither, so
+    # render reported `unknown Function ""` (#98).
+    - step: patch-and-transform
+      functionRef:
+        name: function-patch-and-transform
       input:
-        apiVersion: ptFunctions.crossplane.io/v1beta1
+        apiVersion: pt.fn.crossplane.io/v1beta1
         kind: Resources
         resources:
           # ──────────────────────────────────────────────────────
@@ -64,7 +69,6 @@ spec:
                   - type: string
                     string:
                       fmt: "KMS key for web service — %s environment"
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 2. S3 Bucket — application assets (versioned, encrypted)
@@ -97,7 +101,6 @@ spec:
                       inputs:
                         - fromFieldPath: spec.bucket.name
                         - fromFieldPath: spec.environment
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 3. S3 Bucket Versioning
@@ -127,7 +130,6 @@ spec:
                         - fromFieldPath: spec.environment
             dependsOn:
               - name: s3-bucket
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 4. S3 Public Access Block (no public access)
@@ -160,7 +162,6 @@ spec:
                         - fromFieldPath: spec.environment
             dependsOn:
               - name: s3-bucket
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 5. S3 Bucket Encryption Configuration
@@ -191,7 +192,6 @@ spec:
                         - fromFieldPath: spec.environment
             dependsOn:
               - name: s3-bucket
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 6. DB Subnet Group — for RDS placement
@@ -226,7 +226,6 @@ spec:
                   - type: string
                     string:
                       fmt: "web-service-%s"
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 7. RDS PostgreSQL Instance
@@ -298,7 +297,6 @@ spec:
                       elseResult: "false"
             dependsOn:
               - name: db-subnet-group
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 8. IAM Role — service account
@@ -352,7 +350,6 @@ spec:
                             }
                           ]
                         }
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 9. IAM Policy — least privilege (scoped resources)
@@ -412,7 +409,6 @@ spec:
                             }
                           ]
                         }
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 10. IAM Role Policy Attachment
@@ -440,7 +436,6 @@ spec:
                       fmt: "%s-permissions"
             dependsOn:
               - name: iam-policy
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 11. S3 Replication Destination Bucket (prod only)
@@ -477,7 +472,6 @@ spec:
             options:
               skip:
                 policy: Never
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 12. S3 Replication Destination Versioning
@@ -510,7 +504,6 @@ spec:
             options:
               skip:
                 policy: Never
-            readyCondition: True
 
           # ──────────────────────────────────────────────────────
           # 13. S3 Replication Configuration (prod only)
@@ -557,4 +550,3 @@ spec:
             options:
               skip:
                 policy: Never
-            readyCondition: True
