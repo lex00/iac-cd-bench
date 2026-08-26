@@ -43,6 +43,20 @@ jobs:
         continue-on-error: true
         run: mise install || true
 
+      - name: Make the pins global so shims resolve outside the repo
+        # The gates shell out with cwd set to a materialized temp workspace,
+        # which is not inside this repo, so mise's project-scoped resolution
+        # finds no mise.toml and every shim fails with
+        # `No version is set for shim: kubeconform`. It never bites locally
+        # because those tools come from homebrew rather than a shim. Copying
+        # the pins to the global config makes them resolve from any cwd.
+        continue-on-error: true
+        run: |
+          mkdir -p ~/.config/mise
+          cp mise.toml ~/.config/mise/config.toml
+          mise install || true
+          mise ls --installed 2>/dev/null | head -20 || true
+
       - name: Report what the toolchain actually provides
         # Printed, not asserted: the point is that a skip is visible rather
         # than silently indistinguishable from a pass.
