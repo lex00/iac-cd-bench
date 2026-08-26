@@ -400,10 +400,16 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
             results.append(proc.stdout[:2000])
         if proc.stderr:
             results.append(f"ERR: {proc.stderr[:500]}")
-        # Exit code 1 can mean either "changes detected" (valid) or "error" (invalid).
-        # If stderr contains "error", treat it as a failure.
-        has_error = "error" in proc.stderr.lower()
-        if proc.returncode not in (0, 1) or (proc.returncode == 1 and has_error):
+        # Exit 0 is the only success. `pulumi preview` does not signal
+        # "changes detected" with a non-zero code — that is what
+        # --expect-no-changes is for, and it is not passed here. Verified
+        # against the golden (exit 0) and against deliberately broken
+        # programs, a syntax error and an invalid resource argument, which
+        # both exit 255. An earlier version treated exit 1 as success unless
+        # stderr happened to contain the substring "error"; that allowance
+        # covered a case that does not arise, and would have masked any
+        # failure mode that did exit 1 with a quiet stderr.
+        if proc.returncode != 0:
             passed = False
     except subprocess.TimeoutExpired:
         results.append("TIMEOUT: pulumi preview")
