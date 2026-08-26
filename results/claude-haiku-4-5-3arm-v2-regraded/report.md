@@ -12,7 +12,13 @@
 
 > A rejected run did not measure the model: the provider returned no usable completion, a stage's binary was absent while the stage recorded a pass, or every enabled stage had nothing to act on. Such a run is re-run, not reported. `python3 -m bench.validate results/claude-haiku-4-5-3arm-v2-regraded --verbose` lists them.
 
-- partial provenance: **36** run(s) carry incomplete provenance (no harness commit, prompt hash or toolchain versions) and cannot be compared against another result set.
+- partial: **36** run(s) are scored but flagged.
+
+| Partial reason | Runs |
+| --- | --- |
+| `no_stage_ran` | 36 |
+
+> `no_stage_ran` means the task's spec disables every build stage, so the run scores on the rubric judge alone. Its provenance is complete and it compares normally.
 
 ## Stack × Archetype Matrix
 

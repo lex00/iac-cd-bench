@@ -6,7 +6,13 @@
 - scored: **36**
 - **rejected: 0**
 
-- partial provenance: **12** run(s) carry incomplete provenance (no harness commit, prompt hash or toolchain versions) and cannot be compared against another result set.
+- partial: **12** run(s) are scored but flagged.
+
+| Partial reason | Runs |
+| --- | --- |
+| `no_stage_ran` | 12 |
+
+> `no_stage_ran` means the task's spec disables every build stage, so the run scores on the rubric judge alone. Its provenance is complete and it compares normally.
 
 ## Stack × Archetype Matrix
 
