@@ -42,10 +42,6 @@ KNOWN_BROKEN = {
     "pulumi-python":
         "static: `pulumi preview -s dev` needs a backend and a fully qualified "
         "stack name; no pulumi run has ever produced a static verdict",
-    "pulumi-typescript":
-        "lint: golden code has real TypeScript errors (TS2322, TS2551, etc.) — "
-        "the gate now runs (types resolve) but reveals bugs in the golden "
-        "(issue #94 fixed the type resolution; code errors are separate)",
     "crossplane":
         "static: `crossplane render` pulls Composition Function images from "
         "xpkg.upbound.io via Docker, so the gate needs a network and a live "

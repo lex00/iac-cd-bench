@@ -103,7 +103,8 @@ def run_lint(workspace: Path, stack: str) -> dict:
     all_passed = True
 
     # pulumi-typescript needs node_modules installed for tsc to resolve @pulumi/aws types
-    if stack == "pulumi-typescript":
+    # Only attempt installation if package-lock.json exists (i.e., this is not an empty workspace)
+    if stack == "pulumi-typescript" and (workspace / "package-lock.json").exists():
         try:
             from bench.stages import e2e
             e2e.ensure_pulumi_typescript_node_modules(workspace)
