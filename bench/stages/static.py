@@ -173,14 +173,7 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
 
 
 def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
-    """Run crossplane render for Crossplane.
-
-    `crossplane render` runs Composition Functions as Docker containers pulled
-    from a registry. If the function images cannot be pulled, the gate returns
-    inapplicable rather than reporting failures attributed to the model,
-    because the issue is environmental (missing images, unreachable registry)
-    not a model error. See #92.
-    """
+    """Run crossplane render for Crossplane."""
     passed = True
 
     # Find claims
@@ -196,14 +189,6 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
     xrds = list(workspace.rglob("*xrd*.yaml"))
     functions = list(workspace.rglob("*function*.y*ml"))
 
-    if not claims:
-        results.append(
-            "no crossplane claim (*claim*.yaml) in workspace: "
-            f"{len(compositions)} composition(s), {len(xrds)} xrd(s) found, "
-            "nothing to render"
-        )
-        return passed, False
-
     for claim in claims:
         log.info("crossplane render %s", claim)
         if not compositions or not functions:
@@ -214,7 +199,6 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
             )
             passed = False
             continue
-
         try:
             # `crossplane render <xr> <composition> <functions>`. The old call
             # was `crossplane beta render <claim>`: `beta render` was promoted
@@ -231,20 +215,6 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
             if proc.stderr:
                 results.append(f"ERR: {proc.stderr[:500]}")
             if proc.returncode != 0:
-                # If the error is due to function image pulling, the issue is
-                # environmental, not a model error — treat as inapplicable rather
-                # than attributing the failure to the model. See #92 for why
-                # this matters: a gate that depends on external images and
-                # network access should not score model output.
-                if "cannot pull Docker image" in proc.stderr or \
-                   "cannot start Function" in proc.stderr:
-                    results.append(
-                        "crossplane render requires pulling Composition Function "
-                        "images from xpkg.upbound.io via Docker; the pinned tags "
-                        "do not exist (v0.2.0, v0.5.0 unresolvable); this is an "
-                        "environmental limitation, not a model error"
-                    )
-                    return passed, False  # False means inapplicable
                 passed = False
         except subprocess.TimeoutExpired:
             results.append(f"TIMEOUT: crossplane render {claim}")
@@ -253,6 +223,13 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
             results.append(f"NOT FOUND: crossplane")
             log.warning("Command not found: crossplane")
             passed = False
+
+    if not claims:
+        results.append(
+            "no crossplane claim (*claim*.yaml) in workspace: "
+            f"{len(compositions)} composition(s), {len(xrds)} xrd(s) found, "
+            "nothing to render"
+        )
 
     return passed, bool(claims)
 
