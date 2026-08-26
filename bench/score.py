@@ -124,6 +124,14 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
         total_stages += 1
         if e2e_result.get("passed", False):
             stage_pass += 1
+    # `total_stages == 0` means no stage was attempted at all — every one was
+    # disabled by the task's spec (T1-comprehend and T5-review are rubric-only
+    # by design). That is not a failed measurement, it is an absent one, so
+    # correctness is dropped from the composite below rather than scored 0
+    # (#99). Scoring it 0 while keeping its weight of 3 in the denominator
+    # penalised a task for a gate it was never meant to have, and capped
+    # rubric-only tasks near 0.42 no matter how well they were judged.
+    correctness_applicable = bool(total_stages)
     scores["correctness"] = stage_pass / total_stages if total_stages else 0
     scores["attempted_stages"] = total_stages
 
@@ -167,6 +175,8 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
     applicable = dict(AXES)
     if not completeness_applicable:
         applicable.pop("completeness")
+    if not correctness_applicable:
+        applicable.pop("correctness")
     scores["applicable_axes"] = sorted(applicable)
     denom = sum(applicable.values())
     scores["composite"] = (

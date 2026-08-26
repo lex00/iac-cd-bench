@@ -52,6 +52,26 @@ KNOWN_BROKEN = {
 }
 
 
+def _ensure_stack_prereqs(stack: str) -> None:
+    """Build whatever the golden needs that is not committed.
+
+    golden-base/chant/node_modules is not tracked, so this test passed only on
+    a machine where someone had already installed it — a guard that works on
+    one machine is not a guard. The repo already has the installer, and it
+    works from a committed package-lock.json plus vendored tarballs, so it is
+    reproducible on a fresh clone rather than needing a registry.
+    """
+    if stack != "chant":
+        return
+    if (GOLDEN / "chant" / "node_modules").is_dir():
+        return
+    try:
+        from bench.stages.e2e import ensure_chant_node_modules
+        ensure_chant_node_modules()
+    except Exception as exc:  # noqa: BLE001
+        pytest.skip(f"chant node_modules unavailable and could not be built: {exc}")
+
+
 def _materialize(stack: str) -> Path:
     """Copy the golden the way a run would, preserving symlinks.
 
@@ -84,6 +104,8 @@ def test_golden_passes_its_own_gates(stack):
     missing = [b for b in STACK_BINARIES.get(stack, ()) if shutil.which(b) is None]
     if missing:
         pytest.skip(f"toolchain missing for {stack}: {missing}")
+
+    _ensure_stack_prereqs(stack)
 
     ws = _materialize(stack)
     try:

@@ -60,8 +60,12 @@ RESULTS_DIR = ROOT / "results"
 # comprehend tasks through runs with real failures, so the assertion
 # exercises inapplicable stages, real passes and real failures alike.
 SAMPLED_HISTORICAL_JSONS = [
+    # Re-pinned for #99: this run attempted no stage at all, so correctness is
+    # now dropped from the composite instead of scored 0 against its weight of
+    # 3. 0.2857 -> 0.5. The knr-ops T1-comprehend fixture below did attempt
+    # stages and is unmoved, which is the intended surgical scope.
     ("claude-opus-4-8-low/crossplane/warm/T1-comprehend_run0.json",
-     0.7777777777777778, 0.2857142857142857),
+     0.7777777777777778, 0.5),
     ("claude-opus-4-8-low/crossplane/warm/T2-generate_run0.json",
      0.4444444444444444, 0.3888888888888889),
     ("claude-opus-4-8-low/crossplane/warm/T2-generate_run2.json",
@@ -209,4 +213,51 @@ def test_vacuous_pass_correction_is_the_measured_size_and_only_lowers_scores():
         f"{increased} historical composite(s) went UP under the vacuous-pass "
         "guard. Withdrawing credit that was never earned can only lower a "
         "score, so an increase means the guard is crediting something new."
+    )
+
+
+# ── #99: an unattempted axis is dropped, not failed ──────────────────────
+
+def _run(stages: dict) -> dict:
+    return {"stack": "chant", "task": "T1-comprehend", "stages": stages}
+
+
+def test_correctness_is_dropped_when_no_stage_was_attempted():
+    """A spec that disables every build stage means correctness was never
+    measured. Scoring it 0 while keeping its weight of 3 penalises a task for
+    a gate it was never meant to have — the same category error the
+    vacuous-pass guard fixed pointing the other way (#99)."""
+    scored = compute_score(_run({
+        "lint": {"skipped": True}, "static": {"skipped": True},
+        "semantic": {"skipped": True},
+    }))
+
+    assert "correctness" not in scored["applicable_axes"]
+    assert "completeness" not in scored["applicable_axes"]
+
+
+def test_correctness_is_kept_when_a_stage_ran_and_failed():
+    """The other direction: a stage that ran and failed is a real 0, and must
+    stay in the denominator."""
+    scored = compute_score(_run({
+        "lint": {"passed": False, "logs": "boom"},
+        "static": {"skipped": True}, "semantic": {"skipped": True},
+    }))
+
+    assert "correctness" in scored["applicable_axes"]
+    assert scored["correctness"] == 0.0
+
+
+def test_rubric_only_task_is_not_capped_below_a_gated_one():
+    """The symptom that surfaced #99: a rubric-only task scoring well on the
+    judge still landed below every gated task, because it could not earn the
+    heaviest axis."""
+    rubric_only = compute_score(_run({
+        "lint": {"skipped": True}, "static": {"skipped": True},
+        "semantic": {"skipped": True},
+    }) | {"judge": {"idiom": 1.0}})
+
+    assert rubric_only["composite"] > 0.5, (
+        "a rubric-only task judged perfectly still cannot clear 0.5 — "
+        "correctness is being counted as a failure rather than dropped"
     )
