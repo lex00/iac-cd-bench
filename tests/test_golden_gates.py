@@ -39,15 +39,14 @@ STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python",
 
 # stack -> why it cannot pass yet
 KNOWN_BROKEN = {
-    "pulumi-typescript":
-        "static: `pulumi preview -s dev` needs a backend and a fully qualified "
-        "stack name (same as pulumi-python; issue #93)",
     "crossplane":
-        "static: golden is not valid Crossplane (#98). The composition uses wrong "
-        "syntax (`- function: <image>` instead of `- step: <name>` + `functionRef`), "
-        "wrong apiVersion, and a function that does not exist (`function-automated-edits`). "
-        "Rebuild golden with correct syntax; do not measure until then.",
+        "static: the golden is not valid Crossplane (#98) — the composition "
+        "uses `- function: <image>` where Pipeline mode requires `- step:` + "
+        "`functionRef`, the function input apiVersion is a group that does not "
+        "exist, and `function-automated-edits` is not a real function. Rebuilding "
+        "it is domain work; do not measure this arm until then.",
 }
+
 
 
 def _ensure_stack_prereqs(stack: str) -> None:
@@ -131,8 +130,9 @@ def test_every_stack_has_a_golden():
 
 def test_the_known_broken_list_is_not_a_dumping_ground():
     """Every entry needs a reason, and the list must shrink, not grow."""
-    assert len(KNOWN_BROKEN) <= 3, (
-        "more stacks cannot pass their own golden than when this was written; "
+    assert len(KNOWN_BROKEN) <= 1, (
+        "more stacks cannot pass their own golden than when this was last "
+        "tightened; "
         "fix the gate rather than extending the exemption list"
     )
     for stack, reason in KNOWN_BROKEN.items():

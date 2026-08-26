@@ -4,15 +4,20 @@ import { RDSComponent } from "./components/rds";
 import { IAMComponent } from "./components/iam";
 
 // Stack configuration
-const config = new pulumi.Config();
-const env = config.require("app:env");
-const awsRegion = config.require("aws:region");
-const instanceClass = config.require("app:instanceClass");
-const instanceCount = config.requireNumber("app:instanceCount");
-const dbPasswordSecret = config.requireSecret("app:dbPassword");
-const dbUser = config.require("app:dbUser");
-const dbName = config.require("app:dbName");
-const bucketName = config.require("app:bucketName");
+// `new pulumi.Config()` namespaces to the *project*, so `require("app:env")`
+// looked up `<project>:app:env` and could never resolve — Pulumi.dev.yaml
+// declares namespace `app`, key `env`. A namespaced Config is the correct
+// reader for `app:` and `aws:` keys.
+const appConfig = new pulumi.Config("app");
+const awsConfig = new pulumi.Config("aws");
+const env = appConfig.require("env");
+const awsRegion = awsConfig.require("region");
+const instanceClass = appConfig.require("instanceClass");
+const instanceCount = appConfig.requireNumber("instanceCount");
+const dbPasswordSecret = appConfig.requireSecret("dbPassword");
+const dbUser = appConfig.require("dbUser");
+const dbName = appConfig.require("dbName");
+const bucketName = appConfig.require("bucketName");
 
 // Export configuration
 export const environment = env;
@@ -22,7 +27,7 @@ export const region = awsRegion;
 const bucket = new S3BucketComponent(bucketName, {
   versioning: true,
   encryption: true,
-  replicationTarget: config.get("app:replicationTargetBucket"),
+  replicationTarget: appConfig.get("replicationTargetBucket"),
 });
 
 const db = new RDSComponent(`${bucketName}-db`, {
