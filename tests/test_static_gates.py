@@ -101,3 +101,65 @@ def test_empty_workspace_is_inapplicable_not_a_pass(tmp_path):
 
     assert stage.get("skipped") or stage.get("inapplicable")
     assert not stage.get("passed")
+
+
+# ── the harness supplies the Pulumi project scaffold ─────────────────────
+
+def _aws_creds() -> bool:
+    import os
+    if os.environ.get("AWS_ACCESS_KEY_ID") and os.environ.get("AWS_SECRET_ACCESS_KEY"):
+        return True
+    shared = os.environ.get("AWS_SHARED_CREDENTIALS_FILE") or os.path.expanduser("~/.aws/credentials")
+    return Path(shared).is_file()
+
+
+pulumi_needs_creds = pytest.mark.skipif(
+    not _aws_creds(),
+    reason="pulumi preview validates AWS credentials against STS; see docs/result-integrity.md",
+)
+
+GOLDEN_PY = Path(__file__).resolve().parent.parent / "golden-base" / "pulumi-python"
+
+
+@pulumi_needs_creds
+def test_pulumi_static_passes_without_a_project_file():
+    """Models write __main__.py and Pulumi.<stack>.yaml but never Pulumi.yaml,
+    the *project* file. Without it pulumi cannot resolve a project and every
+    model run failed on "pass the fully qualified name" — a uniform failure
+    unrelated to the model's code, while the golden passed only because a
+    Pulumi.yaml had been added to it.
+
+    The gate already fabricates a backend, a stack and a venv; the project
+    scaffold belongs with them.
+    """
+    import shutil, tempfile
+    from bench.stages import static as static_mod
+
+    ws = Path(tempfile.mkdtemp(prefix="pulumi-noproj-"))
+    try:
+        shutil.copytree(GOLDEN_PY, ws, dirs_exist_ok=True, symlinks=True)
+        (ws / "Pulumi.yaml").unlink()
+        stage = static_mod.run_static(ws, "pulumi-python")
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)
+
+    assert stage.get("passed"), (
+        "a workspace without Pulumi.yaml still fails — the harness is not "
+        "supplying the project scaffold:\n" + (stage.get("logs") or "")[:800]
+    )
+
+
+@pulumi_needs_creds
+def test_a_workspaces_own_project_file_is_not_clobbered():
+    """Only supply the scaffold when the workspace has none."""
+    import shutil, tempfile
+    from bench.stages import static as static_mod
+
+    ws = Path(tempfile.mkdtemp(prefix="pulumi-ownproj-"))
+    try:
+        shutil.copytree(GOLDEN_PY, ws, dirs_exist_ok=True, symlinks=True)
+        original = (ws / "Pulumi.yaml").read_text()
+        static_mod.run_static(ws, "pulumi-python")
+        assert (ws / "Pulumi.yaml").read_text() == original
+    finally:
+        shutil.rmtree(ws, ignore_errors=True)

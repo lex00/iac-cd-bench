@@ -43,7 +43,7 @@ def run_static(workspace: Path, stack: str) -> dict:
     elif stack == "terraform":
         all_passed, acted = _terraform_static(workspace, results)
     elif stack in ("pulumi-python", "pulumi-typescript"):
-        all_passed, acted = _pulumi_static(workspace, results)
+        all_passed, acted = _pulumi_static(workspace, results, stack)
     elif stack == "chant":
         all_passed, acted = _chant_static(workspace, results)
     elif stack == "bare":
@@ -263,7 +263,8 @@ def _terraform_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     return passed, True
 
 
-def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
+def _pulumi_static(workspace: Path, results: list[str],
+                   stack: str = "pulumi-python") -> tuple[bool, bool]:
     """Run pulumi preview for Pulumi stacks.
 
     Sets up a local filesystem backend for Pulumi and initializes the stack,
@@ -360,6 +361,30 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
                     pythonpath = f"{pythonpath}:{existing_pythonpath}"
                 pulumi_env["PYTHONPATH"] = pythonpath
                 break
+
+    # Supply the Pulumi *project* file if the workspace has none.
+    #
+    # Pulumi.yaml declares the project and runtime; without it `pulumi stack
+    # init` and `preview -s dev` cannot resolve a project and fail with "pass
+    # the fully qualified name (organization/project/stack)". Models write
+    # __main__.py and the per-stack Pulumi.<stack>.yaml config, but not the
+    # project file — so before this, 100% of pulumi model runs failed for a
+    # reason unrelated to their code, while the golden passed only because a
+    # Pulumi.yaml had been added to it.
+    #
+    # The gate already fabricates a backend, a stack and a venv for the model.
+    # Refusing to also supply the project scaffold was arbitrary, and it made
+    # the arm's static column uniformly fail — which is the shape of a gate
+    # measuring the environment rather than the artifact (#81).
+    if not any((workspace / n).exists() for n in ("Pulumi.yaml", "Pulumi.yml")):
+        runtime = "nodejs" if stack == "pulumi-typescript" else "python"
+        (workspace / "Pulumi.yaml").write_text(
+            f"name: iac-cd-bench-{stack}\n"
+            f"runtime: {runtime}\n"
+            "description: project scaffold supplied by the benchmark harness\n"
+        )
+        results.append("supplied Pulumi.yaml (workspace had no project file)")
+        log.info("wrote Pulumi.yaml scaffold for %s", stack)
 
     # Initialize the stack locally before running preview
     log.info("pulumi stack init dev with local backend")
