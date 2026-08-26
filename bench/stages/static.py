@@ -18,6 +18,14 @@ from bench.stages import lint as lint_mod
 
 log = logging.getLogger(__name__)
 
+# Vendored CRD JSON schemas (#83), mirrored from datreeio/CRDs-catalog at
+# 7b1e26ef9deea49293714d204c1a2270aab1178f. Vendored rather than fetched at
+# validation time so the gate stays offline and a run's verdict does not
+# depend on a network round trip or on what upstream happened to hold that
+# day. The layout matches the catalog's, so refreshing is a re-fetch.
+SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
+SCHEMA_TEMPLATE = "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+
 
 def run_static(workspace: Path, stack: str) -> dict:
     """Run tool-native static validation for the stack.
@@ -333,15 +341,18 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     lint omits `-strict`, this adds it — so the two stages stay distinct
     gates rather than one gate run twice.
 
-    `-ignore-missing-schemas` stays on, and the count of what was actually
-    checked is what decides the verdict. bare's tasks are ACK resources
-    (`Bucket`, `Policy`), whose CRD schemas kubeconform does not ship. Failing
-    them would replace one systematic false failure with another; passing them
-    on a summary of `Valid: 0, Skipped: 1` would be the vacuous pass this
-    harness exists to refuse. So when nothing in the workspace resolved to a
-    schema, the stage reports that it did not run — an honest "not measured"
-    rather than a verdict it has no evidence for. Wiring in ACK schemas via
-    `-schema-location` would make this a real gate; until then it abstains.
+    bare's tasks are ACK and Cluster API resources, whose CRD schemas
+    kubeconform does not ship, so `schemas/` vendors them (#83) and
+    `-schema-location` points at that mirror ahead of the built-in one. The
+    versions are not a choice made here: they are the ones the task fixtures
+    already use — ACK s3/iam/rds at v1alpha1, Cluster API at v1beta1.
+
+    `-ignore-missing-schemas` is deliberately NOT passed. With the schemas
+    vendored, a kind that still fails to resolve is a kind that does not
+    exist, and that is a real defect worth failing: the v3 matrix has models
+    emitting `UserPolicy`, `RolePolicyAttachment` and friends, none of which
+    are ACK IAM kinds. Skipping them would score an invented resource as
+    fine.
     """
     passed = True
     validated = 0
@@ -355,7 +366,9 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         log.info("kubeconform -strict %s", yfile)
         try:
             proc = subprocess.run(
-                ["kubeconform", "-strict", "-summary", "-ignore-missing-schemas",
+                ["kubeconform", "-strict", "-summary",
+                 "-schema-location", "default",
+                 "-schema-location", str(SCHEMA_DIR / SCHEMA_TEMPLATE),
                  str(yfile)],
                 capture_output=True, text=True, timeout=60,
             )
