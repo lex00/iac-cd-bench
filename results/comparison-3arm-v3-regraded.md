@@ -12,36 +12,36 @@ Mean composite score across all runs in the stack.
 
 | Stack | claude-haiku-4-5-3arm-v3-regraded | claude-opus-5-3arm-v3-regraded |
 | --- | --- | --- |
-| knr-ops | 0.48 | 0.50 |
+| knr-ops | 0.59 | 0.61 |
 | crossplane | — | — |
 | terraform | — | — |
 | pulumi-python | — | — |
 | pulumi-typescript | — | — |
-| chant | 0.64 | 0.61 |
-| bare | 0.60 | 0.61 |
-| **Overall** | 0.58 | 0.58 |
+| chant | 0.75 | 0.72 |
+| bare | 0.71 | 0.72 |
+| **Overall** | 0.68 | 0.68 |
 
 ## Composite Score by Stack × Archetype
 
 | Stack / Archetype | claude-haiku-4-5-3arm-v3-regraded | claude-opus-5-3arm-v3-regraded |
 | --- | --- | --- |
-| knr-ops / Comprehend | 0.40 | 0.42 |
+| knr-ops / Comprehend | 0.70 | 0.73 |
 | knr-ops / Generate | 0.66 | 0.67 |
 | knr-ops / Modify | 0.32 | 0.40 |
 | knr-ops / Debug | 0.31 | 0.33 |
-| knr-ops / Review | 0.41 | 0.42 |
+| knr-ops / Review | 0.72 | 0.73 |
 | knr-ops / Semantics | 0.77 | 0.78 |
-| chant / Comprehend | 0.40 | 0.42 |
+| chant / Comprehend | 0.71 | 0.74 |
 | chant / Generate | 0.78 | 0.52 |
 | chant / Modify | 0.78 | 0.78 |
 | chant / Debug | 0.74 | 0.78 |
-| chant / Review | 0.41 | 0.41 |
+| chant / Review | 0.72 | 0.72 |
 | chant / Semantics | 0.75 | 0.76 |
-| bare / Comprehend | 0.41 | 0.43 |
+| bare / Comprehend | 0.72 | 0.75 |
 | bare / Generate | 0.67 | 0.72 |
 | bare / Modify | 0.67 | 0.67 |
 | bare / Debug | 0.70 | 0.67 |
-| bare / Review | 0.42 | 0.42 |
+| bare / Review | 0.74 | 0.74 |
 | bare / Semantics | 0.75 | 0.78 |
 
 ## Coverage
