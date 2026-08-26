@@ -43,8 +43,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         }
@@ -53,8 +52,7 @@
         "name",
         "policyDocument"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "PolicyStatus defines the observed state of Policy",
@@ -79,8 +77,7 @@
             "ownerAccountID",
             "region"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "attachmentCount": {
           "description": "The number of entities (users, groups, and roles) that the policy is attached\nto.",
@@ -118,8 +115,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -151,8 +147,7 @@
           "type": "string"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

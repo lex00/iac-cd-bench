@@ -36,4 +36,4 @@ spec:
   template:
     spec:
       instanceType: t3.large
-      instanceProfile: nodes
+      iamInstanceProfile: nodes

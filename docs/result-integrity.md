@@ -204,6 +204,45 @@ for an original. Only the semantic stage is recomputed — lint and static ran
 real tools against the same workspace and their verdicts stand — and scores
 are recomputed in full, since correctness and completeness both read semantic.
 
+### 10. An axis nothing was measured on is dropped, not failed
+
+The mirror of rule 3. That rule stops an unmeasured stage counting as a
+*pass*; this one stops an unmeasured axis counting as a *failure*.
+
+`correctness` used to score 0 when no stage was attempted at all, while
+keeping its weight of 3 in the denominator. Tasks whose spec disables every
+build stage — `T1-comprehend` and `T5-review` are rubric-only by design — were
+therefore penalised for gates they were never meant to have. In
+`solid-haiku-v1` this made chant's four *lowest* scoring runs the four that no
+gate ran on, while those same runs earned the *highest* idiom scores in the
+set (0.70-0.94). The number said "worst"; the evidence said "unmeasured".
+
+`correctness` is now dropped from numerator and denominator when
+`attempted_stages == 0`, exactly as `completeness` is dropped when no
+assertion was evaluated. A stage that ran and *failed* is a real zero and
+stays (`tests/test_score_regression.py` pins both directions).
+
+**This does not make composites comparable across archetypes.** Combined with
+the `idiom` axis being hardcoded 0.0 wherever the judge does not run (#7), the
+two groups of tasks are still scored on disjoint axes:
+
+| task group | earns | cannot earn | practical ceiling |
+| --- | --- | --- | --- |
+| T1-comprehend, T5-review | idiom, safety | correctness, completeness | ~0.68 |
+| T2 / T3 / T4 | correctness, completeness | idiom | 0.778 |
+
+So a per-stack **mean composite is partly a function of that stack's archetype
+mix**, not only its performance. Compare like archetype with like archetype;
+treat a single averaged number per stack as a summary, not a measurement.
+Fixing that properly means #7 (implement the judge everywhere) rather than
+more axis bookkeeping.
+
+Historical effect: this moves stored composites *upward* for rubric-only runs,
+the opposite direction from the vacuous-pass guard. The `increased == 0`
+invariant in `test_score_regression.py` is scoped to that guard and is
+unaffected here, because `_historical_results()` filters out runs carrying
+`skipped` stages — which is precisely the rubric-only case.
+
 ## Mechanism map
 
 | iac-cd-bench | ported from | what it fixes here |
@@ -241,8 +280,10 @@ are recomputed in full, since correctness and completeness both read semantic.
   unjudged rubric-only task scores exactly 0.0 on every axis, which reads as
   "the model did terribly" rather than "nothing was measured" — the same
   misleading-number failure, pointing the other way. What contains it for now
-  is that runs where every enabled stage was inapplicable are rejected
-  outright and contribute no number at all. The underlying heuristic
+  is that runs where every enabled stage was *inapplicable* are rejected
+  outright and contribute no number at all. Note this does not cover runs
+  whose stages were *spec-disabled* (`skipped`): those are recorded
+  `no_stage_ran`, survive as `partial`, and are scored — see rule 10. The underlying heuristic
   (`"safety" not in output.lower()` in `bench/stages/semantic.py`) is not a
   real safety gate either, and both want replacing together with an
   unmeasurable-composite sentinel rather than a 0.0.

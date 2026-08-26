@@ -34,8 +34,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -60,8 +59,7 @@
       "required": [
         "url"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "OpenIDConnectProviderStatus defines the observed state of OpenIDConnectProvider",
@@ -86,8 +84,7 @@
             "ownerAccountID",
             "region"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "conditions": {
           "description": "All CRs managed by ACK have a common `Status.Conditions` member that\ncontains a collection of `ackv1alpha1.Condition` objects that describe\nthe various terminal states of the CR and its backend AWS service API\nresource",
@@ -120,14 +117,12 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"
