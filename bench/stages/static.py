@@ -173,22 +173,85 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     return passed, bool(kustomizations or flux_kustomizations)
 
 
+def _classify_crossplane_docs(workspace: Path):
+    """Sort a workspace's YAML into (renderables, compositions, xrds, functions)
+    by reading each document, not by matching its filename.
+
+    `crossplane render` takes a composite resource. Which kinds those are is
+    declared by the XRDs present: `spec.names.kind` is the XR, and
+    `spec.claimNames.kind` the claim when the XRD offers one. So the workspace
+    tells us what to look for rather than us guessing from a filename — this
+    is rule 8 (locate by content, never by path), learned for graders in #72.
+
+    Falls back to "a namespaced resource that is not Crossplane machinery"
+    when no XRD declares anything, so a workspace shipping only a claim is
+    still measurable.
+    """
+    MACHINERY = {"CompositeResourceDefinition", "Composition", "Function",
+                 "Provider", "ProviderConfig", "DeploymentRuntimeConfig",
+                 "ControllerConfig", "Configuration"}
+
+    parsed: list[tuple[Path, list[dict]]] = []
+    for f in sorted(workspace.rglob("*.y*ml")):
+        try:
+            docs = [d for d in yaml.safe_load_all(f.read_text())
+                    if isinstance(d, dict) and d.get("kind")]
+        except (OSError, yaml.YAMLError):
+            continue
+        if docs:
+            parsed.append((f, docs))
+
+    renderable_kinds: set[str] = set()
+    for _f, docs in parsed:
+        for d in docs:
+            if d.get("kind") != "CompositeResourceDefinition":
+                continue
+            spec = d.get("spec") or {}
+            for key in ("names", "claimNames"):
+                kind = (spec.get(key) or {}).get("kind")
+                if kind:
+                    renderable_kinds.add(kind)
+
+    renderables, compositions, xrds, functions = [], [], [], []
+    for f, docs in parsed:
+        kinds = {d["kind"] for d in docs}
+        if "CompositeResourceDefinition" in kinds:
+            xrds.append(f)
+        if "Composition" in kinds:
+            compositions.append(f)
+        if "Function" in kinds:
+            functions.append(f)
+        for d in docs:
+            kind = d["kind"]
+            if kind in renderable_kinds:
+                renderables.append(f); break
+            if not renderable_kinds and kind not in MACHINERY and \
+                    (d.get("metadata") or {}).get("namespace"):
+                renderables.append(f); break
+    return renderables, compositions, xrds, functions
+
+
 def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run crossplane render for Crossplane."""
     passed = True
 
     # Find claims
-    # A claim is identified by where it lives as well as what it is called.
-    # The golden puts them in `claims/dev.yaml` and `claims/prod.yaml`, which
-    # `*claim*.yaml` does not match — the directory carries the plural, the
-    # filename does not. The gate therefore found 0 claims on its own
-    # reference implementation and abstained on every crossplane run ever.
-    claims = sorted(set(workspace.rglob("*claim*.yaml"))
-                    | {f for f in workspace.rglob("*.y*ml")
-                       if f.parent.name in ("claims", "claim")})
-    compositions = list(workspace.rglob("*composition*.yaml"))
-    xrds = list(workspace.rglob("*xrd*.yaml"))
-    functions = list(workspace.rglob("*function*.y*ml"))
+    # Locate every artifact by CONTENT, never by path — rule 8 of
+    # docs/result-integrity.md, learned for graders in #72 and never applied
+    # to the gates.
+    #
+    # Filename matching failed twice over. The golden names its claims
+    # `claims/dev.yaml`, which `*claim*.yaml` never matched, so the gate
+    # abstained on its own reference implementation (#89). And a model that
+    # writes YAML without declaring a path gets the extractor's fallback name
+    # `generated_0.yaml`, which matches nothing either — so even after #89 the
+    # gate abstained on every model run in coverage-v2 while the models had in
+    # fact produced perfectly good claims.
+    #
+    # An abstention is worse here than a failure: it removes the arm from
+    # measurement silently AND lifts its composite, because an inapplicable
+    # stage leaves the correctness denominator.
+    claims, compositions, xrds, functions = _classify_crossplane_docs(workspace)
 
     for claim in claims:
         log.info("crossplane render %s", claim)
