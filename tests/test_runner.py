@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+import bench.runner as runner
+from bench.grounding import SchemaCache
+
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "tasks"
 RESULTS_DIR = ROOT / "results"
@@ -27,6 +30,148 @@ def test_runner_executes():
     )
     assert result.returncode == 0
     assert "IaC/CD Benchmark Runner" in result.stdout
+    assert "--grounding" in result.stdout
+
+
+def test_grounding_validation_accepts_only_supported_stacks():
+    runner.validate_grounding_stacks(
+        ["knr-ops", "crossplane"], grounding=True, condition="cold"
+    )
+
+    with pytest.raises(ValueError, match="supports knr-ops and crossplane only"):
+        runner.validate_grounding_stacks(["terraform"], grounding=True, condition="cold")
+
+
+def test_grounding_validation_rejects_all_when_it_contains_unsupported_stacks():
+    with pytest.raises(ValueError, match="unsupported stack.*pulumi-python"):
+        runner.validate_grounding_stacks(
+            runner.ALL_STACKS, grounding=True, condition="cold"
+        )
+
+
+def test_grounding_validation_requires_cold_condition():
+    with pytest.raises(ValueError, match="--grounding requires --condition cold"):
+        runner.validate_grounding_stacks(["knr-ops"], grounding=True, condition="warm")
+
+    runner.validate_grounding_stacks(["knr-ops"], grounding=True, condition="cold")
+
+
+def test_non_grounded_validation_preserves_warm_condition():
+    runner.validate_grounding_stacks(["terraform"], grounding=False, condition="warm")
+
+
+def test_cli_rejects_grounding_with_warm_condition():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bench.runner",
+            "--model",
+            "fake",
+            "--stack",
+            "knr-ops",
+            "--grounding",
+            "--condition",
+            "warm",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+
+    assert result.returncode == 2
+    assert "--grounding requires --condition cold" in result.stderr
+
+
+class CapturingAdapter(runner.ModelAdapter):
+    def __init__(self):
+        self.prompts = []
+
+    @property
+    def name(self):
+        return "fake"
+
+    def complete(self, prompt, files):
+        self.prompts.append(prompt)
+        return {"content": "No generated files.", "input_tokens": 1, "output_tokens": 1}
+
+
+class FakeGroundingClient:
+    def __init__(self, schema='{"type": "object"}'):
+        self.schema = schema
+        self.calls = []
+
+    def get_schema(self, kind, api_version):
+        self.calls.append((kind, api_version))
+        return self.schema
+
+
+def _grounded_task(tmp_path):
+    task_dir = tmp_path / "T-grounded"
+    (task_dir / "seed").mkdir(parents=True)
+    (task_dir / "spec.yaml").write_text("id: T-grounded\nstack: knr-ops\n")
+    (task_dir / "prompt.md").write_text("Write the manifest.\n")
+    (task_dir / "seed" / "resource.yaml").write_text(
+        "apiVersion: example.org/v1\nkind: Widget\nspec: {}\n"
+    )
+    return task_dir
+
+
+def test_run_task_appends_grounding_prompt_and_records_metadata(tmp_path, monkeypatch):
+    task_dir = _grounded_task(tmp_path)
+    adapter = CapturingAdapter()
+    client = FakeGroundingClient()
+    cache = SchemaCache(tmp_path / "cache")
+    monkeypatch.setattr(runner.lint, "run_lint", lambda *_: {"passed": True})
+    monkeypatch.setattr(runner.static, "run_static", lambda *_: {"passed": True})
+    monkeypatch.setattr(runner.semantic, "run_semantic", lambda *_: {"passed": True})
+
+    results = runner.run_task(
+        task_dir,
+        adapter,
+        1,
+        False,
+        "warm",
+        grounding=True,
+        grounding_client=client,
+        grounding_cache=cache,
+    )
+
+    assert len(adapter.prompts) == 1
+    assert "### Reference schemas" in adapter.prompts[0]
+    assert '"type": "object"' in adapter.prompts[0]
+    assert client.calls == [("Widget", "example.org/v1")]
+    assert results[0]["grounding"]["kinds"] == ["example.org/v1/Widget"]
+    section = "### Reference schemas" + adapter.prompts[0].split("### Reference schemas", 1)[1]
+    assert results[0]["grounding"]["section_chars"] == len(section)
+    assert "error" not in results[0]
+
+
+def test_run_task_records_grounding_failure_without_invoking_model(tmp_path, monkeypatch):
+    task_dir = _grounded_task(tmp_path)
+    adapter = CapturingAdapter()
+
+    class FailingClient:
+        def get_schema(self, kind, api_version):
+            raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(runner.lint, "run_lint", lambda *_: {"passed": True})
+
+    results = runner.run_task(
+        task_dir,
+        adapter,
+        1,
+        False,
+        "warm",
+        grounding=True,
+        grounding_client=FailingClient(),
+        grounding_cache=SchemaCache(tmp_path / "cache"),
+    )
+
+    assert adapter.prompts == []
+    assert results[0]["error"] == "grounding failed: catalog unavailable"
+    assert results[0]["grounding"] == {"kinds": [], "section_chars": 0}
+    assert results[0]["stages"]["lint"]["passed"] is False
 
 
 def test_task_dirs_exist():
