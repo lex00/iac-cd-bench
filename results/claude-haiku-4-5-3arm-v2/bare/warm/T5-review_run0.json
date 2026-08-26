@@ -1,0 +1,124 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T5-review",
+  "stack": "bare",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "2b3940fbd51e98f3",
+      "spec_sha256": "debfcea6b8aad5d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 2042,
+    "output": 2799
+  },
+  "content": "# Security Review: Production Golden Repo PR Diff\n\n## Issues Found\n\n### 1. **Plaintext Secret Committed to Git** \u2192 `prod/db-secret.yaml`\n**Field:** `stringData.password`  \n**Change:** Replacing placeholder with actual credential `\"Summer2026!Prod#db\"`\n\n**Severity:** \ud83d\udd34 **CRITICAL**\n\n**Why this fails:**\n- Canonical spec mandate: *\"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"*\n- Acceptance criterion 3: explicit prohibition on plaintext storage\n- Once committed, the credential is permanently in Git history; rotation requires treating it as compromised\n- This is a bare stack with no delivery pipeline\u2014there is no SOPS/policy layer to prevent this commit\n\n**Required fix:**\n- **Do not commit this password.** Remove this change entirely.\n- Use a true out-of-band secret injection mechanism:\n  - For bare manifests: commit the placeholder; use an external secret store (e.g., Sealed Secrets, External Secrets Operator, HashiCorp Vault, or AWS Secrets Manager)\n  - Alternatively: use `kubectl create secret generic` after cluster bootstrap (not version-controlled)\n  - Document the secret provisioning procedure in `prod/README.md` or a deployment runbook\n\n---\n\n### 2. **S3 Bucket Made Fully Public** \u2192 `prod/s3-bucket.yaml`\n**Field:** `spec.publicAccessBlock` removed; replaced with `spec.policy` (wildcard Principal)\n\n**Severity:** \ud83d\udd34 **CRITICAL**\n\n**Why this fails:**\n- Canonical spec: *\"no public access\"*\n- Acceptance criterion 1: *\"no public access\"*\n- The diff removes **all** blocking rules (`blockPublicACLs`, `blockPublicPolicy`, `ignorePublicACLs`, `restrictPublicBuckets`)\n- Replaced with a bucket policy granting `s3:GetObject` to `Principal: \"*\"` (anyone, unauthenticated)\n- Application assets are now world-readable; confidentiality and integrity are compromised\n\n**Required fix:**\n- Restore `publicAccessBlock` with all four flags set to `true`\n- Remove the public bucket policy entirely\n- If assets need CDN distribution: use CloudFront with origin access identity (OAI) or origin access control (OAC); CloudFront serves as the public endpoint, not the bucket\n- Align with prod spec: *\"HTTPS exposure \u2026 CloudFront + ACM cert\"*\n\n---\n\n### 3. **RDS Made Publicly Accessible** \u2192 `prod/rds.yaml`\n**Field:** `spec.publiclyAccessible`  \n**Change:** `false` \u2192 `true`\n\n**Severity:** \ud83d\udd34 **CRITICAL**\n\n**Why this fails:**\n- Canonical spec: *\"no publicly accessible\"* [sic]\n- Acceptance criterion 2: *\"no publicly accessible\"*\n- Exposes production PostgreSQL database on the public internet (port 5432 or custom)\n- Attacker can attempt brute-force, exploit known CVEs, or access sensitive data directly\n- Even with strong authentication, this eliminates network-layer isolation and greatly increases attack surface\n\n**Required fix:**\n- Revert to `publiclyAccessible: false`\n- Database should only be accessible from within the VPC or via authorized security group rules\n- If external access is needed: use a bastion host, VPN, or AWS Systems Manager Session Manager for administrative access\n\n---\n\n### 4. **Deletion Protection Disabled on Prod RDS** \u2192 `prod/rds.yaml`\n**Field:** `spec.deletionProtection`  \n**Change:** `true` \u2192 `false`\n\n**Severity:** \ud83d\udd34 **CRITICAL**\n\n**Why this fails:**\n- Canonical spec: *\"deletion protection on\"* (implicit; prod resource)\n- Acceptance criterion 2: *\"deletion protection on\"*\n- Allows production database to be accidentally or maliciously deleted\n- In a bare stack with no policy engine, this is an easy mistake to deploy\n- Permanent data loss with no recovery\n\n**Required fix:**\n- Revert to `deletionProtection: true` before merge\n- Enforce deletion protection as a non-negotiable prod invariant\n- (Consider adding a RBAC or policy layer to prevent deletion, but that is beyond bare scope)\n\n---\n\n### 5. **Resource Requests/Limits Removed** \u2192 `prod/app.yaml`\n**Field:** `spec.containers[0].resources`  \n**Change:** Entire `requests` and `limits` block removed\n\n**Severity:** \ud83d\udfe1 **MEDIUM**\n\n**Why this fails:**\n- Without requests: Kubernetes scheduler cannot properly bin-pack pods; risk of overcommit and evictions\n- Without limits: container can consume all node CPU/memory, starving other pods (noisy neighbor problem)\n- Not a direct data breach, but creates resource-based denial-of-service conditions\n- Less urgent than credential exposure, but still a reliability/stability issue in production\n\n**Required fix:**\n- Restore resource `requests` and `limits`\n- For prod (t3.large nodes), consider reviewing whether `100m` request and `500m` limit are appropriate; ensure they don't exceed node capacity\n- Ensure requests are realistic; limits slightly higher to allow bursting (common: 1.5\u20132\u00d7 requests)\n\n---\n\n## Ranked Summary (Worst First)\n\n| Rank | Issue | File | Severity | Impact |\n|------|-------|------|----------|--------|\n| 1 | Plaintext credential in Git | `prod/db-secret.yaml` | \ud83d\udd34 CRITICAL | Database compromise (immediate) |\n| 2 | S3 bucket public read | `prod/s3-bucket.yaml` | \ud83d\udd34 CRITICAL | Data exposure (all assets world-readable) |\n| 3 | RDS publicly accessible | `prod/rds.yaml` | \ud83d\udd34 CRITICAL | Database exposure (internet-facing) |\n| 4 | Deletion protection off | `prod/rds.yaml` | \ud83d\udd34 CRITICAL | Accidental/intentional data destruction |\n| 5 | Resource limits removed | `prod/app.yaml` | \ud83d\udfe1 MEDIUM | Cluster instability & DoS risk |\n\n---\n\n## Recommendation\n\n**Do not merge.** All five issues must be resolved. The first four are showstoppers; the fifth should be fixed before deployment to prod. This diff appears to intentionally degrade security controls\u2014verify that it is not accidental or the result of miscommunication, and escalate to the team lead if unclear.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 5662,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 5662,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 1.0,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies the plaintext database password committed to prod/db-secret.yaml, replacing the documented out-of-band placeholder",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies plaintext password 'Summer2026!Prod#db' replacing placeholder in prod/db-secret.yaml and explains credential exposure in Git history."
+      },
+      {
+        "criterion": "Identifies that prod/s3-bucket.yaml removes the public access block and adds a bucket policy granting s3:GetObject to Principal '*' (public read exposure)",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission explicitly identifies removal of all four publicAccessBlock flags and addition of bucket policy granting s3:GetObject to Principal '*' in prod/s3-bucket.yaml."
+      },
+      {
+        "criterion": "Identifies that prod/rds.yaml sets publiclyAccessible: true and deletionProtection: false on the production database",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission identifies both changes: publiclyAccessible false\u2192true and deletionProtection true\u2192false in prod/rds.yaml, though treated as separate issues rather than combined."
+      },
+      {
+        "criterion": "Identifies that prod/app.yaml drops the container's resource requests/limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies removal of entire resource requests/limits block from prod/app.yaml container spec."
+      },
+      {
+        "criterion": "Ranks the four issues by severity in an order consistent with: plaintext password and public bucket as the most severe, RDS exposure next, missing resource limits least severe",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Ranking table places plaintext password and S3 bucket as most severe (1-2), RDS issues next (3-4), and resource limits least severe (5), matching required order."
+      },
+      {
+        "criterion": "Provides a specific, concrete remediation for each issue identified (not just 'fix this')",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "All five issues receive specific remediations: out-of-band secret injection (Sealed Secrets/Vault), restore publicAccessBlock/remove policy, revert RDS flags, restore resource requests/limits\u2014no generic 'fix this' statements."
+      }
+    ]
+  }
+}

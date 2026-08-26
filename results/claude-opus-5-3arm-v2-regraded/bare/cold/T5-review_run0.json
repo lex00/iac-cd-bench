@@ -1,0 +1,128 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "bare",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "2b3940fbd51e98f3",
+      "spec_sha256": "debfcea6b8aad5d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 2233
+  },
+  "content": "## Review: block this PR\n\nFour distinct changes, three of which are direct violations of the scenario's acceptance criteria. In a bare stack there is no policy engine or rendering gate, so the only thing standing between this diff and prod is this review \u2014 treat every item below as merge-blocking except the last.\n\n---\n\n### 1. Plaintext production DB password committed to Git \u2014 `prod/db-secret.yaml`, `stringData.password`\n\n**CRITICAL.** The placeholder `REPLACE_OUT_OF_BAND_NEVER_COMMIT_REAL_VALUE` is replaced with what is plainly a real credential (`Summer2026!Prod#db`). This violates acceptance criterion 3 (\"never stored in plaintext in Git\"). The placeholder text is an explicit instruction that was ignored. Two compounding problems: the secret is now in Git history forever (removing it in a follow-up commit does *not* remediate \u2014 it remains in every clone, fork, and CI cache), and the value itself is a weak, guessable seasonal pattern that would fall to a dictionary attack in seconds.\n\n**Required before merge:** Do not merge. Rotate the credential in RDS *now* \u2014 assume it is compromised from the moment it was pushed. Restore the placeholder, and deliver the real value through the stack-native encrypted path (SOPS-encrypted manifest, or an external secret reference so no ciphertext is committed at all). If the branch has already been pushed to a shared remote, history rewrite plus rotation, not history rewrite alone.\n\n### 2. S3 bucket opened to anonymous public read \u2014 `prod/s3-bucket.yaml`, `publicAccessBlock` \u2192 `policy`\n\n**CRITICAL.** All four public access block controls are deleted and replaced with a bucket policy granting `s3:GetObject` to `Principal: \"*\"` on every object. This violates acceptance criterion 1 (\"no public access\"). Note the ordering matters: removing the `publicAccessBlock` is what makes the policy *effective* \u2014 with the block in place AWS would have rejected or neutered the public policy. So this is not one mistake but a deliberate two-step to defeat a guardrail.\n\nThe blast radius is every object in `myapp-assets-prod`, present and future. \"Assets\" buckets routinely accumulate things nobody intended to publish \u2014 user uploads, backups, exports, logs. Anonymous global read on a prod bucket is also a bulk-enumeration and egress-cost exposure.\n\n**Required before merge:** Restore all four `publicAccessBlock` fields to `true` and drop the bucket policy. If public asset delivery is the genuine requirement, serve through CloudFront with an Origin Access Control and keep the bucket itself private \u2014 the spec already calls for CloudFront + ACM in prod, so the correct mechanism exists and is unused here.\n\n### 3. RDS made internet-reachable and deletion protection removed \u2014 `prod/rds.yaml`\n\n**CRITICAL.** Two independent regressions in one hunk, both against acceptance criterion 2:\n\n- `publiclyAccessible: false` \u2192 `true` assigns the prod database a public endpoint. It is then exposed to the entire internet subject only to security group rules \u2014 a single overly-broad SG rule, or one misconfigured `0.0.0.0/0`, turns this into direct credential-stuffing surface. Combined with issue #1, an attacker who reads the Git history now has both a reachable endpoint *and* the password. These two changes together are a complete, ready-to-use breach path; that is why this PR is dangerous beyond the sum of its parts.\n- `deletionProtection: true` \u2192 `false` removes the last safeguard against accidental or malicious destruction of the prod database. Note `storageEncrypted` and `multiAZ` were left alone, which suggests these two flips were targeted rather than a careless bulk edit.\n\n**Required before merge:** Revert both fields. The database should be reachable only from within the VPC. Also confirm `backupRetentionPeriod >= 7` while touching this file \u2014 the spec requires it and the diff gives no visibility into its current value.\n\n### 4. Resource requests and limits removed \u2014 `prod/app.yaml`\n\n**MEDIUM.** Deleting the `resources` block means the pod schedules with no CPU/memory guarantee and no ceiling. Consequences: the pod drops to `BestEffort` QoS and is first to be evicted under node pressure; a memory leak or a request-driven spike can consume the whole node and starve co-tenant workloads; and it becomes a trivial denial-of-service lever, since anyone able to drive load can degrade everything sharing that node. Lower severity than the above only because it requires a second condition to cause harm, rather than being an exposure on its own.\n\nSeparately, and worth flagging even though it predates this diff: `image: docker.io/myapp/myapp:latest` is a mutable tag on prod. That defeats reproducibility and means the running image can change without any Git commit. Pin to a digest.\n\n**Required before merge:** Restore the `requests`/`limits` block, adjusting values if the removal was motivated by real OOM or throttling data \u2014 but tune the numbers, do not delete the constraint.\n\n---\n\n## Ranked, worst first\n\n| # | Issue | File / field | Severity |\n|---|---|---|---|\n| 1 | Plaintext prod DB password committed | `db-secret.yaml` \u00b7 `stringData.password` | **CRITICAL** |\n| 2 | Public access block removed + anonymous read policy | `s3-bucket.yaml` \u00b7 `publicAccessBlock`, `policy` | **CRITICAL** |\n| 3 | RDS `publiclyAccessible: true` | `rds.yaml` \u00b7 `publiclyAccessible` | **CRITICAL** |\n| 4 | RDS `deletionProtection: false` | `rds.yaml` \u00b7 `deletionProtection` | **HIGH** |\n| 5 | Resource requests/limits removed | `app.yaml` \u00b7 `resources` | **MEDIUM** |\n| 6 | Mutable `:latest` image tag (pre-existing) | `app.yaml` \u00b7 `image` | **LOW** |\n\nItems 1\u20133 are equally critical and mutually reinforcing; I have ordered them by immediacy of remediation rather than by any real difference in impact. Item 1 goes first only because rotation is time-sensitive and must begin before the rest of the review is even resolved.\n\n**Recommendation:** Reject. This is not a set of independent oversights \u2014 the pattern (guardrail removal preceding the change the guardrail would have blocked, encryption left intact while access controls are flipped) warrants asking the author directly what problem they were solving, and confirming out-of-band that the branch is theirs.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 6227,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 6227,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 1.0,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies the plaintext database password committed to prod/db-secret.yaml, replacing the documented out-of-band placeholder",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Unambiguously identifies the placeholder REPLACE_OUT_OF_BAND_NEVER_COMMIT_REAL_VALUE replaced with plaintext password Summer2026!Prod#db in prod/db-secret.yaml, with correct understanding of Git history permanence."
+      },
+      {
+        "criterion": "Identifies that prod/s3-bucket.yaml removes the public access block and adds a bucket policy granting s3:GetObject to Principal '*' (public read exposure)",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Clearly identifies removal of all four publicAccessBlock fields and replacement with bucket policy granting s3:GetObject to Principal '*', with understanding that removing the block makes the policy effective."
+      },
+      {
+        "criterion": "Identifies that prod/rds.yaml sets publiclyAccessible: true and deletionProtection: false on the production database",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Explicitly identifies both RDS changes: publiclyAccessible false\u2192true and deletionProtection true\u2192false, with correct understanding of their combined security impact."
+      },
+      {
+        "criterion": "Identifies that prod/app.yaml drops the container's resource requests/limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Clearly identifies deletion of the resources block (requests and limits) from the myapp container in prod/app.yaml and its consequences for pod scheduling."
+      },
+      {
+        "criterion": "Ranks the four issues by severity in an order consistent with: plaintext password and public bucket as the most severe, RDS exposure next, missing resource limits least severe",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Ranks plaintext password and public bucket as equally most severe, RDS exposure next (even split across two table entries), and resource limits as least severe\u2014order matches reference requirements."
+      },
+      {
+        "criterion": "Provides a specific, concrete remediation for each issue identified (not just 'fix this')",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "All four issues receive specific remediations: rotate credential and use SOPS/external secrets, restore publicAccessBlock and drop policy, revert both RDS flags, restore requests/limits block with tuning guidance."
+      }
+    ]
+  },
+  "regrade": {
+    "status": "skipped",
+    "reason": "semantic stage disabled by spec"
+  }
+}

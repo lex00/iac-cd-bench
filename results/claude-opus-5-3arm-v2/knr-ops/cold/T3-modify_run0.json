@@ -1,0 +1,93 @@
+{
+  "model": "claude-opus-5",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "ca2cf6f49fd75c5a",
+      "spec_sha256": "ba65a69d0db0556b",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nnamespace: knr-prod\nnameSuffix: -prod\nresources:\n  - ../../base\ncommonLabels:\n  app.kubernetes.io/instance: knr-prod\n  environment: prod\npatches:\n  # 1. App deployment: replicas 2 -> 4 (prod only)\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: knr-app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n  # 2 + 3. RDS: db.t3.micro -> db\n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-05mncbub/overlays/prod: exit=1\nERR: # Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\nError: accumulating resources: accumulation err='accumulating resources from '../../base': evalsymlink failure on '/private/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-05mncbub/base' : lstat /private/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-05mncbub/base: no such file or directory': must build at directory: not a valid d"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "y::test_s3_cross_region_replication_added PASSED [ 80%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/knr-ops/T3-modify/tests/test_task.py::test_dev_overlay_not_touched PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: expected a kustomize patch targeting the myapp Deployment\n    assert []\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/knr-ops/T3-modify/tests/test_task.py:198: AssertionError: expected a kustomize patch targeting the myapp Deployment\nE   AssertionError: expected a kustomize patch targeting the RDS Instance (myapp-dev-db)\n    assert []\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/knr-ops/T3-modify/tests/test_task.py:206: AssertionError: expected a kustomize patch targeting the RDS Instance (myapp-dev-db)\nE   AssertionError: expected a kustomize patch targeting the RDS Instance (myapp-dev-db)\n    assert []\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/knr-ops/T3-modify/tests/test_task.py:216: AssertionError: expected a kustomize patch targeting the RDS Instance (myapp-dev-db)\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/knr-ops/T3-modify/tests/test_task.py::test_app_deployment_scaled\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/knr-ops/T3-modify/tests/test_task.py::test_rds_instance_class_patched\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/knr-ops/T3-modify/tests/test_task.py::test_rds_multi_az_enabled\n========================= 3 failed, 2 passed in 0.03s ==========================\n",
+      "passed_count": 2,
+      "total_count": 5,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 2198
+  },
+  "content": "Below is the complete replacement for `overlays/prod/kustomization.yaml`. Everything is inline (`patches:` with embedded `patch:` documents), so this is the only file that changes \u2014 no new patch files, no base edits, and `overlays/dev/` is untouched. Because each overlay is its own kustomize build root that only references `../../base` (read-only), rebuilding prod cannot alter the dev render or dev's Flux-managed state.\n\n```yaml\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nnamespace: knr-prod\nnameSuffix: -prod\n\nresources:\n  - ../../base\n\ncommonLabels:\n  app.kubernetes.io/instance: knr-prod\n  environment: prod\n\npatches:\n  # 1. App deployment: replicas 2 -> 4 (prod only)\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: knr-app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  # 2 + 3. RDS: db.t3.micro -> db.t3.medium, multi-AZ on.\n  #        Guardrails from the base (deletion protection, >=7d backups,\n  #        encryption, not publicly accessible) are re-asserted so a prod\n  #        render is self-evidently compliant even if base drifts.\n  - target:\n      kind: DBInstance\n      name: knr-postgres\n    patch: |-\n      apiVersion: rds.services.k8s.aws/v1alpha1\n      kind: DBInstance\n      metadata:\n        name: knr-postgres\n      spec:\n        dbInstanceClass: db.t3.medium\n        multiAZ: true\n        storageEncrypted: true\n        deletionProtection: true\n        backupRetentionPeriod: 14\n        publiclyAccessible: false\n\n  # 4. S3 cross-region replication to us-west-2.\n  #    Versioning + SSE stay as inherited from base; replication requires\n  #    versioning on both source and destination, so it is restated here.\n  - target:\n      kind: Bucket\n      name: knr-assets\n    patch: |-\n      apiVersion: s3.services.k8s.aws/v1alpha1\n      kind: Bucket\n      metadata:\n        name: knr-assets\n      spec:\n        versioning:\n          status: Enabled\n        replication:\n          role: arn:aws:iam::${AWS_ACCOUNT_ID}:role/knr-s3-replication-prod\n          rules:\n            - id: crr-us-west-2\n              status: Enabled\n              priority: 0\n              filter:\n                prefix: \"\"\n              deleteMarkerReplication:\n                status: Enabled\n              destination:\n                bucket: arn:aws:s3:::knr-assets-prod-replica-us-west-2\n                storageClass: STANDARD_IA\n                encryptionConfiguration:\n                  replicaKMSKeyID: alias/aws/s3\n              sourceSelectionCriteria:\n                sseKMSEncryptedObjects:\n                  status: Enabled\n```\n\nNotes on the choices:\n\n- **Patch style.** The replica bump uses a JSON 6902 patch (`op: replace`) because it is a single scalar and a replace makes the intent unambiguous. The RDS and S3 changes use strategic-merge patches, since they add nested structure (`replication.rules[]`) that a JSON patch would have to address by fragile index paths.\n\n- **Targeting rather than `patchesStrategicMerge`.** Using the unified `patches:` field with an explicit `target:` selector means each patch matches exactly one object by group/kind/name. If the base renames or removes a resource, the build fails loudly instead of silently no-op-ing.\n\n- **Dev isolation.** Nothing above reaches outside `overlays/prod/`. `overlays/dev/kustomization.yaml` still references the same `../../base` and renders `replicas: 2`, `db.t3.micro`, `multiAZ: false`, and no replication block. Flux reconciles the two `Kustomization` objects independently, so a prod apply touches no dev resource.\n\n- **Prerequisites this patch assumes exist** (they belong in prod infra, not in this file): the destination bucket `knr-assets-prod-replica-us-west-2` must exist in us-west-2 with versioning enabled, and the replication IAM role must grant `s3:GetObjectVersionForReplication`/`GetObjectVersionAcl` on the source and `s3:ReplicateObject`/`ReplicateDelete`/`ReplicateTags` on the destination \u2014 scoped to those two bucket ARNs, no wildcard actions, per the least-privilege criterion. If your repo manages that role and bucket as manifests, add them under `infra/` and reference them from this overlay's `resources:` in a follow-up change; that would be a second file, so it is deliberately out of scope here.\n\n- **If your RDS/S3 resources are Crossplane rather than ACK**, keep the same structure and swap the patch bodies' `apiVersion`/`kind` to `rds.aws.upbound.io/v1beta1` `Instance` and `s3.aws.upbound.io/v1beta1` `Bucket` / `BucketReplicationConfiguration`, moving the fields under `spec.forProvider`. The targeting and the dev-isolation argument are unchanged.\n\nVerify with `kustomize build overlays/prod | grep -E 'replicas|dbInstanceClass|multiAZ|us-west-2'` and confirm `kustomize build overlays/dev` is byte-identical to its pre-change output.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-05mncbub/overlays/prod/kustomization.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 4883,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 4883,
+      "fenced_blocks": 1,
+      "extracted_files": 1,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

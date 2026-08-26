@@ -1,0 +1,142 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "chant",
+  "run": 2,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1e15d083a0a90095",
+      "spec_sha256": "f715de7d385d5d34",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "hant/T6-semantics/tests/test_task.py:79: AssertionError: q3: expected orphan, got 'newly-observed'\nE   AssertionError: q4 action: expected adopt, got 'delete'\n    assert 'delete' == 'adopt'\n      \n      - adopt\n      + delete\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py:86: AssertionError: q4 action: expected adopt, got 'delete'\nE   AssertionError: q6 requires_controller_reconcile: expected false, got True\n    assert True is False\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py:101: AssertionError: q6 requires_controller_reconcile: expected false, got True\nE   AssertionError: q7 specific_to_k8s_lexicon: expected true, got False\n    assert False is True\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py:109: AssertionError: q7 specific_to_k8s_lexicon: expected true, got False\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q3_orphan_classification\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q4_unmarked_orphan_is_adopt_not_delete\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q6_snapshot_needs_no_controller_reconcile\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q7_missing_edges_specific_to_k8s_lexicon\n========================= 4 failed, 3 passed in 0.02s ==========================\n",
+      "passed_count": 3,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 5708
+  },
+  "content": "```json\n{\n  \"q1\": {\n    \"behavior\": \"falls-back-to-run\",\n    \"reason\": \"The output shows 'fold: 0 files folded, 1 ran' for delivery and 'fold: 1 file folded, 0 ran' for clusters. Both builds exit successfully and produce output. When a file cannot fold (reduce to zero module execution), chant falls back to importing and running the module for that file only; remaining files in the build continue folding where possible.\"\n  },\n  \"q2\": {\n    \"answered_by\": \"live-marker\",\n    \"reason\": \"The chant.config.ts stamps ownership as `chant.intentius.io/stack` label on every emitted resource. The `chant lifecycle` commands (show, plan, diff) read live Kubernetes state and consult these labels to determine stack ownership, not an authoritative state file.\"\n  },\n  \"q3\": \"newly-observed\",\n  \"q4\": {\n    \"action\": \"delete\",\n    \"reason\": \"An undeclared live resource with no chant ownership marker is external to the declared state. The lifecycle plan treats resources not in the source as extraneous; without an ownership marker to suggest belonging to another tracked system, the plan proposes deletion to maintain alignment with declared intent.\"\n  },\n  \"q5\": {\n    \"calls_cloud\": false,\n    \"reason\": \"`chant build` is a compile-time operation that evaluates TypeScript, reduces composites, and outputs YAML manifests to disk. It performs no validation against live AWS or Kubernetes state\u2014that occurs later during `chant lifecycle plan` against the live cluster.\"\n  },\n  \"q6\": {\n    \"requires_controller_reconcile\": true,\n    \"reason\": \"The snapshot records actual Kubernetes objects with `STATUS: PRESENT` from a live cluster. CAPI/CAPA controllers reconcile the Cluster and Infrastructure objects by provisioning actual EKS infrastructure in AWS and updating status. Without completed reconciliation and provisioned infrastructure, these controllers would report 'provisioning' or 'pending', not 'PRESENT'.\"\n  },\n  \"q7\": {\n    \"specific_to_k8s_lexicon\": false,\n    \"reason\": \"The empty `edges` array in `--at latest` output reflects a fundamental property of live-state queries: edges derive from analyzing declared source relationships, not from reading live Kubernetes objects. The `--live` query returns physical state (resourceVersion, physicalId) but lacks the composite/source context needed to reconstruct edges. This is a general limitation of the `--at latest` format, not specific to k8s lexicon.\"\n  }\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 2419,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 2419,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.42857142857142855,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.31746031746031744
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "9e765ea8a903",
+    "stages": [
+      "lint",
+      "static",
+      "semantic"
+    ],
+    "before": {
+      "passed": false,
+      "passed_count": 3,
+      "total_count": 7
+    },
+    "after": {
+      "passed": false,
+      "passed_count": 3,
+      "total_count": 7
+    },
+    "stage_verdicts": {
+      "lint": {
+        "before": null,
+        "after": null
+      },
+      "static": {
+        "before": null,
+        "after": null
+      },
+      "semantic": {
+        "before": false,
+        "after": false
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.31746031746031744,
+    "composite_after": 0.31746031746031744
+  }
+}

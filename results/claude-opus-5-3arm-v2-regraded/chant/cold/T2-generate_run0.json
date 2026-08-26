@@ -1,0 +1,146 @@
+{
+  "model": "claude-opus-5",
+  "task": "T2-generate",
+  "stack": "chant",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "7d591736eddd30e0",
+      "spec_sha256": "46efa9d7c3b8d31e",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[chant lint] chant: exit=0\n\n\u001b[4m/private/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-chant-u863jdgi/src/composites/ack-controller.ts\u001b[0m\n  \u001b[90m  49:15 \u001b[0m  \u001b[33mwarning\u001b[0m  Inline object in Declarable constructor \u2014 extract to a named 'const' with 'export'. Each config value should be its own Declarable.  \u001b[90mCOR001\u001b[0m\n  \u001b[90m  54:11 \u001b[0m  \u001b[33mwarning\u001b[0m  Inline object in Declarable constructor \u2014 extract to a named 'const' with 'export'. Each config value should be its own Declarable.  \u001b[90mCOR001\u001b[0m\n\n\u001b\n[tsc check] tsc: exit=0"
+    },
+    "static": {
+      "passed": true,
+      "logs": "chant build -f yaml: exit=0\nERR: \u001b[90mfold: 6 files folded, 8 ran (--verbose for reasons)\u001b[0m\n\nkubeconform manifests.yaml: exit=0\nSummary: 27 resources found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 27\n"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py:89: AssertionError: expected a SecureBucket({...}) call declaring myapp-logs-dev\nE   AssertionError: expected a SecureBucket({...}) call declaring myapp-logs-prod\n    assert []\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py:95: AssertionError: expected a SecureBucket({...}) call declaring myapp-logs-prod\nE   AssertionError: expected a ReaderIam({...}) call with bucketName myapp-logs-dev\n    assert []\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py:127: AssertionError: expected a ReaderIam({...}) call with bucketName myapp-logs-dev\nE   AssertionError: expected a ReaderIam({...}) call with bucketName myapp-logs-prod\n    assert []\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py:143: AssertionError: expected a ReaderIam({...}) call with bucketName myapp-logs-prod\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py::test_dev_logs_bucket_via_composite\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py::test_prod_logs_bucket_via_composite\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py::test_dev_logs_reader_scoped\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T2-generate/tests/test_task.py::test_prod_logs_reader_scoped\n========================= 4 failed, 2 passed in 0.02s ==========================\n",
+      "passed_count": 2,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 1553
+  },
+  "content": "`src/envs/dev/infra/logs.ts`\n```typescript\n/**\n * dev environment \u2014 application logs bucket.\n *\n * Discovery picks up every `.ts` file under `src/envs/dev/infra`, so these\n * exports land in `dist/dev/infra/manifests.yaml` alongside `main.ts`'s.\n *\n * SPEC dev: versioned + encrypted + public access blocked \u2014 all three are\n * unconditional inside `SecureBucket`, so there is nothing to pass here.\n */\n\nimport { ReaderIam, SecureBucket } from \"../../../composites/index.js\";\n\nconst ENV = \"dev\";\nconst REGION = \"us-east-1\";\nconst LOGS_BUCKET = \"myapp-logs-dev\";\n\n// \u2500\u2500 Application logs bucket \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nexport const logs = SecureBucket({\n  name: LOGS_BUCKET,\n  env: ENV,\n  region: REGION,\n  component: \"logs\",\n});\n\n// \u2500\u2500 Logs identity \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// Scoped to the logs bucket only \u2014 never the assets bucket, no wildcard action\n// and no wildcard resource. `s3:GetObject` comes from ReaderIam's baseline;\n// `s3:PutObject` is added by enumeration.\n\nexport const logsReader = ReaderIam({\n  name: \"myapp-dev-logs\",\n  env: ENV,\n  bucketName: LOGS_BUCKET,\n  trust: { mode: \"account\", accountID: \"123456789012\" },\n  additionalActions: [\"s3:PutObject\"],\n  programmaticAccess: true,\n  component: \"logs-identity\",\n});\n```\n\n`src/envs/prod/infra/logs.ts`\n```typescript\n/**\n * prod environment \u2014 application logs bucket.\n *\n * Read this next to `../../dev/infra/logs.ts`. Same shape; the trust block is\n * the OIDC one this environment already uses for its assets reader, so both\n * prod identities authenticate the same way.\n */\n\nimport { ReaderIam, SecureBucket } from \"../../../composites/index.js\";\n\nconst ENV = \"prod\";\nconst REGION = \"us-east-1\";\nconst LOGS_BUCKET = \"myapp-logs-prod\";\nconst APP_NAMESPACE = \"app\";\nconst SERVICE_ACCOUNT = \"myapp\";\n\n// \u2500\u2500 Application logs bucket \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nexport const logs = SecureBucket({\n  name: LOGS_BUCKET,\n  env: ENV,\n  region: REGION,\n  component: \"logs\",\n});\n\n// \u2500\u2500 Logs identity \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n// SPEC criterion 4: least privilege, no wildcards. Scoped to the logs bucket\n// only; `s3:PutObject` added by enumeration on top of the baseline reads.\n\nexport const logsReader = ReaderIam({\n  name: \"myapp-prod-logs\",\n  env: ENV,\n  bucketName: LOGS_BUCKET,\n  trust: {\n    mode: \"oidc\",\n    providerARN:\n      \"arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLEPROD\",\n    issuerHost: \"oidc.eks.us-east-1.amazonaws.com/id/EXAMPLEPROD\",\n    serviceAccountNamespace: APP_NAMESPACE,\n    serviceAccountName: SERVICE_ACCOUNT,\n  },\n  additionalActions: [\"s3:PutObject\"],\n  programmaticAccess: false,\n  component: \"logs-identity\",\n});\n```\n\nNotes:\n\n- No file under `src/composites/` is touched, and no raw ACK resource is hand-written \u2014 both buckets come from `SecureBucket`, both identities from `ReaderIam`.\n- Versioning, encryption, and the public-access block are pinned unconditionally inside `SecureBucket`, so no props for them are passed.\n- Each reader's policy document is built from `bucketName: myapp-logs-{env}`, so `Resource` is `arn:aws:s3:::myapp-logs-{env}` / `.../*` \u2014 the assets bucket is not in scope, and `additionalActions` is an enumerated list with no wildcard.\n- Distinct `name` values (`myapp-dev-logs` / `myapp-prod-logs`) keep the derived `-reader`, `-role`, `-sa` object names from colliding with the existing `reader` call in each environment; `component` distinguishes the labels and tags.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-chant-f4xtj4j2/src/envs/dev/infra/logs.ts",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-chant-f4xtj4j2/dist/dev/infra/manifests.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 3550,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 3550,
+      "fenced_blocks": 2,
+      "extracted_files": 2,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 0.3333333333333333,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5185185185185186
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "a36d55348216",
+    "stages": [
+      "lint",
+      "static",
+      "semantic"
+    ],
+    "before": {
+      "passed": false,
+      "passed_count": 2,
+      "total_count": 6
+    },
+    "after": {
+      "passed": false,
+      "passed_count": 2,
+      "total_count": 6
+    },
+    "stage_verdicts": {
+      "lint": {
+        "before": true,
+        "after": true
+      },
+      "static": {
+        "before": true,
+        "after": true
+      },
+      "semantic": {
+        "before": false,
+        "after": false
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.5185185185185186,
+    "composite_after": 0.5185185185185186
+  }
+}

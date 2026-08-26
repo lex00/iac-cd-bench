@@ -1,0 +1,125 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T1-comprehend",
+  "stack": "bare",
+  "run": 2,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "2c52b32d82e96f26",
+      "spec_sha256": "d200ea0b988b1f75",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 3855,
+    "output": 3084
+  },
+  "content": "# Predicted `kubectl apply` Behavior\n\n## 1. File Processing Order\n\n`kubectl apply -f prod/` processes files in **lexicographic (alphabetical) order**:\n\n1. `00-namespaces.yaml`\n2. `app.yaml`\n3. `s3-bucket.yaml`\n4. `workers.yaml`\n\n**Why order matters (or doesn't, here):**\n\nOrder *does* matter for dependency satisfaction: namespaces must exist before objects that target them. The `00-` prefix ensures namespaces are created first, which satisfies all downstream dependencies (ServiceAccount, Deployment, and Service in the `app` namespace; Buckets in the `infra` namespace; MachineDeployment in the `clusters` namespace).\n\nFor *this specific PR*, the order doesn't affect the outcome because:\n- No new dependencies are introduced by the three changes\n- The changed objects already exist and don't block each other\n- However, the order ensures that if a file *did* fail, earlier files would still have been processed\n\n---\n\n## 2. Workers Replica Change (4 \u2192 6)\n\n**Succeeds: YES.**\n\n`kubectl apply` updates the MachineDeployment's `spec.replicas` field from `4` to `6` without issue\u2014it is a mutable field.\n\n**Cluster consequence:** CAPI's reconciliation loop detects the replica increase and provisions 2 additional worker nodes. EC2 instances of type `t3.large` are launched, bootstrapped, and joined to the cluster. The cluster grows from 4 to 6 nodes.\n\n---\n\n## 3. Deployment Selector Change (the Critical One)\n\n**Succeeds: NO. The apply fails for the Deployment.**\n\n**What happens:**\n\nThe change attempts to add `version: v2` to `spec.selector.matchLabels`. In Kubernetes, **a Deployment's `selector` field is immutable after creation**. The API server rejects this change with a validation error:\n\n```\nspec.selector: Invalid value: {...}: field is immutable after creation\n```\n\n**Behavior of `kubectl apply -f prod/`:**\n\n1. `00-namespaces.yaml` \u2192 succeeds\n2. `app.yaml` \u2192 **fails on the Deployment** (selector is immutable); ServiceAccount and Service succeed\n3. `s3-bucket.yaml` \u2192 proceeds normally (independent operation)\n4. `workers.yaml` \u2192 proceeds normally (independent operation)\n\n`kubectl apply` does **not** halt on the first error when applying multiple files with `-f`. It continues processing remaining files.\n\n**Cluster state after apply:**\n\n- The Deployment remains at its original selector configuration (`app: myapp, env: prod` only)\n- Existing pods continue to run; they still match the original (unchanged) selector\n- The rejected change does not affect pod lifecycle\n- The error is reported, but the user must manually fix the conflict (e.g., by rolling back the change, deleting and recreating the Deployment with a new name, or using a different strategy)\n\n---\n\n## 4. Replica Bucket CR and S3 Bucket Lifecycle\n\n**Both still exist: YES.**\n\n**Why:**\n\nIn bare `kubectl apply`, when a resource is removed from a manifest file, `kubectl apply` does **not** delete it from the cluster. Deletion only occurs via explicit `kubectl delete` commands or GitOps tooling configured to prune.\n\nTherefore:\n- The `myapp-assets-prod-replica` Bucket **custom resource** remains in the cluster's `infra` namespace\n- The actual **AWS S3 bucket** `myapp-assets-prod-replica` remains in your AWS account\n\nThe removal from the file is a no-op. The object persists until explicitly deleted by a separate command or tool. This is a safety feature of bare kubectl apply\u2014it prevents accidental data loss from manifest file edits.\n\n(ACK's default behavior is also to retain the underlying AWS resource when a CR is deleted, adding another layer of protection.)\n\n---\n\n## 5. Impact on `dev/`\n\n**None: NO direct or indirect impact.**\n\n- The PR touches only files under `prod/`; `dev/` is untouched\n- `dev/` and `prod/` are fully independent directories with no cross-references, shared resources, or rendering dependencies\n- In bare stack deployments, each environment is self-contained\n- Changing one environment's worker replica count, Deployment selector, or S3 bucket configuration does not affect the other environment's infrastructure\n\n---\n\n## Summary Table\n\n| Change | Outcome | Reason |\n|--------|---------|--------|\n| Workers replicas (4\u21926) | \u2705 Succeeds; 6 nodes provisioned | Mutable field; CAPI respects replica change |\n| Deployment selector (`version: v2` added) | \u274c Fails; Deployment unchanged | `selector` is immutable after creation; API validation rejects |\n| Bucket CR removal | \ud83d\udd04 No-op; CR and S3 bucket remain | Bare `kubectl apply` doesn't prune; must explicitly `kubectl delete` |\n| dev/ affected? | \u274c No | Completely independent environment |",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-w022j8j_/00-namespaces.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 4555,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 4555,
+      "fenced_blocks": 1,
+      "extracted_files": 1,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.9722222222222222,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies that kubectl apply -f prod/ processes files in lexical filename order (00-namespaces.yaml first because of its numeric prefix), not a dependency graph",
+        "weight": 1.0,
+        "score": 0.75,
+        "justification": "Correctly identifies lexical order and 00-namespaces.yaml first, explains the manual convention. Does not explicitly state 'kubectl has no dependency graph' as the reference does."
+      },
+      {
+        "criterion": "Correctly states the workers.yaml replica change (4 to 6) applies successfully in place, since replicas is a mutable field",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Clearly states replica change succeeds, correctly identifies replicas as a mutable field, and explains the reconciliation consequence."
+      },
+      {
+        "criterion": "Correctly states the app.yaml selector change is rejected by the API server because spec.selector is immutable on an existing Deployment, and that the other three files in the same kubectl apply -f prod/ invocation still apply independently",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Correctly states selector change is rejected due to immutability, explains API server validation error, and clearly shows other three files still apply independently."
+      },
+      {
+        "criterion": "States that kubectl apply has no prune step by default, so the myapp-assets-prod-replica Bucket object and the AWS S3 bucket it manages are NOT deleted merely because the manifest was removed from Git",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Clearly states both bucket CR and S3 bucket persist, explains that kubectl apply has no prune by default, and notes manifest removal is a no-op."
+      },
+      {
+        "criterion": "Recognizes dev/ and prod/ are fully independent, duplicated directories with no shared base, so nothing in this PR can affect dev/",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Explicitly recognizes dev/ and prod/ are fully independent with no shared resources or cross-references, stating PR has no impact on dev/."
+      }
+    ]
+  },
+  "regrade": {
+    "status": "skipped",
+    "reason": "semantic stage disabled by spec"
+  }
+}

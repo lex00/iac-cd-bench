@@ -1,0 +1,158 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T2-generate",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "47edc739252c0c6e",
+      "spec_sha256": "99d9a22b1a5ac0fa",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\nkubectl get crd buckets.s3.aws.upbound.io kubectl get crd roles.iam.aws.upbound.io\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: logs-bucket-dev\n  namespace: flux-system\nspec:\n  interval: 10m\n  sourceRef:\n    kind: GitRepository\n    name: knr-ops\n  path: ./overlays/dev/logs\n  prune: true\n  wait: true\n  healthChecks:\n    - apiVersion: s3.aws.upbound.io/v1beta1\n      kind: Bucket\n      name: myapp-logs-base\n      namespace: default\n  dependsOn:\n    - name: ac\n[validate CRDs] kubeconform: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-knr-ops-j_inomec/iam-role.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go value of type map[string]interface {}\nSummary: 16 resources found in 14 files - Valid: 1, Invalid: 0, Errors: 1, Skipped: 14\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-knr-ops-j_inomec/overlays/dev/logs: exit=0\nERR: # Warning: 'bases' is deprecated. Please use 'resources' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n# Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n# Warning: 'patchesJson6902' is deprecated. Please use 'patches' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n# Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomiz\nkustomize build /var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-knr-ops-j_inomec/overlays/prod/logs: exit=0\nERR: # Warning: 'bases' is deprecated. Please use 'resources' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n# Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n# Warning: 'patchesJson6902' is deprecated. Please use 'patches' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n# Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomiz\nkustomize build /var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-knr-ops-j_inomec/infra/iam/logs-irsa: exit=0\nERR: # Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n\nkustomize build /var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-knr-ops-j_inomec/infra/s3/logs: exit=0\nERR: # Warning: 'commonLabels' is deprecated. Please use 'labels' instead. Run 'kustomize edit fix' to update your Kustomization automatically.\n\nflux build kustomizations.yaml: exit=1\nERR: \u2717 invalid resource path \"\"\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 6 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_manifest_exists PASSED [ 16%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_versioning PASSED [ 33%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_encryption PASSED [ 50%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/knr-ops/T2-generate/tests/test_task.py::test_public_access_blocked PASSED [ 66%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/knr-ops/T2-generate/tests/test_task.py::test_iam_role_created PASSED [ 83%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/knr-ops/T2-generate/tests/test_task.py::test_flux_kustomization_added PASSED [100%]\n\n============================== 6 passed in 0.02s ===============================\n",
+      "passed_count": 6,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1754,
+    "output": 4077
+  },
+  "content": "# Adding ACK-Managed Logs S3 Bucket + IRSA to knr-ops\n\nBelow is the complete idiomatic implementation for knr-ops:\n\n## Directory Structure\n\n```\ninfra/\n\u251c\u2500\u2500 s3/\n\u2502   \u251c\u2500\u2500 kustomization.yaml          # existing base\n\u2502   \u2514\u2500\u2500 logs/\n\u2502       \u251c\u2500\u2500 kustomization.yaml       # NEW: base kustomization\n\u2502       \u251c\u2500\u2500 bucket.yaml              # NEW: ACK S3 bucket\n\u2502       \u2514\u2500\u2500 public-access-block.yaml # NEW: S3 public access block\n\u251c\u2500\u2500 iam/\n\u2502   \u2514\u2500\u2500 logs-irsa/\n\u2502       \u251c\u2500\u2500 kustomization.yaml       # NEW: base kustomization\n\u2502       \u251c\u2500\u2500 service-account.yaml     # NEW: Kubernetes SA\n\u2502       \u251c\u2500\u2500 iam-role.yaml            # NEW: AWS IAM role (ACK)\n\u2502       \u2514\u2500\u2500 iam-policy.yaml          # NEW: IAM policy (ACK)\noverlays/\n\u251c\u2500\u2500 dev/\n\u2502   \u2514\u2500\u2500 logs/\n\u2502       \u251c\u2500\u2500 kustomization.yaml       # NEW: dev overlay\n\u2502       \u2514\u2500\u2500 patches.yaml             # NEW: bucket name patch\n\u2514\u2500\u2500 prod/\n    \u2514\u2500\u2500 logs/\n        \u251c\u2500\u2500 kustomization.yaml       # NEW: prod overlay\n        \u2514\u2500\u2500 patches.yaml             # NEW: bucket name patch\n```\n\n## Base Manifests\n\n### `infra/s3/logs/bucket.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: myapp-logs-base\n  namespace: default\nspec:\n  forProvider:\n    region: us-east-1\n    tags:\n      ManagedBy: knr-ops\n      Purpose: application-logs\n  deletionPolicy: Orphan  # Prevent accidental bucket deletion\n```\n\n### `infra/s3/logs/public-access-block.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketPublicAccessBlock\nmetadata:\n  name: myapp-logs-base\n  namespace: default\nspec:\n  forProvider:\n    bucketRef:\n      name: myapp-logs-base\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n### `infra/s3/logs/encryption.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketServerSideEncryptionConfiguration\nmetadata:\n  name: myapp-logs-base\n  namespace: default\nspec:\n  forProvider:\n    bucketRef:\n      name: myapp-logs-base\n    rule:\n    - applyServerSideEncryptionByDefault:\n      - sseAlgorithm: AES256\n```\n\n### `infra/s3/logs/versioning.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketVersioning\nmetadata:\n  name: myapp-logs-base\n  namespace: default\nspec:\n  forProvider:\n    bucketRef:\n      name: myapp-logs-base\n    versioningConfiguration:\n    - status: Enabled\n```\n\n### `infra/s3/logs/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nmetadata:\n  name: logs-bucket-base\n\nresources:\n  - bucket.yaml\n  - public-access-block.yaml\n  - encryption.yaml\n  - versioning.yaml\n\ncommonLabels:\n  app.kubernetes.io/component: logs-bucket\n  app.kubernetes.io/managed-by: flux\n```\n\n---\n\n## IRSA Role Base Manifests\n\n### `infra/iam/logs-irsa/service-account.yaml`\n\n```yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: logs-writer\n  namespace: default\n  annotations:\n    eks.amazonaws.com/role-arn: arn:aws:iam::ACCOUNT_ID:role/logs-writer-irsa\n```\n\n### `infra/iam/logs-irsa/iam-role.yaml`\n\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: logs-writer-irsa\n  namespace: default\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Federated\": \"arn:aws:iam::ACCOUNT_ID:oidc-provider/oidc.eks.AWS_REGION.amazonaws.com/id/EXAMPLED539D4633E53DE1B716D3041E\"\n            },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": {\n              \"StringEquals\": {\n                \"oidc.eks.AWS_REGION.amazonaws.com/id/EXAMPLED539D4633E53DE1B716D3041E:sub\": \"system:serviceaccount:default:logs-writer\"\n              }\n            }\n          }\n        ]\n      }\n    tags:\n      ManagedBy: knr-ops\n      Purpose: logs-bucket-irsa\n```\n\n### `infra/iam/logs-irsa/iam-policy.yaml`\n\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Policy\nmetadata:\n  name: logs-bucket-policy\n  namespace: default\nspec:\n  forProvider:\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Sid\": \"ReadWriteLogsBucket\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\n              \"s3:GetObject\",\n              \"s3:GetObjectVersion\",\n              \"s3:PutObject\",\n              \"s3:PutObjectAcl\",\n              \"s3:DeleteObject\"\n            ],\n            \"Resource\": \"arn:aws:s3:::myapp-logs-*/*\"\n          },\n          {\n            \"Sid\": \"ListBucket\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\n              \"s3:ListBucket\",\n              \"s3:GetBucketVersioning\"\n            ],\n            \"Resource\": \"arn:aws:s3:::myapp-logs-*\"\n          }\n        ]\n      }\n```\n\n### `infra/iam/logs-irsa/role-policy-attachment.yaml`\n\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: RolePolicyAttachment\nmetadata:\n  name: logs-writer-policy-attach\n  namespace: default\nspec:\n  forProvider:\n    policyArnRef:\n      name: logs-bucket-policy\n    roleRef:\n      name: logs-writer-irsa\n```\n\n### `infra/iam/logs-irsa/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nmetadata:\n  name: logs-irsa-base\n\nresources:\n  - service-account.yaml\n  - iam-role.yaml\n  - iam-policy.yaml\n  - role-policy-attachment.yaml\n\ncommonLabels:\n  app.kubernetes.io/component: logs-irsa\n  app.kubernetes.io/managed-by: flux\n```\n\n---\n\n## Environment Overlays\n\n### `overlays/dev/logs/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nmetadata:\n  name: logs-dev\n\nbases:\n  - ../../../infra/s3/logs\n  - ../../../infra/iam/logs-irsa\n\npatchesJson6902:\n  - target:\n      group: s3.aws.upbound.io\n      version: v1beta1\n      kind: Bucket\n      name: myapp-logs-base\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/region\n        value: us-east-1\n  - target:\n      group: v1\n      kind: ServiceAccount\n      name: logs-writer\n    patch: |-\n      - op: add\n        path: /metadata/annotations/logs-env\n        value: dev\n  - target:\n      group: iam.aws.upbound.io\n      version: v1beta1\n      kind: Bucket\n      name: myapp-logs-base\n    patch: |-\n      - op: replace\n        path: /metadata/name\n        value: myapp-logs-dev\n\ncommonLabels:\n  environment: dev\n  kustomize.config.k8s.io/needs-hash: enabled\n```\n\n### `overlays/prod/logs/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nmetadata:\n  name: logs-prod\n\nbases:\n  - ../../../infra/s3/logs\n  - ../../../infra/iam/logs-irsa\n\npatchesJson6902:\n  - target:\n      group: s3.aws.upbound.io\n      version: v1beta1\n      kind: Bucket\n      name: myapp-logs-base\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/region\n        value: us-east-1  # or different region per requirements\n  - target:\n      group: v1\n      kind: ServiceAccount\n      name: logs-writer\n    patch: |-\n      - op: add\n        path: /metadata/annotations/logs-env\n        value: prod\n      - op: replace\n        path: /metadata/annotations/eks~1amazonaws~1com~1role-arn\n        value: arn:aws:iam::ACCOUNT_ID:role/logs-writer-irsa-prod\n\ncommonLabels:\n  environment: prod\n  kustomize.config.k8s.io/needs-hash: enabled\n```\n\n---\n\n## Flux Kustomization\n\nUpdate or add to `flux/kustomizations.yaml`:\n\n```yaml\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: logs-bucket-dev\n  namespace: flux-system\nspec:\n  interval: 10m\n  sourceRef:\n    kind: GitRepository\n    name: knr-ops\n  path: ./overlays/dev/logs\n  prune: true\n  wait: true\n  healthChecks:\n    - apiVersion: s3.aws.upbound.io/v1beta1\n      kind: Bucket\n      name: myapp-logs-base\n      namespace: default\n  dependsOn:\n    - name: ack-s3-controller  # Ensure ACK is installed first\n\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: logs-bucket-prod\n  namespace: flux-system\nspec:\n  interval: 10m\n  sourceRef:\n    kind: GitRepository\n    name: knr-ops\n  path: ./overlays/prod/logs\n  prune: true\n  wait: true\n  healthChecks:\n    - apiVersion: s3.aws.upbound.io/v1beta1\n      kind: Bucket\n      name: myapp-logs-base\n      namespace: default\n  dependsOn:\n    - name: ack-s3-controller\n\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: logs-irsa-dev\n  namespace: flux-system\nspec:\n  interval: 10m\n  sourceRef:\n    kind: GitRepository\n    name: knr-ops\n  path: ./overlays/dev/logs  # Shared with bucket, or separate\n  prune: true\n  wait: true\n  dependsOn:\n    - name: logs-bucket-dev  # Bucket must exist before role references it\n```\n\n---\n\n## Deployment Steps\n\n1. **Commit the new manifests** to the knr-ops repository in the paths shown above.\n\n2. **Update ACCOUNT_ID and AWS_REGION** placeholders in `iam-role.yaml` with actual values.\n\n3. **Verify ACK S3 and IAM controllers** are installed in the cluster:\n   ```\n   kubectl get crd buckets.s3.aws.upbound.io\n   kubectl get crd roles.iam.aws.upbound.io\n   ```\n\n4. **Apply the Flux kustomizations** (Flux will reconcile automatically on next interval, or run):\n   ```\n   flux reconcile kustomization logs-bucket-dev\n   flux reconcile kustomization logs-irsa-dev\n   ```\n\n5. **Verify creation**:\n   ```\n   kubectl get buckets -n default\n   kubectl get serviceaccount logs-writer -n default\n   kubectl get roles -n default | grep logs-writer\n   ```\n\n6. **Test IRSA annotation** on a pod using the `logs-writer` service account to confirm it assumes the role.\n\n---\n\n## Key Idiomatic Patterns\n\n- **ACK CRDs**: Uses `s3.aws.upbound.io` and `iam.aws.upbound.io` for declarative AWS resource management.\n- **Kustomize overlays**: Base resources in `infra/`, environment-specific overlays in `overlays/{dev,prod}/logs/`.\n- **IRSA annotations**: ServiceAccount includes EKS IRSA annotation for OIDC-based role assumption.\n- **Flux dependencies**: Kustomizations declare `dependsOn` to ensure correct reconciliation order.\n- **Deletion policy**: Set `deletionPolicy: Orphan` to prevent bucket deletion if manifest is removed.\n- **Resource versioning**: All S3 resources versioning enabled at base layer.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/s3/logs/bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/s3/logs/public-access-block.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/s3/logs/encryption.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/s3/logs/versioning.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/s3/logs/kustomization.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/iam/logs-irsa/service-account.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/iam/logs-irsa/iam-role.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/iam/logs-irsa/iam-policy.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/iam/logs-irsa/role-policy-attachment.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/infra/iam/logs-irsa/kustomization.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/overlays/dev/logs/kustomization.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/overlays/prod/logs/kustomization.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/flux/kustomizations.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-knr-ops-ude9dvcs/iam-role.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 10050,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 10050,
+      "fenced_blocks": 17,
+      "extracted_files": 14,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5555555555555556
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "59e13a012ab1",
+    "stages": [
+      "lint",
+      "static",
+      "semantic"
+    ],
+    "before": {
+      "passed": false,
+      "passed_count": 2,
+      "total_count": 6
+    },
+    "after": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 6
+    },
+    "stage_verdicts": {
+      "lint": {
+        "before": false,
+        "after": false
+      },
+      "static": {
+        "before": false,
+        "after": false
+      },
+      "semantic": {
+        "before": false,
+        "after": true
+      }
+    },
+    "direction": "fail_to_pass",
+    "composite_before": 0.2962962962962963,
+    "composite_after": 0.5555555555555556
+  }
+}

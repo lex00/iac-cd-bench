@@ -1,0 +1,127 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "94e5c139053e7db4",
+      "spec_sha256": "43b4e0a5a87c63d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 1346
+  },
+  "content": "# Security Review \u2014 knr-ops PR\n\n**Recommendation: request changes. Do not merge.**\n\n---\n\n## CRITICAL\n\n### 1. S3 bucket policy grants public read\nA bucket policy with `Principal: \"*\"` and `s3:GetObject` on the application assets bucket makes every object world-readable. This violates acceptance criterion #1 (\"no public access\") and, in a GitOps repo, it will be continuously reconciled back to public even if someone fixes it in the console.\n\n**Before merge:**\n- Remove the public statement entirely. Serve assets through CloudFront with an Origin Access Control and scope the bucket policy `Principal` to the CloudFront distribution's service principal with a `AWS:SourceArn` condition.\n- Add/confirm a `PublicAccessBlock` resource with all four flags (`BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, `RestrictPublicBuckets`) set to `true` in `base/` so overlays cannot regress it.\n- If any objects were already applied under this policy, treat the contents as disclosed and rotate anything sensitive.\n\n### 2. Plaintext database password in deployment env vars\nA raw password in `env:` on the Deployment is committed to Git history, visible to anyone with repo read access, and exposed in `kubectl describe pod` and in any Flux/kustomize build logs. This violates criterion #3.\n\n**Before merge:**\n- Move the credential to a SOPS-encrypted Secret (the knr-ops idiom) and reference it via `envFrom.secretRef` or `valueFrom.secretKeyRef`.\n- Rotate the password in RDS \u2014 it is compromised the moment it lands in the branch, and reverting the commit does not remove it from history.\n- Consider scrubbing the blob from history (filter-repo/BFG) if the repo is widely readable.\n\n---\n\n## WARNING\n\n### 3. Missing resource limits on containers\nNo `resources.limits` (and likely no `requests`) means the pods run in the `BestEffort` QoS class. A memory leak or a compromised container can consume node capacity and evict neighbors \u2014 a denial-of-service and noisy-neighbor risk, and it makes the scheduler's placement decisions unreliable.\n\n**Before merge:** set `requests` and `limits` for CPU and memory in `base/`, with per-environment overrides in the overlays if prod needs more headroom. Enforce with a `LimitRange` or a Kyverno/Gatekeeper policy so future manifests cannot omit them.\n\n### 4. (Verify) Blast radius of the bucket policy across overlays\nIf the new policy was added to `base/` rather than an overlay, it applies to **both** dev and prod. Confirm placement \u2014 a dev-only mistake is bad, a base-level one is a prod exposure. Related, check that the S3 change did not inadvertently drop the versioning or SSE configuration that criteria #1 requires.\n\n---\n\n## INFO\n\n### 5. RDS instance class change\nThe instance class change alone is not a security issue. Two things worth confirming while the file is open, since neither appears in the diff:\n- `deletion_protection` is still enabled and `backup_retention_period` is >= 7 days (criterion #2).\n- `publicly_accessible` remains `false`.\n\nA resize can trigger a maintenance-window restart or brief downtime on single-AZ dev; worth a note in the PR description but not a blocker.\n\n---\n\n## Merge checklist\n\n1. Delete the public S3 statement; replace with OAC-scoped access + PublicAccessBlock.\n2. Replace the plaintext password with a SOPS-encrypted Secret reference **and** rotate the credential.\n3. Add resource requests/limits to all containers.\n4. Confirm RDS deletion protection, backup retention, and `publicly_accessible: false` are unchanged.\n5. Consider adding a CI gate (Kyverno, Checkov, or `conftest` on the rendered kustomize output) so items 1\u20133 fail the build rather than relying on review.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 3666,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 3666,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 1.0,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies plaintext password in deployment",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies plaintext database password in Deployment env vars committed to Git history, stating it's visible to anyone with repo access."
+      },
+      {
+        "criterion": "Identifies public S3 bucket access",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission explicitly identifies S3 bucket policy with Principal '*' and s3:GetObject, making all objects world-readable."
+      },
+      {
+        "criterion": "Identifies missing resource limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies missing resource.limits and requests on containers, explaining BestEffort QoS class impact."
+      },
+      {
+        "criterion": "Ranks issues by severity correctly",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission ranks plaintext password and S3 public access as CRITICAL (matching reference severity for plaintext), with missing resource limits as WARNING; ordering is severity-appropriate."
+      },
+      {
+        "criterion": "Provides specific remediation steps",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission provides specific remediation: SOPS encryption for secrets, CloudFront OAC for S3 access, and explicit K8s resource limits with enforcement policies."
+      }
+    ]
+  },
+  "regrade": {
+    "status": "skipped",
+    "reason": "semantic stage disabled by spec"
+  }
+}

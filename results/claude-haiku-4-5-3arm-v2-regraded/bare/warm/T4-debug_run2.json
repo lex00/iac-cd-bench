@@ -1,0 +1,140 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T4-debug",
+  "stack": "bare",
+  "run": 2,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "01b3854417873aac",
+      "spec_sha256": "5b78915e67d7a1f7",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: myapp-prod\n  namespace: app\n  annotations:\n    eks.amazonaws.com/role-arn: \"<REPLACE_WITH_myapp-prod-service-role_ARN_AFTER_CREATE>\"\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: myapp-prod\n  namespace: app\n  labels:\n    app: myapp\n    env: prod\nspec:\n  replicas: 2\n  selector:\n    matchLabels:\n      app: myapp\n      env: prod\n      version: v2\n  template:\n    metadata:\n      labels:\n        app: myapp\n        env: prod\n        ve\n[validate CRDs] kubeconform: exit=0\nSummary: 6 resources found in 2 files - Valid: 6, Invalid: 0, Errors: 0, Skipped: 0\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kubectl apply --dry-run=client -f app.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-i_96tfo1/prod/app.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n\nkubectl apply --dry-run=client -f app.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-i_96tfo1/dev/app.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 2 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T4-debug/tests/test_task.py::test_selector_matches_template_labels PASSED [ 50%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T4-debug/tests/test_task.py::test_service_still_selects_pods PASSED [100%]\n\n============================== 2 passed in 0.04s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2924,
+    "output": 1522
+  },
+  "content": "# Analysis\n\nLooking at the two files:\n\n**dev/app.yaml** (known-good):\n- Selector: `app: myapp`, `env: dev`\n- Template labels: `app: myapp`, `env: dev`\n\u2713 They match.\n\n**prod/app.yaml** (defective):\n- Selector: `app: myapp`, `env: prod`, **`version: v2`**\n- Template labels: `app: myapp`, `env: prod`\n\u2717 Missing `version: v2` in template labels.\n\n## Answer\n\n**Missing label:** `version: v2`\n\nThe selector requires three labels but the pod template only provides two. The fix is to add `version: v2` to `spec.template.metadata.labels`.\n\nAfter the fix, the Service selector (`app: myapp` + `env: prod`) remains a valid subset of the template labels and will correctly select the pods.\n\n---\n\n`prod/app.yaml`\n```yaml\napiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: myapp-prod\n  namespace: app\n  annotations:\n    eks.amazonaws.com/role-arn: \"<REPLACE_WITH_myapp-prod-service-role_ARN_AFTER_CREATE>\"\n---\napiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: myapp-prod\n  namespace: app\n  labels:\n    app: myapp\n    env: prod\nspec:\n  replicas: 2\n  selector:\n    matchLabels:\n      app: myapp\n      env: prod\n      version: v2\n  template:\n    metadata:\n      labels:\n        app: myapp\n        env: prod\n        version: v2\n    spec:\n      serviceAccountName: myapp-prod\n      containers:\n        - name: myapp\n          image: docker.io/myapp/myapp:latest\n          ports:\n            - containerPort: 8080\n          resources:\n            requests:\n              cpu: 100m\n              memory: 128Mi\n            limits:\n              cpu: 500m\n              memory: 256Mi\n---\napiVersion: v1\nkind: Service\nmetadata:\n  name: myapp-prod\n  namespace: app\nspec:\n  selector:\n    app: myapp\n    env: prod\n  ports:\n    - port: 80\n      targetPort: 8080\n  type: ClusterIP\n```",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-3fj6vdik/prod/app.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1765,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1765,
+      "fenced_blocks": 1,
+      "extracted_files": 1,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.6666666666666666
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "bd18f2d6d455",
+    "stages": [
+      "lint",
+      "static",
+      "semantic"
+    ],
+    "before": {
+      "passed": true,
+      "passed_count": 2,
+      "total_count": 2
+    },
+    "after": {
+      "passed": true,
+      "passed_count": 2,
+      "total_count": 2
+    },
+    "stage_verdicts": {
+      "lint": {
+        "before": true,
+        "after": true
+      },
+      "static": {
+        "before": false,
+        "after": false
+      },
+      "semantic": {
+        "before": true,
+        "after": true
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.6666666666666666,
+    "composite_after": 0.6666666666666666
+  }
+}

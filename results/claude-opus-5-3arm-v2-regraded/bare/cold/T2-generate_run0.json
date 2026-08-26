@@ -1,0 +1,143 @@
+{
+  "model": "claude-opus-5",
+  "task": "T2-generate",
+  "stack": "bare",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "b870b4fe89ff9404",
+      "spec_sha256": "0aa384baa7f37e91",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\n  namespace: myapp-prod\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    env: prod\nspec:\n  name: myapp-logs-prod\n  versioning:\n    status: Enabled\n  encryption:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n        bucketKeyEnabled: false\n  publicAccessBlock:\n    blockPublicACLs: true\n    blockPublicPolicy: true\n    ignorePublicACLs:\n[validate CRDs] kubeconform: exit=0\nSummary: 4 resources found in 4 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 4\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kubectl apply --dry-run=client -f logs-bucket.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-k6vxkhr2/prod/logs-bucket.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n\nkubectl apply --dry-run=client -f logs-policy.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-k6vxkhr2/prod/logs-policy.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n\nkubectl apply --dry-run=client -f logs-bucket.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-k6vxkhr2/dev/logs-bucket.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n\nkubectl apply --dry-run=client -f logs-policy.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/regrade-bare-k6vxkhr2/dev/logs-policy.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 6 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T2-generate/tests/test_task.py::test_dev_logs_bucket_exists PASSED [ 16%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T2-generate/tests/test_task.py::test_prod_logs_bucket_exists PASSED [ 33%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_versioning PASSED [ 50%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_encryption PASSED [ 66%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T2-generate/tests/test_task.py::test_public_access_blocked PASSED [ 83%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/bare/T2-generate/tests/test_task.py::test_logs_scoped_iam_grant_present_both_envs PASSED [100%]\n\n============================== 6 passed in 0.02s ===============================\n",
+      "passed_count": 6,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 2543
+  },
+  "content": "Below are the four new manifests \u2014 two per directory, added independently since `dev/` and `prod/` share nothing.\n\n`dev/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-dev\n  namespace: myapp-dev\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    env: dev\nspec:\n  name: myapp-logs-dev\n  versioning:\n    status: Enabled\n  encryption:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n        bucketKeyEnabled: false\n  publicAccessBlock:\n    blockPublicACLs: true\n    blockPublicPolicy: true\n    ignorePublicACLs: true\n    restrictPublicBuckets: true\n```\n\n`dev/logs-policy.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-access-dev\n  namespace: myapp-dev\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    env: dev\nspec:\n  name: myapp-logs-access-dev\n  description: Read/write access to the myapp-logs-dev bucket only\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Sid\": \"LogsObjectAccess\",\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-dev/*\"\n        }\n      ]\n    }\n```\n\n`prod/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\n  namespace: myapp-prod\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    env: prod\nspec:\n  name: myapp-logs-prod\n  versioning:\n    status: Enabled\n  encryption:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n        bucketKeyEnabled: false\n  publicAccessBlock:\n    blockPublicACLs: true\n    blockPublicPolicy: true\n    ignorePublicACLs: true\n    restrictPublicBuckets: true\n```\n\n`prod/logs-policy.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-access-prod\n  namespace: myapp-prod\n  labels:\n    app.kubernetes.io/name: myapp\n    app.kubernetes.io/component: logs\n    env: prod\nspec:\n  name: myapp-logs-access-prod\n  description: Read/write access to the myapp-logs-prod bucket only\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Sid\": \"LogsObjectAccess\",\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-prod/*\"\n        }\n      ]\n    }\n```\n\nAttaching the grant to the existing principals\n\nEach new `Policy` is a standalone customer-managed policy; it grants nothing until it is attached. In ACK IAM, attachment is expressed on the principal, so add the new policy's ARN to the `policies` list of the existing `User` (dev) and `Role` (prod) in each directory's `iam.yaml`. The existing assets-bucket policy entry stays as-is \u2014 this is an addition, not a replacement, so the assets bucket's access is unchanged.\n\nIn `dev/iam.yaml`, on the `User` resource:\n\n```yaml\nspec:\n  name: myapp-dev\n  policies:\n    - arn:aws:iam::<ACCOUNT_ID>:policy/myapp-assets-access-dev   # existing, unchanged\n    - arn:aws:iam::<ACCOUNT_ID>:policy/myapp-logs-access-dev     # new\n```\n\nIn `prod/iam.yaml`, on the `Role` resource:\n\n```yaml\nspec:\n  name: myapp-prod\n  policies:\n    - arn:aws:iam::<ACCOUNT_ID>:policy/myapp-assets-access-prod  # existing, unchanged\n    - arn:aws:iam::<ACCOUNT_ID>:policy/myapp-logs-access-prod    # new\n```\n\nSubstitute your real account ID (or use the same interpolation convention the existing `policies` entries already use in each file). If your `iam.yaml` instead expresses the grant with `inlinePolicies`, you can skip the separate `Policy` objects entirely and add an inline entry keyed `myapp-logs-access` with the same JSON document body under the `User`/`Role` \u2014 either shape satisfies the requirement, since the document's `Resource` is scoped to `arn:aws:s3:::myapp-logs-{env}/*` and never mentions the assets bucket.\n\nNotes on the shape of this change\n\nBoth statements deliberately use only the `/*` object ARN, not the bucket ARN itself, because `s3:GetObject` and `s3:PutObject` are object-level actions; adding the bare bucket ARN would be inert and adding `s3:ListBucket` would widen access beyond what was asked. Prod uses no wildcard actions, satisfying the least-privilege criterion.\n\nBecause this arm has no base, overlay, or template layer, the dev and prod changes are genuinely duplicated: four files touched (two new per directory) plus one `iam.yaml` edit per directory. Editing `dev/logs-bucket.yaml` has zero effect on prod, and vice versa \u2014 environment isolation is structural here, but so is the drift risk, since keeping the two bucket definitions in sync is a manual discipline. Apply with the existing commands: `kubectl apply -f dev/` and `kubectl apply -f prod/`.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-xzc6nauj/dev/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-xzc6nauj/dev/logs-policy.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-xzc6nauj/prod/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-xzc6nauj/prod/logs-policy.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 4978,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 4978,
+      "fenced_blocks": 6,
+      "extracted_files": 4,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.6666666666666666
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "83832e55734b",
+    "stages": [
+      "lint",
+      "static",
+      "semantic"
+    ],
+    "before": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 6
+    },
+    "after": {
+      "passed": true,
+      "passed_count": 6,
+      "total_count": 6
+    },
+    "stage_verdicts": {
+      "lint": {
+        "before": true,
+        "after": true
+      },
+      "static": {
+        "before": false,
+        "after": false
+      },
+      "semantic": {
+        "before": true,
+        "after": true
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.6666666666666666,
+    "composite_after": 0.6666666666666666
+  }
+}

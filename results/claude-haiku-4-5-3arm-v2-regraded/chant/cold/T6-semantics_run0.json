@@ -1,0 +1,142 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "chant",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1e15d083a0a90095",
+      "spec_sha256": "f715de7d385d5d34",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "tics/tests/test_task.py::test_q4_unmarked_orphan_is_adopt_not_delete FAILED [ 57%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q5_build_never_calls_cloud PASSED [ 71%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q6_snapshot_needs_no_controller_reconcile PASSED [ 85%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q7_missing_edges_specific_to_k8s_lexicon PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q3: expected orphan, got 'newly-observed'\n    assert 'newly-observed' == 'orphan'\n      \n      - orphan\n      + newly-observed\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py:79: AssertionError: q3: expected orphan, got 'newly-observed'\nE   AssertionError: q4 action: expected adopt, got 'delete'\n    assert 'delete' == 'adopt'\n      \n      - adopt\n      + delete\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py:86: AssertionError: q4 action: expected adopt, got 'delete'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q3_orphan_classification\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a214e0b749a593bd3/tasks/chant/T6-semantics/tests/test_task.py::test_q4_unmarked_orphan_is_adopt_not_delete\n========================= 2 failed, 5 passed in 0.02s ==========================\n",
+      "passed_count": 5,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 5163
+  },
+  "content": "```json\n{\n  \"q1\": {\n    \"behavior\": \"falls-back-to-run\",\n    \"reason\": \"Output shows 'fold: 0 files folded, 1 ran' and 'fold: 1 file folded, 0 ran' from the same invocation set, with both exiting successfully. This indicates per-file fallback: if a file cannot fold, it is run (executed), while other files in the same build still fold if able.\"\n  },\n  \"q2\": {\n    \"answered_by\": \"live-marker\",\n    \"reason\": \"chant.config.ts comment states ownership is 'Stamped onto every emitted resource as chant.intentius.io/stack' label. The lifecycle commands read this label from the live Kubernetes cluster to determine stack ownership, not from an external state file.\"\n  },\n  \"q3\": \"newly-observed\",\n  \"q4\": {\n    \"action\": \"delete\",\n    \"reason\": \"An unmarked undeclared resource is not part of the declared estate and has no chant ownership marker. IaC semantics treat declared state as authoritative; resources not declared and not marked as owned should be removed to converge toward declared state.\"\n  },\n  \"q5\": {\n    \"calls_cloud\": false,\n    \"reason\": \"chant build is a static TypeScript compilation step that produces YAML/JSON manifests from composites. The files show no API calls to AWS or Kubernetes servers; building src/envs/dev/infra to dist/dev/infra/manifests.yaml does not query infrastructure state.\"\n  },\n  \"q6\": {\n    \"requires_controller_reconcile\": false,\n    \"reason\": \"The snapshot reads Kubernetes objects from the live cluster's etcd. A CAPI Cluster or CAPA infrastructure resource can exist as a Kubernetes custom resource (recorded as PRESENT) without AWS having completed the underlying EKS provisioning; controller reconciliation is asynchronous.\"\n  },\n  \"q7\": {\n    \"specific_to_k8s_lexicon\": true,\n    \"reason\": \"The declared IR (no --at flag) shows 3 edges; the live IR (--at latest) shows edges: []. Both use the same --format ir. Since the same lexicon's declared mode includes edges but live mode omits them, this is a k8s-lexicon-specific choice in how edges are computed for live cluster queries, not a general --at latest format limitation.\"\n  }\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 2086,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 2086,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.7142857142857143,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7142857142857143
+  },
+  "regrade": {
+    "status": "regraded",
+    "grader_sha256": "9e765ea8a903",
+    "stages": [
+      "lint",
+      "static",
+      "semantic"
+    ],
+    "before": {
+      "passed": true,
+      "passed_count": 5,
+      "total_count": 7
+    },
+    "after": {
+      "passed": true,
+      "passed_count": 5,
+      "total_count": 7
+    },
+    "stage_verdicts": {
+      "lint": {
+        "before": null,
+        "after": null
+      },
+      "static": {
+        "before": null,
+        "after": null
+      },
+      "semantic": {
+        "before": true,
+        "after": true
+      }
+    },
+    "direction": "unchanged",
+    "composite_before": 0.7142857142857143,
+    "composite_after": 0.7142857142857143
+  }
+}

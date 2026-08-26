@@ -1,0 +1,123 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "bf93a6b8fbd7ada9eec9d96fb98e2353cb754fa9",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "94e5c139053e7db4",
+      "spec_sha256": "43b4e0a5a87c63d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 1577
+  },
+  "content": "## Security Review \u2014 knr-ops PR\n\n**Verdict: request changes.** Two blocking issues, two non-blocking.\n\n---\n\n### CRITICAL 1 \u2014 S3 bucket policy grants public read\n\nThe new policy statement allows `s3:GetObject` to an anonymous/wildcard principal (`\"Principal\": \"*\"` / `AWS: \"*\"`). This violates acceptance criterion #1 (\"no public access\") and exposes every object in the application-assets bucket to the internet, including any objects added later. Bucket policies are not path-scoped by default, so even a `Resource` ending in `/*` covers the whole keyspace.\n\nAlso note that a permissive policy silently no-ops only if Block Public Access is on \u2014 do not rely on that as the control. If BPA is on, the policy is dead code that will become live the moment someone relaxes the account setting; if BPA is off, it's live now. Either way it should not merge.\n\n**Required before merge:**\n- Remove the public statement entirely.\n- Serve assets through CloudFront with an Origin Access Control, and scope the bucket policy `Principal` to the CloudFront service principal with a `AWS:SourceArn` condition on the distribution ARN.\n- Confirm `BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, `RestrictPublicBuckets` are all `true` in the base, and that the overlay does not patch them off.\n- Verify versioning and SSE (AES-256/KMS) are still asserted in `base/` and not dropped by this overlay patch.\n\n---\n\n### CRITICAL 2 \u2014 Plaintext DB password in deployment env vars\n\nThe app Deployment sets the database password as a literal `value:` under `env:`. This breaks acceptance criterion #3 (\"never stored in plaintext in Git\"). The exposure is worse than the file itself: the value lands in the Pod spec, so it is readable by anyone with `get pod` in the namespace, appears in `kubectl describe`, and gets captured in Flux's stored inventory and any audit/event logs.\n\n**Required before merge:**\n- Move the credential to a SOPS-encrypted Secret (the knr-ops-native mechanism), decrypted by the Flux Kustomization's `decryption.provider: sops` with the appropriate KMS/age key ref.\n- Reference it via `valueFrom.secretKeyRef` (or better, mount it and have the app read the file, so it never enters the process environment).\n- Treat the committed password as **compromised** \u2014 rotate it in RDS and revoke the old one before or immediately at merge. Rewriting the commit is not sufficient; assume the value has leaked.\n- Confirm the dev and prod overlays reference *different* secrets, so this rotation does not couple the two environments (criterion #7).\n\n---\n\n### WARNING \u2014 Missing resource limits on containers\n\nNo `resources.limits` (and likely no `requests`) on the app containers. This is a genuine availability concern rather than a confidentiality one: an unbounded container can consume node memory and evict co-tenant pods, and without `requests` the scheduler cannot place pods sensibly. A container with no limits is also `BestEffort` QoS and is the first thing killed under node pressure \u2014 the opposite of what you want for the serving path.\n\n**Recommended before merge:** set `requests` and `limits` for CPU and memory in `base/`, with the prod overlay patching higher values to match the t3.large node group. Consider a `LimitRange` in the namespace so future manifests cannot regress this silently.\n\n---\n\n### INFO \u2014 RDS instance class change\n\nThe instance class change on its own is not a security issue. Two things to confirm while you are in the file, since they are in scope for the spec and easy to regress during a resize:\n\n- `deletion_protection` remains enabled and `backup_retention_period` is still >= 7 days (criterion #2).\n- `publicly_accessible` is still `false`, and prod remains multi-AZ and encrypted.\n- If the class change is on prod, verify it is applied in a maintenance window or with `apply_immediately` set deliberately \u2014 an unintended immediate apply causes a failover.\n\n---\n\n### Suggested merge order\n\n1. Drop the public bucket policy statement; re-add as an OAC-scoped policy in a follow-up if CloudFront delivery is the actual goal.\n2. Rotate the DB password, land the SOPS-encrypted Secret, switch the Deployment to `secretKeyRef`.\n3. Add resource requests/limits.\n4. Re-run the diff against the rendered prod overlay (`kustomize build overlays/prod`) to confirm no plaintext value and no public principal survive konflate rendering \u2014 reviewing the patch files alone is not enough to prove this.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 4430,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 4430,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.95,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies plaintext password in deployment",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Identifies plaintext DB password in Deployment env vars and explains exposure risk (readable via get pod, appears in describe, captured in Flux)"
+      },
+      {
+        "criterion": "Identifies public S3 bucket access",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Identifies S3 bucket policy allowing public read access via wildcard principal; explains scope and explains Block Public Access limitations"
+      },
+      {
+        "criterion": "Identifies missing resource limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Identifies missing resource limits on containers as availability concern; notes unbounded memory consumption and QoS class implications"
+      },
+      {
+        "criterion": "Ranks issues by severity correctly",
+        "weight": 2.0,
+        "score": 0.75,
+        "justification": "Correctly ranks S3 and password as critical above resource limits as warning; reference answer prioritizes plaintext secret as P0 highest, suggesting password should rank first"
+      },
+      {
+        "criterion": "Provides specific remediation steps",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Provides specific remediation: SOPS encryption with secretKeyRef for password, OAC for S3 bucket, resource requests/limits in base, password rotation before merge"
+      }
+    ]
+  }
+}
