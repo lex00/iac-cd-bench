@@ -183,7 +183,7 @@ class MCPClient:
 
         if not isinstance(payload, dict):
             raise RuntimeError(
-                f"MCP get_schema returned JSON that is not a recognizable JSON Schema "
+                "MCP get_schema returned JSON that is not a recognizable JSON Schema "
                 f"for {kind} ({api_version}); grounding cannot continue"
             )
 
@@ -200,7 +200,7 @@ class MCPClient:
 
         if not set(payload).intersection(JSON_SCHEMA_KEYS):
             raise RuntimeError(
-                f"MCP get_schema returned JSON that is not a recognizable JSON Schema "
+                "MCP get_schema returned JSON that is not a recognizable JSON Schema "
                 f"for {kind} ({api_version}); grounding cannot continue"
             )
         return schema
@@ -213,6 +213,11 @@ class MCPClient:
                 "arguments": {"kind": kind, "apiVersion": api_version},
             },
         )
+        if result.get("isError"):
+            raise RuntimeError(
+                f"MCP get_schema returned a tool error for {kind} ({api_version}); "
+                "grounding cannot continue"
+            )
         return self._validate_schema_text(self._text(result), kind, api_version)
 
     def grep_catalog(self, query: str) -> str:

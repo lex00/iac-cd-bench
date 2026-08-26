@@ -33,35 +33,81 @@ def test_runner_executes():
     assert "--grounding" in result.stdout
 
 
+def test_grounding_validation_accepts_only_supported_stacks():
+    runner.validate_grounding_stacks(
+        ["knr-ops", "crossplane"], grounding=True, condition="cold", results_tag="grounded"
+    )
+
+    with pytest.raises(ValueError, match="supports knr-ops and crossplane only"):
+        runner.validate_grounding_stacks(
+            ["terraform"], grounding=True, condition="cold", results_tag="grounded"
+        )
+
+
+def test_grounding_validation_rejects_all_when_it_contains_unsupported_stacks():
+    with pytest.raises(ValueError, match="unsupported stack.*pulumi-python"):
+        runner.validate_grounding_stacks(
+            runner.ALL_STACKS, grounding=True, condition="cold", results_tag="grounded"
+        )
+
+
+def test_grounding_validation_requires_cold_condition():
+    with pytest.raises(ValueError, match="--grounding requires --condition cold"):
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="warm", results_tag="grounded"
+        )
+
+    runner.validate_grounding_stacks(
+        ["knr-ops"], grounding=True, condition="cold", results_tag="grounded"
+    )
+
+
 def test_grounding_validation_requires_non_empty_results_tag():
     with pytest.raises(ValueError, match="--grounding requires a non-empty --results-tag"):
-        runner.validate_grounding_stacks(["knr-ops"], grounding=True, results_tag=None)
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="cold", results_tag=None
+        )
 
     with pytest.raises(ValueError, match="--grounding requires a non-empty --results-tag"):
-        runner.validate_grounding_stacks(["knr-ops"], grounding=True, results_tag="")
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="cold", results_tag=""
+        )
 
     with pytest.raises(ValueError, match="--grounding requires a non-empty --results-tag"):
-        runner.validate_grounding_stacks(["knr-ops"], grounding=True, results_tag="   ")
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="cold", results_tag="   "
+        )
+
+
+def test_non_grounded_validation_preserves_warm_condition():
+    runner.validate_grounding_stacks(["terraform"], grounding=False, condition="warm")
 
 
 def test_non_grounded_validation_preserves_optional_results_tag():
     runner.validate_grounding_stacks(["terraform"], grounding=False, results_tag=None)
 
 
-def test_grounding_validation_accepts_only_supported_stacks():
-    runner.validate_grounding_stacks(
-        ["knr-ops", "crossplane"], grounding=True, results_tag="grounded"
+def test_cli_rejects_grounding_with_warm_condition():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bench.runner",
+            "--model",
+            "fake",
+            "--stack",
+            "knr-ops",
+            "--grounding",
+            "--condition",
+            "warm",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
     )
 
-    with pytest.raises(ValueError, match="supports knr-ops and crossplane only"):
-        runner.validate_grounding_stacks(["terraform"], grounding=True, results_tag="grounded")
-
-
-def test_grounding_validation_rejects_all_when_it_contains_unsupported_stacks():
-    with pytest.raises(ValueError, match="unsupported stack.*pulumi-python"):
-        runner.validate_grounding_stacks(
-            runner.ALL_STACKS, grounding=True, results_tag="grounded"
-        )
+    assert result.returncode == 2
+    assert "--grounding requires --condition cold" in result.stderr
 
 
 class CapturingAdapter(runner.ModelAdapter):
