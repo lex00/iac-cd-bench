@@ -12,6 +12,63 @@ import yaml
 
 MCP_URL = "https://schemas.fluxoperator.dev/mcp"
 EXEMPT_GROUPS = ("platform.example.org",)
+JSON_SCHEMA_KEYS = frozenset(
+    {
+        "$id",
+        "$ref",
+        "$schema",
+        "$defs",
+        "additionalItems",
+        "additionalProperties",
+        "allOf",
+        "anyOf",
+        "const",
+        "contains",
+        "contentEncoding",
+        "contentMediaType",
+        "contentSchema",
+        "default",
+        "dependentRequired",
+        "dependentSchemas",
+        "deprecated",
+        "description",
+        "else",
+        "enum",
+        "examples",
+        "exclusiveMaximum",
+        "exclusiveMinimum",
+        "format",
+        "if",
+        "items",
+        "maxContains",
+        "maximum",
+        "maxItems",
+        "maxLength",
+        "maxProperties",
+        "minContains",
+        "minimum",
+        "minItems",
+        "minLength",
+        "minProperties",
+        "multipleOf",
+        "not",
+        "oneOf",
+        "pattern",
+        "patternProperties",
+        "prefixItems",
+        "properties",
+        "propertyNames",
+        "readOnly",
+        "required",
+        "then",
+        "title",
+        "type",
+        "unevaluatedItems",
+        "unevaluatedProperties",
+        "uniqueItems",
+        "writeOnly",
+    }
+)
 
 
 def discover_kinds(workspace: Path) -> list[tuple[str, str]]:
@@ -114,6 +171,40 @@ class MCPClient:
     def _text(result: dict[str, Any]) -> str:
         return result["content"][0]["text"]
 
+    @staticmethod
+    def _validate_schema_text(schema: str, kind: str, api_version: str) -> str:
+        try:
+            payload = json.loads(schema)
+        except (TypeError, json.JSONDecodeError) as exc:
+            raise RuntimeError(
+                f"MCP get_schema returned invalid JSON for {kind} ({api_version}); "
+                "grounding cannot continue"
+            ) from exc
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                "MCP get_schema returned JSON that is not a recognizable JSON Schema "
+                f"for {kind} ({api_version}); grounding cannot continue"
+            )
+
+        keys = {str(key).lower() for key in payload}
+        status = str(payload.get("status", "")).lower()
+        if (
+            {"error", "errors", "message", "detail", "limit"}.intersection(keys)
+            or status in {"error", "failed", "failure"}
+        ):
+            raise RuntimeError(
+                f"MCP get_schema returned an error/limit payload for {kind} "
+                f"({api_version}); grounding cannot continue"
+            )
+
+        if not set(payload).intersection(JSON_SCHEMA_KEYS):
+            raise RuntimeError(
+                "MCP get_schema returned JSON that is not a recognizable JSON Schema "
+                f"for {kind} ({api_version}); grounding cannot continue"
+            )
+        return schema
+
     def get_schema(self, kind: str, api_version: str) -> str:
         result = self._call(
             "tools/call",
@@ -122,7 +213,12 @@ class MCPClient:
                 "arguments": {"kind": kind, "apiVersion": api_version},
             },
         )
-        return self._text(result)
+        if result.get("isError"):
+            raise RuntimeError(
+                f"MCP get_schema returned a tool error for {kind} ({api_version}); "
+                "grounding cannot continue"
+            )
+        return self._validate_schema_text(self._text(result), kind, api_version)
 
     def grep_catalog(self, query: str) -> str:
         result = self._call(
