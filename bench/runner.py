@@ -547,9 +547,10 @@ def run_task(
                         f"grounding schema coverage failed: {details}"
                     )
 
-                section = build_grounding_section(schemas)
-                prompt = prompt + "\n\n" + section
-                result["grounding"]["section_chars"] = len(section)
+                if schemas:
+                    section = build_grounding_section(schemas)
+                    prompt = prompt + "\n\n" + section
+                    result["grounding"]["section_chars"] = len(section)
                 grounding_complete = True
 
             completion = adapter.complete(prompt, workspace_files)

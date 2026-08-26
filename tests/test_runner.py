@@ -261,6 +261,47 @@ def test_run_task_reports_all_unavailable_grounding_kinds_before_model(tmp_path)
     assert results[0]["stages"]["lint"]["passed"] is False
 
 
+def _schema_less_task(tmp_path):
+    task_dir = tmp_path / "T-plain"
+    (task_dir / "seed").mkdir(parents=True)
+    (task_dir / "spec.yaml").write_text("id: T-plain\nstack: knr-ops\n")
+    (task_dir / "prompt.md").write_text("Write the manifest.\n")
+    (task_dir / "seed" / "notes.md").write_text("No Kubernetes YAML here.\n")
+    return task_dir
+
+
+def test_run_task_skips_grounding_section_when_no_kinds_discovered(tmp_path, monkeypatch):
+    task_dir = _schema_less_task(tmp_path)
+    monkeypatch.setattr(runner.lint, "run_lint", lambda *_: {"passed": True})
+
+    grounded_adapter = CapturingAdapter()
+    client = FakeGroundingClient()
+    grounded = runner.run_task(
+        task_dir,
+        grounded_adapter,
+        1,
+        False,
+        "cold",
+        grounding=True,
+        grounding_client=client,
+        grounding_cache=SchemaCache(tmp_path / "cache"),
+    )
+
+    ungrounded_adapter = CapturingAdapter()
+    runner.run_task(task_dir, ungrounded_adapter, 1, False, "cold")
+
+    assert client.calls == []
+    assert grounded_adapter.prompts == ungrounded_adapter.prompts
+    assert "### Reference schemas" not in grounded_adapter.prompts[0]
+    assert grounded[0]["grounding"] == {
+        "discovered_kinds": [],
+        "resolved_kinds": [],
+        "unavailable_kinds": [],
+        "section_chars": 0,
+    }
+    assert "error" not in grounded[0]
+
+
 def test_task_dirs_exist():
     """All 30 task directories exist."""
     stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript"]
