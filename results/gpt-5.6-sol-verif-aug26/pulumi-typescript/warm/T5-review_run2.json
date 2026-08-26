@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 346
+  },
+  "content": "Please provide the Pulumi preview JSON output, ideally generated with:\n\n```bash\npulumi preview --json > preview.json\n```\n\nRedact credentials only if necessary, while preserving Pulumi secret metadata such as `\"[secret]\"`, `secret`, or `4dabf181...`.\n\nI\u2019ll specifically check for:\n\n1. **Plaintext secrets**\n   - DB connection strings, passwords, tokens, and access keys exposed in outputs or resource inputs.\n   - Outputs that are not marked as Pulumi secrets.\n   - Note: if the preview already contains a real plaintext secret, treat it as compromised and rotate it.\n\n2. **Stateful resource replacement/deletion**\n   - RDS or S3 operations containing `replace`, `delete-replaced`, or `delete`.\n   - Changes to replacement-triggering properties such as RDS identifiers, engine settings, subnet groups, or encryption configuration.\n   - Potential data-loss impact and whether snapshots/backups mitigate it.\n\n3. **Missing protection**\n   - RDS and other critical stateful resources lacking:\n     ```json\n     \"protect\": true\n     ```\n   - RDS also needs AWS-level `deletionProtection: true`; Pulumi `protect` and RDS deletion protection are separate safeguards.\n   - Production buckets should normally also use Pulumi protection.\n\nI can additionally validate the preview against the listed requirements: bucket encryption/versioning/public-access blocking, RDS backups and network exposure, IAM wildcards, EKS sizing, HTTPS, and dev/prod isolation.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-g8nhnft2/generated_0.json"
+  ]
+}

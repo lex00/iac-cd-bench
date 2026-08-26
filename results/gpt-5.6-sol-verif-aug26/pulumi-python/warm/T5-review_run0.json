@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 634,
+    "output": 556
+  },
+  "content": "No Pulumi preview JSON was included, so I can\u2019t identify the specific resources or findings yet.\n\nPlease provide the output of:\n\n```bash\npulumi preview --json > preview.json\n```\n\nDo **not** use `--show-secrets`. If the preview already contains a real credential, redact the value while preserving its field name and structure, and rotate the credential if it was exposed.\n\nI\u2019ll review the JSON for:\n\n1. **Plaintext secrets**\n   - DB connection strings, passwords, access keys, tokens, or sensitive outputs not marked with Pulumi\u2019s secret metadata.\n   - Any stack output containing an actual secret instead of a secret wrapper or `[secret]`.\n\n2. **Stateful resource replacement**\n   - Replacement operations such as `replace`, `create-replacement`, or `delete-replaced`.\n   - In particular: RDS instances, S3 buckets, and potentially EKS clusters/node groups.\n   - Whether the replacement could cause deletion, data loss, or downtime.\n\n3. **Missing protection**\n   - Production RDS and other critical stateful resources with `protect` absent or false.\n   - Note that Pulumi `protect` and AWS RDS `deletionProtection` are separate controls; critical RDS resources should generally have both.\n\nYou can paste the JSON/NDJSON in a code block or upload it as a file. Include the stack name (`dev` or `prod`) because replacement and protection severity differs by environment."
+}

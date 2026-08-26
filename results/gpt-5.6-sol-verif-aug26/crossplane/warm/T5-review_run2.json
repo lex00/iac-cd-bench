@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 1045
+  },
+  "content": "## Review findings\n\n### 1. **Blocking: Bucket versioning must not be removed**\nDropping bucket versioning violates acceptance criterion 1 for both environments.\n\nIt is additionally required for production S3 cross-region replication: AWS requires versioning on both the source and destination buckets. Removing the composed `BucketVersioning` resource or disabling inline versioning can cause replication configuration to fail or leave replication non-functional.\n\nKeep versioning explicitly managed and enabled, for example:\n\n```yaml\nspec:\n  forProvider:\n    versioningConfiguration:\n      status: Enabled\n```\n\nor retain the provider-specific `BucketVersioning` managed resource.\n\nEven if deleting that managed resource does not immediately turn off versioning in AWS, the composition would no longer enforce or remediate the required state.\n\n**Severity: Blocking**\n\n---\n\n### 2. **High risk: Blanket `deletionPolicy: Delete` is unsafe for stateful resources**\nApplying `deletionPolicy: Delete` to every composed resource means deleting a claim can attempt to destroy its S3 buckets and RDS database.\n\nSpecific concerns:\n\n- RDS has required deletion protection, so deletion may fail and leave the managed resource/composite stuck behind finalizers.\n- Versioned or non-empty S3 buckets commonly cannot be deleted without explicit object cleanup.\n- An accidental claim or namespace deletion could become a destructive infrastructure operation.\n- Production and stateful resources generally need a lifecycle policy distinct from stateless resources.\n\nPrefer resource-specific lifecycle behavior, such as `Orphan` for persistent production data, or use current Crossplane `managementPolicies` where supported:\n\n```yaml\nspec:\n  managementPolicies:\n    - Observe\n    - Create\n    - Update\n    - LateInitialize\n```\n\nUse `Delete` only where destruction with the claim is intentional and tested. If `Delete` was already the provider default, making it explicit may not change behavior, but the lifecycle risks still need to be documented and protected.\n\n**Severity: High**\n\n---\n\n### 3. **Validate where `deletionPolicy` is being set**\n`deletionPolicy` is normally a field on each Crossplane managed resource, not a generic provider-wide `Provider` or `ProviderConfig` setting. If the diff adds it directly to a provider-wide object, it may be rejected by schema validation or have no effect.\n\nIf a composition patch applies the value to all composed managed resources, confirm that:\n\n- the target field exists for every resource/provider API version;\n- it does not overwrite resource-specific lifecycle decisions;\n- the patch cannot accidentally affect both dev and prod through a shared composition revision.\n\n---\n\n## Recommendation\n\nDo not merge as described. Restore enforced bucket versioning, including on the replication destination, and replace the blanket deletion policy with explicit per-resource/per-environment lifecycle behavior."
+}

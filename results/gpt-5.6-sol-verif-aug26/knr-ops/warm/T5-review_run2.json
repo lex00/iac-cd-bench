@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 760
+  },
+  "content": "## Security review\n\n| Severity | Finding | Risk | Required change |\n|---|---|---|---|\n| **Critical \u2014 block merge** | **S3 bucket policy grants public read access** | Any object covered by the policy can be retrieved anonymously. This violates the requirement that the bucket have no public access and may expose application assets or sensitive data. | Remove the public `Allow` statement, especially any `Principal: \"*\"` with `s3:GetObject`. Enable S3 Block Public Access at the bucket/account level. If assets need external delivery, use CloudFront with Origin Access Control and restrict the bucket policy to that distribution. |\n| **Critical \u2014 block merge** | **Database password is stored in plaintext in deployment environment variables/manifests** | The credential is exposed in Git history, PR tooling, repository clones, rendered manifests, and potentially logs. Anyone with repository access may gain database access. | Remove the plaintext value and **rotate/revoke the exposed password before merge**. Store it in a SOPS-encrypted Kubernetes `Secret` committed to Git, configured for Flux decryption, and reference it using `valueFrom.secretKeyRef` or a mounted Secret volume. Verify the rendered/decrypted value is not uploaded as a CI artifact. |\n| **Warning** | **Containers have no resource limits** | A compromised or malfunctioning container can consume excessive CPU or memory, causing denial of service or impacting other workloads on the node. | Add appropriate CPU and memory `resources.requests` and `resources.limits` for every application container, including sidecars and init containers where applicable. Validate values through testing rather than using arbitrary production limits. |\n| **Info** | **RDS instance class change** | No security issue is apparent from the described change. | No security-specific change required, but confirm existing controls remain intact: `publiclyAccessible: false`, deletion protection enabled, backup retention of at least seven days, and encryption enabled for production. Also confirm the class still matches the intended environment specification. |\n\n## Required before merge\n\n1. Remove the public S3 access policy and enforce Block Public Access.\n2. Remove the plaintext password from all manifests and overlays.\n3. Rotate the exposed database credential; deleting it only from the latest commit is insufficient because it may remain in Git/PR history.\n4. Add a SOPS-encrypted Secret and reference it from the deployment.\n5. Add container CPU and memory requests/limits.\n6. Re-render both dev and prod overlays and verify:\n   - no plaintext secrets appear in committed or generated artifacts;\n   - no anonymous S3 access is permitted;\n   - changes remain isolated to the intended environment;\n   - existing RDS security settings were not accidentally changed.\n\n**Merge recommendation: Reject until both critical findings are remediated.**"
+}

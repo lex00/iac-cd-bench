@@ -1,0 +1,34 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-_7plgt1u/generated_2.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 1, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 625,
+    "output": 1548
+  },
+  "content": "Crossplane AWS `ProviderConfig` objects select credentials/provider identity; they do **not** set the AWS region. The region must still be set on each managed resource under `spec.forProvider.region`.\n\nAdd a second named provider configuration, reference it from the new west-region resources, and hard-code/patch `us-west-2` in those resources. Existing claims remain unchanged.\n\n### 1. Add the second provider configuration\n\n```yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-provider-creds\n      key: credentials\n```\n\nThe existing provider can remain unchanged, for example:\n\n```yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-primary\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-provider-creds\n      key: credentials\n```\n\nBoth configurations may use the same AWS credentials. The IAM principal must have permissions in both regions.\n\n### 2. Add the west-region resources to the Composition\n\nFor the production S3 replication destination, add resources like the following to the existing Composition. The exact API versions can be adjusted to match the installed Upbound AWS provider version.\n\n```yaml\n- name: assets-replica-bucket\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta2\n    kind: Bucket\n    metadata:\n      labels:\n        app.kubernetes.io/component: assets-replica\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        forceDestroy: false\n        tags:\n          Purpose: assets-replication\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: metadata.uid\n      toFieldPath: metadata.labels[crossplane.io/composite]\n\n    # Reuses fields already present on the XR; no claim change is required.\n    - type: FromCompositeFieldPath\n      fromFieldPath: spec.environment\n      toFieldPath: metadata.labels[environment]\n\n- name: assets-replica-versioning\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta2\n    kind: BucketVersioning\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        versioningConfiguration:\n          status: Enabled\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.kubernetes.io/component: assets-replica\n\n- name: assets-replica-encryption\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta2\n    kind: BucketServerSideEncryptionConfiguration\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        rule:\n          - applyServerSideEncryptionByDefault:\n              sseAlgorithm: AES256\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.kubernetes.io/component: assets-replica\n\n- name: assets-replica-public-access-block\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta2\n    kind: BucketPublicAccessBlock\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        blockPublicAcls: true\n        blockPublicPolicy: true\n        ignorePublicAcls: true\n        restrictPublicBuckets: true\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.kubernetes.io/component: assets-replica\n```\n\nThe source bucket and its replication configuration continue to use the primary provider and primary region:\n\n```yaml\nspec:\n  providerConfigRef:\n    name: aws-primary\n  forProvider:\n    region: us-east-1\n```\n\nThe source `BucketReplicationConfiguration` must point to the destination bucket ARN and an IAM replication role. Both source and destination buckets must have versioning enabled.\n\n### 3. Keep this production-only\n\nBecause the canonical scenario requires cross-region replication only for production, the west-region resources should be conditionally emitted based on the XR\u2019s existing `spec.environment: prod` value. With a pipeline Composition, use `function-go-templating`, for example:\n\n```yaml\n{{- if eq .observed.composite.resource.spec.environment \"prod\" }}\n# us-west-2 destination bucket, versioning, encryption,\n# public-access block, IAM replication role, and replication policy\n{{- end }}\n```\n\nThis uses the environment value already present on existing composite resources, so no claim schema or claim manifests need to change.\n\n### 4. Rollout\n\nApply the provider configuration and updated Composition:\n\n```bash\nkubectl apply -f providerconfig-us-west-2.yaml\nkubectl apply -f composition.yaml\n```\n\nExisting claims will consume the new Composition revision automatically when their `compositionUpdatePolicy` is `Automatic`. If revisions are pinned with `Manual`, update the existing composite resource\u2019s `compositionRevisionRef`; the claim itself still does not need to change.\n\nDo not rely on `AWS_REGION` in a provider runtime configuration alone: AWS managed resources should explicitly specify `spec.forProvider.region: us-west-2`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-_7plgt1u/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-_7plgt1u/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-_7plgt1u/generated_2.yaml"
+  ]
+}

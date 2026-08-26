@@ -1,0 +1,36 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `web_node_group`\n --> generated_1.py:1:12\n  |\n1 | asg_name = web_node_group.resources.apply(\n  |            ^^^^^^^^^^^^^^\n2 |     lambda resources: resources[0].autoscaling_groups[0].name\n3 | )\n  |\n\nF821 Undefined name `aws`\n --> generated_2.py:1:18\n  |\n1 | web_node_group = aws.eks.NodeGroup(\n  |                  ^^^\n2 |     \"web-node-group\",  # Preserve the existing logical name.\n3 |     cluster_name=cluster.name,\n  |\n\nF821 Undefined name `cluster`\n --> generated_2.py:3:18\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 626,
+    "output": 1371
+  },
+  "content": "Assuming the policy should scale the **existing EKS managed node group**, attach a new target-tracking policy to the Auto Scaling Group created by EKS. Do not recreate or rename the node group.\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\n# Existing managed node group. Keep its Pulumi logical name and arguments unchanged.\nnode_group = aws.eks.NodeGroup.get(\n    \"web-node-group\",\n    pulumi.Config().require(\"nodeGroupId\"),\n)\n\n# An EKS managed node group normally has one underlying Auto Scaling Group.\nasg_name = node_group.resources.apply(\n    lambda resources: resources[0].autoscaling_groups[0].name\n)\n\nnode_cpu_policy = aws.autoscaling.Policy(\n    \"web-node-cpu-target\",\n    autoscaling_group_name=asg_name,\n    policy_type=\"TargetTrackingScaling\",\n    estimated_instance_warmup=300,\n    target_tracking_configuration={\n        \"predefined_metric_specification\": {\n            \"predefined_metric_type\": \"ASGAverageCPUUtilization\",\n        },\n        \"target_value\": 60.0,\n        \"disable_scale_in\": False,\n    },\n)\n```\n\nConfigure the existing node-group ID independently per stack:\n\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  app:nodeGroupId: dev-cluster:dev-web-nodes\n```\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  app:nodeGroupId: prod-cluster:prod-web-nodes\n```\n\nIf the node group is already declared in the same program, reference it directly instead of using `NodeGroup.get`:\n\n```python\nasg_name = web_node_group.resources.apply(\n    lambda resources: resources[0].autoscaling_groups[0].name\n)\n```\n\n### Avoid resetting desired capacity\n\nA scaling policy changes the ASG\u2019s desired capacity. If Pulumi manages the node group\u2019s `desired_size`, a later `pulumi up` can reset it. On the existing node-group declaration, ignore only that field:\n\n```python\nweb_node_group = aws.eks.NodeGroup(\n    \"web-node-group\",  # Preserve the existing logical name.\n    cluster_name=cluster.name,\n    node_role_arn=node_role.arn,\n    subnet_ids=private_subnet_ids,\n    instance_types=[\"t3.medium\" if stack == \"dev\" else \"t3.large\"],\n    scaling_config={\n        \"min_size\": 2 if stack == \"dev\" else 4,\n        \"desired_size\": 2 if stack == \"dev\" else 4,\n        \"max_size\": 6 if stack == \"dev\" else 12,\n    },\n    opts=pulumi.ResourceOptions(\n        ignore_changes=[\"scalingConfig.desiredSize\"],\n    ),\n)\n```\n\nThis change to `ignore_changes` updates Pulumi\u2019s management behavior; it does not replace the node group.\n\nBefore applying:\n\n```bash\npulumi stack select dev\npulumi preview --diff\n```\n\nThe preview should show only:\n\n- creation of `aws:autoscaling/policy:Policy`\n- possibly an in-place state/update change for `ignoreChanges`\n- no `replace` operations\n\nDo not use `protect=True` as a substitute for checking replacement: protection only causes an attempted replacement/deletion to fail. If the preview proposes replacement, preserve the resource\u2019s existing logical name, parent/provider, and physical-name arguments, or add an `alias` if the Pulumi logical name was intentionally changed.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-l3rdxj_7/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-l3rdxj_7/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-l3rdxj_7/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-l3rdxj_7/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-l3rdxj_7/generated_2.py"
+  ]
+}

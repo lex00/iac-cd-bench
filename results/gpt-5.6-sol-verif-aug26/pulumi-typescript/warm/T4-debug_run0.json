@@ -1,0 +1,33 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-gbxvzapu/generated_0.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-gbxvzapu/generated_0.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "rinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index FAILED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: Should not mix async functions with pulumi.output() wrapping\n    assert ('async function' not in 'import * as....endpoint;\\n'\n      \n      'async function' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n        // Defect 1: async function used without .apply() \u2014 crashes at preview time...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show or 'pulumi.output' not in 'import * as....endpoint;\\n'\n      \n      'pulumi.output' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n      ?                                                           +++++++++++++...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show)\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py:9: AssertionError: Should not mix async functions with pulumi.output() wrapping\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1081,
+    "output": 1171
+  },
+  "content": "```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") ?? \"dev\";\nconst region = config.get(\"region\") ?? \"us-east-1\";\n\n// Store this with:\n// pulumi config set --secret dbPassword '<password>'\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\nconst provider = new aws.Provider(\"aws-provider\", {\n    region: region as aws.Region,\n});\n\n// S3 bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: {\n        enabled: true,\n    },\n    serverSideEncryptionConfiguration: {\n        rule: {\n            applyServerSideEncryptionByDefault: {\n                sseAlgorithm: \"AES256\",\n            },\n        },\n    },\n    tags: {\n        Environment: env,\n        Project: \"myapp\",\n    },\n}, { provider });\n\nnew aws.s3.BucketPublicAccessBlock(\"app-bucket-public-access\", {\n    bucket: bucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n}, { provider });\n\n// Transform the Output with apply; do not await it.\nconst bucketUrl = bucket.bucket.apply(\n    name => `https://${name}.s3.${region}.amazonaws.com`,\n);\n\n// RDS instance\nconst isProd = env === \"prod\";\n\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app_user\",\n    password: dbPassword,\n\n    multiAz: isProd,\n    storageEncrypted: isProd,\n    publiclyAccessible: false,\n    backupRetentionPeriod: 7,\n    deletionProtection: true,\n\n    // Required if the protected resource is later intentionally destroyed.\n    skipFinalSnapshot: false,\n    finalSnapshotIdentifier: `myapp-${env}-final-snapshot`,\n\n    tags: {\n        Environment: env,\n        Project: \"myapp\",\n    },\n}, { provider });\n\nexport const bucketEndpoint = bucketUrl;\nexport const dbEndpoint = db.endpoint;\n```\n\nConfigure each stack independently:\n\n```bash\npulumi stack select dev\npulumi config set env dev\npulumi config set region us-east-1\npulumi config set --secret dbPassword '<dev-password>'\n\npulumi stack select prod\npulumi config set env prod\npulumi config set region us-east-1\npulumi config set --secret dbPassword '<prod-password>'\n```\n\nThe key fixes are:\n\n- Replace `await` on an `Output` with `.apply(...)`.\n- Export an `Output<string>`, not the result of an `async` function.\n- Replace the plaintext `pulumi.output(...)` password with `config.requireSecret(...)`.\n- Use the bucket name rather than its ARN when constructing the S3 URL.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-gbxvzapu/generated_0.ts"
+  ]
+}

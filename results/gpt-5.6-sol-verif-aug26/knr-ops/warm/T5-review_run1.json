@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 936
+  },
+  "content": "## Security review summary\n\n### Critical \u2014 Public read access on the S3 bucket\n\n**Issue:**  \nThe new bucket policy grants unauthenticated/public read access. This violates the requirement that application asset buckets have **no public access** and can expose every object covered by the policy.\n\n**Required before merge:**\n\n- Remove any policy statement granting access to `Principal: \"*\"`.\n- Remove public `s3:GetObject` permissions.\n- Enable and retain all S3 Block Public Access settings:\n  - `BlockPublicAcls`\n  - `IgnorePublicAcls`\n  - `BlockPublicPolicy`\n  - `RestrictPublicBuckets`\n- If assets need internet delivery, serve them through CloudFront using an Origin Access Control/Identity and grant read access only to that CloudFront distribution.\n- Confirm versioning and server-side encryption remain enabled.\n\n---\n\n### Critical \u2014 Plaintext database password committed in deployment environment variables\n\n**Issue:**  \nThe password is stored directly in a Git-tracked manifest. Anyone with repository, PR, CI artifact, or Flux-rendering access may retrieve it. Removing it in a later commit does not make the exposed credential safe.\n\n**Required before merge:**\n\n1. Immediately rotate/revoke the exposed password.\n2. Remove the plaintext value from all manifests.\n3. Store the Kubernetes Secret as a **SOPS-encrypted** resource, consistent with the knr-ops stack.\n4. Reference it from the Deployment using `secretKeyRef`, for example:\n\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: app-db\n        key: password\n```\n\n5. Ensure Flux is configured to decrypt the SOPS resource and that the rendered/decrypted Secret is not committed or logged.\n6. Remove the credential from the PR branch history where feasible. Assume all copies and caches are compromised regardless, hence rotation is mandatory.\n\nPrefer storing the complete DB connection string in the encrypted Secret if that matches the application\u2019s configuration model.\n\n---\n\n### Warning \u2014 Containers have no resource limits\n\n**Issue:**  \nWithout resource limits, a compromised or malfunctioning container can consume excessive node CPU or memory, causing denial of service or impacting neighboring workloads.\n\n**Required before merge:**\n\nAdd appropriate resource requests and limits to every application container, including sidecars and init containers where applicable:\n\n```yaml\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi\n```\n\nValues should be based on workload measurements rather than copied blindly. At minimum, set memory limits and reasonable requests so scheduling and eviction behavior are predictable.\n\n---\n\n### Info \u2014 RDS instance class change\n\nNo security issue is apparent from the instance-class change alone. Confirm the final rendered environment configuration still meets the scenario requirements:\n\n- Prod uses `db.t3.medium`; dev uses `db.t3.micro`\n- `publiclyAccessible: false`\n- Deletion protection enabled\n- Backup retention of at least seven days\n- Prod is encrypted and Multi-AZ\n- The overlay change affects only the intended environment\n\n## Merge recommendation\n\n**Do not merge** until:\n\n- The public S3 policy is removed/restricted and public-access blocking is verified.\n- The exposed database credential is rotated and replaced with a SOPS-encrypted Secret reference.\n- Container resource limits are added or an explicit, approved exception is documented.\n\nThe S3 exposure and committed password are merge-blocking critical findings."
+}

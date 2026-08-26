@@ -1,0 +1,30 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T6-semantics",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q1_claim_delete_cascades PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q2_orphan_bucket_survives PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q3_delete_policy_removes_role PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q4_manual_update_policy_pins_revision PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q5_claim_connection_secret_location PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q6_parallel_convergence PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q7_claim_namespaced_xr_cluster_scoped PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1854,
+    "output": 302
+  },
+  "content": "```answers.json\n{\n  \"q1\": \"deleted\",\n  \"q2\": \"exists\",\n  \"q3\": \"deleted\",\n  \"q4\": \"manual\",\n  \"q5\": {\n    \"name\": \"storefront-conn\",\n    \"namespace\": \"team-a\"\n  },\n  \"q6\": \"parallel-converge\",\n  \"q7\": {\n    \"claim\": \"namespaced\",\n    \"xr\": \"cluster-scoped\"\n  }\n}\n```"
+}

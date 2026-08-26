@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 957
+  },
+  "content": "## Security review summary\n\n| Severity | Finding | Impact | Merge status |\n|---|---|---|---|\n| **Critical** | S3 bucket policy grants public read access | Unauthorized public disclosure of application assets/data; violates the required \u201cno public access\u201d posture | **Block merge** |\n| **Critical** | Database password is stored in plaintext in deployment environment variables/manifests | Credential exposure through Git history, PR logs, rendered manifests, and Kubernetes workload inspection | **Block merge and rotate credential** |\n| **Warning** | Containers have no resource limits | Resource exhaustion and noisy-neighbor/DoS risk; a compromised or malfunctioning container can consume excessive node resources | Fix before merge, especially for prod |\n| **Info** | RDS instance class changed | No security issue by itself, assuming other RDS protections remain intact | Verify configuration only |\n\n## Required changes before merge\n\n### 1. Remove public S3 access \u2014 Critical\n\nRemove any policy statement equivalent to:\n\n- `Principal: \"*\"`\n- `Effect: Allow`\n- `Action: s3:GetObject`\n\nDo not expose the bucket directly. Ensure:\n\n- S3 Block Public Access is enabled at the bucket level.\n- No public ACLs or public bucket policies are allowed.\n- Versioning and server-side encryption remain enabled.\n- If assets must be internet-facing, serve them through CloudFront with private bucket access, such as Origin Access Control, and restrict the bucket policy to that distribution.\n\nThis currently violates the acceptance criterion requiring **no public access**.\n\n### 2. Remove and rotate the plaintext password \u2014 Critical\n\nDo not place the password directly in `Deployment.env.value`, a ConfigMap, or an unencrypted Kubernetes Secret committed to Git.\n\nFor this knr-ops stack:\n\n- Store the secret in a **SOPS-encrypted manifest**.\n- Reference it from the Deployment using `secretKeyRef`.\n- Ensure Flux has only the required decryption access.\n- Confirm the decrypted value is never included in rendered artifacts, CI logs, or committed output.\n\nExample workload reference:\n\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: app-db\n        key: password\n```\n\nBecause the credential has already appeared in a PR/Git diff, treat it as compromised:\n\n1. Rotate the database password immediately.\n2. Update the encrypted secret with the new credential.\n3. Remove the plaintext value from the branch and, where practical, purge it from Git history.\n4. Check PR automation and logs for additional copies.\n\nSimply deleting it in a later commit is not sufficient because the old value remains in history.\n\n### 3. Add container resource controls \u2014 Warning\n\nAdd CPU and memory requests and limits to every application and sidecar container. For example:\n\n```yaml\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi\n```\n\nValues should be based on workload measurements. This is primarily an availability and containment issue: without limits, a compromised or faulty process can exhaust node resources and affect other workloads.\n\n### 4. Verify the RDS change did not alter protections \u2014 Info\n\nThe instance-class change itself is not a security finding. Confirm the rendered environment still has:\n\n- `publiclyAccessible: false`\n- Deletion protection enabled\n- Backup retention of at least seven days\n- Encryption enabled in prod\n- Multi-AZ enabled in prod\n- The expected class: `db.t3.micro` for dev and `db.t3.medium` for prod\n\nAlso render and review both kustomize overlays independently to ensure the change does not unintentionally affect both dev and prod.\n\n## Recommendation\n\n**Do not merge** until the public S3 policy is removed and the exposed database credential is rotated and replaced with a SOPS-encrypted secret reference. Resource limits should also be added before production deployment."
+}

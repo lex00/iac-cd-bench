@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 952
+  },
+  "content": "## Review result: **Reject / do not apply**\n\nTwo high-risk changes are hidden among the 40 resource changes.\n\n### Critical: RDS instance replacement\n\nThe database has actions equivalent to:\n\n```json\n\"actions\": [\"delete\", \"create\"]\n```\n\nThis is a replacement, not an in-place update. Because deletion occurs first, it can cause:\n\n- Database downtime\n- Data loss if no final snapshot is created\n- Restore/reconfiguration work\n- Application outage while the new endpoint becomes available\n\nCheck `replace_paths` and the `before`/`after` values to identify the forcing attribute\u2014commonly `identifier`, engine settings, storage encryption, subnet group, or another `ForceNew` field.\n\nBefore proceeding:\n\n1. Confirm the replacement is intentional.\n2. Ensure `deletion_protection = true` per the specification.\n3. Ensure backup retention is at least seven days.\n4. Require a verified snapshot/restore plan.\n5. Confirm `skip_final_snapshot = false` and specify a unique final snapshot identifier if replacement is approved.\n6. Validate that the application secret will be updated if the RDS endpoint changes.\n7. Schedule downtime or use a migration/cutover strategy rather than blind replacement.\n\n> With deletion protection enabled, Terraform may be unable to destroy the existing instance. Do not disable it casually just to make the plan apply.\n\n### Critical: public ingress added\n\nThe security-group change adds an ingress source of:\n\n```text\n0.0.0.0/0\n```\n\nThis exposes the affected port to the entire IPv4 internet. Reject unless it is narrowly justified as the intended HTTPS edge entry point.\n\nRequired remediation:\n\n- RDS must not accept public ingress and must have `publicly_accessible = false`.\n- EKS control-plane or node-group administrative ports must not be internet-wide.\n- Internal ALBs must only accept traffic from approved private CIDRs or source security groups.\n- If this is a public HTTPS endpoint, limit it to TCP/443 and confirm a valid ACM certificate.\n- Prefer CloudFront-to-origin restrictions or security-group references where applicable.\n- Check for the equivalent IPv6 exposure, `::/0`.\n\n## Useful plan checks\n\nList all destructive or replacement actions:\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(\n      (.change.actions | index(\"delete\")) != null\n      or (.change.actions | index(\"create\")) != null\n    )\n  | select(.change.actions != [\"create\"])\n  | [\n      .address,\n      (.change.actions | join(\" -> \")),\n      (\"replace_paths=\" + (.change.replace_paths // [] | tostring))\n    ]\n  | @tsv\n' tfplan.json\n```\n\nSpecifically list replacements:\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(\n      (.change.actions | index(\"delete\")) != null\n      and (.change.actions | index(\"create\")) != null\n    )\n  | [\n      .address,\n      (.change.actions | join(\" -> \")),\n      (.change.replace_paths // [] | tostring)\n    ]\n  | @tsv\n' tfplan.json\n```\n\nFind newly added unrestricted IPv4/IPv6 ingress, including nested security-group rules:\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(\n      (.change.after | tostring | contains(\"0.0.0.0/0\"))\n      or\n      (.change.after | tostring | contains(\"::/0\"))\n    )\n  | .address\n' tfplan.json\n```\n\n## Decision\n\n**Block the apply.** The RDS replacement requires explicit approval and a recovery/cutover plan. The unrestricted ingress must be removed or proven to be a tightly scoped public TCP/443 rule on the intended edge resource. The number of no-op changes does not reduce the severity of either finding."
+}

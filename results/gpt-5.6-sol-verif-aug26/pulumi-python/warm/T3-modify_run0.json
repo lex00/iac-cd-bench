@@ -1,0 +1,35 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `existing_node_group`\n --> generated_1.py:1:17\n  |\n1 | node_asg_name = existing_node_group.resources.apply(\n  |                 ^^^^^^^^^^^^^^^^^^^\n2 |     lambda resources: resources.autoscaling_groups[0].name\n3 | )\n  |\n\nFound 1 error.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 626,
+    "output": 1502
+  },
+  "content": "Add the scaling policy as a new Pulumi resource and reference the Auto Scaling group created by the existing EKS managed node group. Do not rename, re-parent, or recreate the existing node group.\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\n# Existing managed node group. Keep its existing logical name and arguments.\nnode_group = aws.eks.NodeGroup.get(\n    \"web-node-group\",\n    pulumi.Config().require(\"nodeGroupId\"),\n)\n\n# An EKS managed node group normally has one underlying Auto Scaling group.\nnode_asg_name = node_group.resources.apply(\n    lambda resources: resources.autoscaling_groups[0].name\n)\n\nnode_cpu_scaling = aws.autoscaling.Policy(\n    \"web-node-cpu-scaling\",\n    autoscaling_group_name=node_asg_name,\n    policy_type=\"TargetTrackingScaling\",\n    estimated_instance_warmup=300,\n    target_tracking_configuration=aws.autoscaling.PolicyTargetTrackingConfigurationArgs(\n        target_value=60,\n        disable_scale_in=False,\n        predefined_metric_specification=(\n            aws.autoscaling.PolicyTargetTrackingConfigurationPredefinedMetricSpecificationArgs(\n                predefined_metric_type=\"ASGAverageCPUUtilization\",\n            )\n        ),\n    ),\n)\n\npulumi.export(\"nodeAutoScalingPolicyArn\", node_cpu_scaling.arn)\n```\n\nIf the node group is already declared in the same Pulumi program, reference it directly instead of using `NodeGroup.get`:\n\n```python\nnode_asg_name = existing_node_group.resources.apply(\n    lambda resources: resources.autoscaling_groups[0].name\n)\n```\n\nFor stack-specific IDs:\n\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  app:nodeGroupId: dev-cluster:dev-web-nodes\n```\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  app:nodeGroupId: prod-cluster:prod-web-nodes\n```\n\nUse encrypted stack configuration for any secrets:\n\n```bash\npulumi config set --secret dbConnectionString 'postgresql://...'\n```\n\nBefore applying, verify that the policy is the only planned change:\n\n```bash\npulumi stack select dev\npulumi preview --diff\n```\n\nExpected summary:\n\n```text\n+ 1 to create\n```\n\nThere should be no replacements:\n\n```text\n+- 0 to replace\n```\n\nThen deploy independently:\n\n```bash\npulumi up\n```\n\nRepeat after selecting `prod`.\n\n### Important considerations\n\n- Keep the Pulumi logical names, parents, providers, and component hierarchy of all existing resources unchanged.\n- Do not recreate an existing node group merely to obtain its ASG name; use its output or `NodeGroup.get`.\n- If the scaling policy already exists outside Pulumi, import it instead of creating a duplicate:\n  ```bash\n  pulumi import aws:autoscaling/policy:Policy web-node-cpu-scaling <policy-name>/<asg-name>\n  ```\n- Ensure the managed node group\u2019s configured maximum size is above its current desired size; an ASG policy cannot scale beyond the node group\u2019s min/max bounds.\n- Direct ASG target tracking can conflict with Kubernetes Cluster Autoscaler. If Cluster Autoscaler is already installed, use it as the sole scaling controller rather than adding a competing CPU target-tracking policy.\n- `protect=True` can block accidental deletion, but it does not make a replacement safe; the preview must still show no replacement.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b0bl3lio/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b0bl3lio/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b0bl3lio/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-b0bl3lio/generated_1.yaml"
+  ]
+}
