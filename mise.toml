@@ -17,6 +17,19 @@ kustomize = "5.6.0"
 # bench/preflight.py's STACK_BINARIES or any stage runner. Dropped rather
 # than renamed: there is no real package to pin it to.
 crossplane-cli = "1.20.0"
+# kubeconform and terraform are invoked by the gates but were never pinned, so
+# they resolved from whatever the machine happened to have (homebrew here) and
+# were simply absent in CI — the golden-gate tests for knr-ops, bare, crossplane
+# and terraform skipped there while passing locally. preflight already lists
+# both in STACK_BINARIES; this makes the pin match what the stages actually run.
+kubeconform = "0.7.0"
+terraform = "1.15.8"
+# opentofu was pinned while nothing in bench/ or tools/ ever invokes `tofu`.
+# The terraform stack shells out to `terraform`, which on this machine is
+# HashiCorp Terraform v1.15.8, not OpenTofu — so the pin named a tool the
+# harness does not use and left the one it does use unpinned. Kept for now
+# because dropping it is a scope decision about which tool the arm is meant to
+# measure, but it is not what runs.
 opentofu = "1.8.0"
 tflint = "0.53.0"
 ruff = "0.8.4"
