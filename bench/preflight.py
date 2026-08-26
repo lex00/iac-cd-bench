@@ -43,10 +43,11 @@ STACK_BINARIES: dict[str, tuple[str, ...]] = {
     "knr-ops": ("yq", "kubeconform", "kustomize", "flux"),
     "crossplane": ("kubeconform", "crossplane"),
     "terraform": ("terraform",),
-    "pulumi-python": ("pulumi",),
+    "pulumi-python": ("pulumi", "ruff"),
     "pulumi-typescript": ("tsc", "pulumi"),
     "chant": ("chant", "tsc", "kubeconform", "npm"),
-    "bare": ("yq", "kubeconform", "kubectl"),
+    # kubectl is gone: bare's static gate validates with kubeconform now (#81).
+    "bare": ("yq", "kubeconform"),
 }
 
 # Extra binaries the live e2e tier needs, on top of the stack's own.

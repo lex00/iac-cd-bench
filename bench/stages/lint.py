@@ -58,8 +58,11 @@ LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
         ("terraform", ["validate"], "validate"),
     ],
     "pulumi-python": [
-        (str(Path(__file__).resolve().parents[2] / ".venv" / "bin" / "python"),
-         ["-m", "ruff", "check", "--select", "E,F", "."], "ruff check"),
+        # ruff from PATH. This used to resolve <repo>/.venv/bin/python, a venv
+        # that does not exist in this repo, so the gate reported NOT FOUND on
+        # every run and could never pass — preflight did not catch it because
+        # STACK_BINARIES listed only `pulumi`.
+        ("ruff", ["check", "--select", "E,F", "."], "ruff check"),
     ],
     "pulumi-typescript": [
         ("tsc", ["--noEmit", "--skipLibCheck"], "tsc check"),

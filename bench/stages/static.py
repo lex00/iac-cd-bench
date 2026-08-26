@@ -177,16 +177,39 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
     passed = True
 
     # Find claims
-    claims = list(workspace.rglob("*claim*.yaml"))
+    # A claim is identified by where it lives as well as what it is called.
+    # The golden puts them in `claims/dev.yaml` and `claims/prod.yaml`, which
+    # `*claim*.yaml` does not match — the directory carries the plural, the
+    # filename does not. The gate therefore found 0 claims on its own
+    # reference implementation and abstained on every crossplane run ever.
+    claims = sorted(set(workspace.rglob("*claim*.yaml"))
+                    | {f for f in workspace.rglob("*.y*ml")
+                       if f.parent.name in ("claims", "claim")})
     compositions = list(workspace.rglob("*composition*.yaml"))
     xrds = list(workspace.rglob("*xrd*.yaml"))
+    functions = list(workspace.rglob("*function*.y*ml"))
 
     for claim in claims:
         log.info("crossplane render %s", claim)
+        if not compositions or not functions:
+            results.append(
+                f"crossplane render {claim.name}: skipped — render needs a "
+                "composition and a functions file, found "
+                f"{len(compositions)} / {len(functions)}"
+            )
+            passed = False
+            continue
         try:
+            # `crossplane render <xr> <composition> <functions>`. The old call
+            # was `crossplane beta render <claim>`: `beta render` was promoted
+            # to a top-level `render` in the pinned CLI (1.20) and errors with
+            # `unexpected argument render`, and two of the three required
+            # arguments were never passed. The gate could not pass for any
+            # input, on any version — see #82 for the identical shape in flux.
             proc = subprocess.run(
-                ["crossplane", "beta", "render", str(claim)],
-                capture_output=True, text=True, timeout=60,
+                ["crossplane", "render", str(claim),
+                 str(compositions[0]), str(functions[0])],
+                capture_output=True, text=True, timeout=120,
             )
             results.append(f"crossplane render {claim.name}: exit={proc.returncode}")
             if proc.stderr:

@@ -17,7 +17,8 @@ class S3Bucket(ComponentResource):
         bucket_name: The S3 bucket name.
         tags: Resource tags.
         enable_replication: True for prod (cross-region replication target).
-        replication_target_bucket: ARN of the replication destination bucket (prod only).
+        replication_target_bucket: ARN of the replication destination
+            bucket (prod only).
         opts: Pulumi resource options.
     """
 
