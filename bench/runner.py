@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from bench.grounding import MCPClient, SchemaCache, build_grounding_section, discover_kinds
+from bench.agentic import run_agentic_completion
 from bench.stages import lint, static, semantic, e2e
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -201,6 +202,19 @@ class ModelAdapter:
     def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def request(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """Send a raw message list, optionally with tool definitions.
+
+        Adapters that do not support tools should raise NotImplementedError;
+        the default implementation flattens to the legacy complete() shape
+        (no tool results can be represented).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support raw message requests"
+        )
+
     @property
     def name(self) -> str:
         return "base"
@@ -208,6 +222,8 @@ class ModelAdapter:
 
 class AnthropicAdapter(ModelAdapter):
     """Anthropic API adapter via httpx."""
+
+    tool_schema_style = "anthropic"
 
     def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None):
         self.model = model
@@ -219,30 +235,23 @@ class AnthropicAdapter(ModelAdapter):
     def name(self) -> str:
         return self.model
 
-    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+    def request(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """Send raw Anthropic messages, optionally with tool definitions.
+
+        Returns {"content_blocks", "stop_reason", "input_tokens",
+        "output_tokens"}; complete() flattens this to text-only.
+        """
         import httpx
-
-        extra_content: list[dict[str, str]] = []
-        for f in files:
-            if f.is_file() and f.stat().st_size < 50000:
-                extra_content.append({
-                    "type": "text",
-                    "text": f"File: {f.name}\n{f.read_text()}",
-                })
-
-        messages: list[dict[str, Any]] = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                *extra_content,
-            ],
-        }]
 
         payload: dict[str, Any] = {
             "model": self.model,
             "max_tokens": 16384,
             "messages": messages,
         }
+        if tools:
+            payload["tools"] = tools
 
         # Opus 5.x and Opus 4.8 use adaptive thinking with output_config.effort
         # (4.8 rejects legacy budget_tokens with a 400 pointing at adaptive).
@@ -300,18 +309,45 @@ class AnthropicAdapter(ModelAdapter):
             log.error("Anthropic API error %s: %s", resp.status_code, resp.text[:1000])
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
+        return {
+            "content_blocks": data["content"],
+            "stop_reason": data.get("stop_reason"),
+            "input_tokens": data.get("usage", {}).get("input_tokens", 0),
+            "output_tokens": data.get("usage", {}).get("output_tokens", 0),
+        }
+
+    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+        extra_content: list[dict[str, str]] = []
+        for f in files:
+            if f.is_file() and f.stat().st_size < 50000:
+                extra_content.append({
+                    "type": "text",
+                    "text": f"File: {f.name}\n{f.read_text()}",
+                })
+
+        messages: list[dict[str, Any]] = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                *extra_content,
+            ],
+        }]
+
+        data = self.request(messages)
         content = "".join(
-            c["text"] for c in data["content"] if c["type"] == "text"
+            c["text"] for c in data["content_blocks"] if c["type"] == "text"
         )
         return {
             "content": content,
-            "input_tokens": data.get("usage", {}).get("input_tokens", 0),
-            "output_tokens": data.get("usage", {}).get("output_tokens", 0),
+            "input_tokens": data["input_tokens"],
+            "output_tokens": data["output_tokens"],
         }
 
 
 class OpenAICompatAdapter(ModelAdapter):
     """OpenAI-compatible adapter (works with vLLM, LM Studio, any compatible server)."""
+
+    tool_schema_style = "openai"
 
     def __init__(self, model: str, base_url: str, api_key: str = "«redacted:sk-…»", reasoning_effort: str | None = None):
         self.model = model
@@ -332,28 +368,24 @@ class OpenAICompatAdapter(ModelAdapter):
     def name(self) -> str:
         return self.model
 
-    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+    def request(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Send raw chat messages, optionally with OpenAI-style tool defs.
+
+        Returns {"message", "finish_reason", "input_tokens",
+        "output_tokens"}; complete() flattens this to text-only.
+        """
         import httpx
 
-        # Append workspace files to the prompt (parity with AnthropicAdapter,
-        # which sends them as extra content blocks).
-        file_sections: list[str] = []
-        for f in files:
-            if f.is_file() and f.stat().st_size < 50000:
-                try:
-                    file_sections.append(f"File: {f.name}\n{f.read_text()}")
-                except (UnicodeDecodeError, OSError):
-                    continue
-        full_prompt = prompt
-        if file_sections:
-            full_prompt = prompt + "\n\n### Workspace files\n\n" + "\n\n".join(file_sections)
-
-        messages: list[dict[str, str]] = [{"role": "user", "content": full_prompt}]
-
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
         }
+        if tools:
+            payload["tools"] = tools
         # gpt-5+ models use max_completion_tokens instead of max_tokens
         if self.model.startswith("gpt-5"):
             payload["max_completion_tokens"] = 8192
@@ -421,18 +453,46 @@ class OpenAICompatAdapter(ModelAdapter):
             raise RuntimeError(f"HTTP {resp.status_code if resp else 'none'} after 10 retries")
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
-        msg = data["choices"][0]["message"]
+        message = data["choices"][0]["message"]
+        return {
+            "message": message,
+            "finish_reason": data["choices"][0].get("finish_reason"),
+            "input_tokens": data.get("usage", {}).get("prompt_tokens", 0),
+            "output_tokens": data.get("usage", {}).get("completion_tokens", 0),
+        }
+
+    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+        # Append workspace files to the prompt (parity with AnthropicAdapter,
+        # which sends them as extra content blocks).
+        file_sections: list[str] = []
+        for f in files:
+            if f.is_file() and f.stat().st_size < 50000:
+                try:
+                    file_sections.append(f"File: {f.name}\n{f.read_text()}")
+                except (UnicodeDecodeError, OSError):
+                    continue
+        full_prompt = prompt
+        if file_sections:
+            full_prompt = prompt + "\n\n### Workspace files\n\n" + "\n\n".join(file_sections)
+
+        messages: list[dict[str, str]] = [{"role": "user", "content": full_prompt}]
+
+        data = self.request(messages)
+        msg = data["message"]
         content = msg.get("content") or msg.get("reasoning") or ""
         return {
             "content": content,
-            "input_tokens": data.get("usage", {}).get("prompt_tokens", 0),
-            "output_tokens": data.get("usage", {}).get("completion_tokens", 0),
+            "input_tokens": data["input_tokens"],
+            "output_tokens": data["output_tokens"],
         }
 
 
 # ──────────────────────────────────────────────────────────────────────────
 # Runner
 # ──────────────────────────────────────────────────────────────────────────
+
+GROUNDING_MODES = ("one-shot", "agentic")
+
 
 def run_task(
     task_dir: Path,
@@ -444,6 +504,7 @@ def run_task(
     *,
     grounding_client: MCPClient | None = None,
     grounding_cache: SchemaCache | None = None,
+    grounding_mode: str = "one-shot",
 ) -> list[dict[str, Any]]:
     """Run a single task k times, return results."""
     spec_path = task_dir / "spec.yaml"
@@ -467,7 +528,6 @@ def run_task(
         if grounding_cache is None:
             grounding_cache = SchemaCache(ROOT / ".cache" / "schemas")
         assert grounding_client is not None
-        assert grounding_cache is not None
 
     for run_idx in range(k):
         # Delay between runs to avoid rate limiting
@@ -496,7 +556,7 @@ def run_task(
             "condition": condition,
             "stages": {},
         }
-        if grounding:
+        if grounding and grounding_mode == "one-shot":
             result["grounding"] = {
                 "discovered_kinds": [],
                 "resolved_kinds": [],
@@ -505,9 +565,9 @@ def run_task(
             }
 
         # Invoke model
-        grounding_complete = not grounding
+        grounding_complete = not grounding or grounding_mode == "agentic"
         try:
-            if grounding:
+            if grounding and grounding_mode == "one-shot":
                 assert grounding_client is not None
                 assert grounding_cache is not None
                 client = grounding_client
@@ -553,7 +613,18 @@ def run_task(
                     result["grounding"]["section_chars"] = len(section)
                 grounding_complete = True
 
-            completion = adapter.complete(prompt, workspace_files)
+            if grounding and grounding_mode == "agentic":
+                assert grounding_client is not None
+                completion = run_agentic_completion(
+                    adapter,
+                    prompt,
+                    workspace_files,
+                    grounding_client,
+                    grounding_cache,
+                )
+                result["agentic"] = completion["agentic"]
+            else:
+                completion = adapter.complete(prompt, workspace_files)
             result["tokens"] = {
                 "input": completion["input_tokens"],
                 "output": completion["output_tokens"],
@@ -597,7 +668,7 @@ def run_task(
     return results
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="IaC/CD Benchmark Runner")
     parser.add_argument("--model", required=True, help="Model identifier")
     parser.add_argument("--model-provider", default="anthropic", choices=["anthropic", "openai-compat"])
@@ -610,6 +681,9 @@ def main() -> None:
     parser.add_argument("--e2e", action="store_true", help="Include e2e validation tier")
     parser.add_argument("--grounding", action="store_true",
                         help="Append upstream schemas to prompts (knr-ops and crossplane only)")
+    parser.add_argument("--grounding-mode", default="one-shot", choices=list(GROUNDING_MODES),
+                        help="Grounding arm: one-shot appends seed schemas to the prompt; "
+                             "agentic lets the model fetch schemas via tools mid-generation")
     parser.add_argument("--condition", default="warm", choices=["warm", "cold"])
     parser.add_argument("--api-key", default=None, help="API key (defaults to env ANTHROPIC_API_KEY)")
     parser.add_argument("--reasoning-effort", default=None,
@@ -617,12 +691,19 @@ def main() -> None:
     parser.add_argument("--results-tag", default=None,
                         help="Suffix tag for the results directory (e.g. 'low' -> results/<model>-low/). "
                              "Prevents re-runs with different settings from overwriting prior runs.")
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     # Parse stacks
     stacks = [args.stack] if args.stack else (ALL_STACKS if args.stacks == "all" else args.stacks.split(","))
+    if args.grounding_mode != "one-shot" and not args.grounding:
+        parser.error("--grounding-mode agentic requires --grounding")
     try:
         validate_grounding_stacks(stacks, args.grounding, args.condition, args.results_tag)
     except ValueError as exc:
@@ -680,6 +761,7 @@ def main() -> None:
                 grounding=args.grounding,
                 grounding_client=grounding_client,
                 grounding_cache=grounding_cache,
+                grounding_mode=args.grounding_mode,
             )
             all_results.extend(results)
 
