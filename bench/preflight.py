@@ -43,8 +43,8 @@ STACK_BINARIES: dict[str, tuple[str, ...]] = {
     "knr-ops": ("yq", "kubeconform", "kustomize", "flux"),
     "crossplane": ("kubeconform", "crossplane"),
     "terraform": ("terraform",),
-    "pulumi-python": ("pulumi", "ruff"),
-    "pulumi-typescript": ("tsc", "pulumi"),
+    "pulumi-python": ("pulumi", "python3", "ruff"),
+    "pulumi-typescript": ("tsc", "pulumi", "python3"),
     "chant": ("chant", "tsc", "kubeconform", "npm"),
     # kubectl is gone: bare's static gate validates with kubeconform now (#81).
     "bare": ("yq", "kubeconform"),
