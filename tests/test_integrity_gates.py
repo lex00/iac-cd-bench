@@ -367,12 +367,10 @@ def test_a_review_task_answer_with_one_narration_line_survives():
 
 def _set_report(label, *, commit="abc1234", tf="1.9.0", provider="anthropic",
                 effort="high"):
-    toolchain = {"terraform": {"present": True, "path": "/usr/bin/terraform",
-                               "version": f"Terraform v{tf}"}}
     return {
         "label": label,
         "harness_commits": [commit],
-        "toolchains": [provenance.toolchain_fingerprint(toolchain)],
+        "toolchains": {"terraform": [f"Terraform v{tf}"]},
         "providers": [provider],
         "efforts": [effort],
     }
@@ -413,7 +411,7 @@ def test_identical_provenance_compares_cleanly():
 
 def test_missing_provenance_is_unverifiable_not_agreement():
     """A set that cannot be shown to differ has not been shown to match."""
-    bare = {"label": "old-set", "harness_commits": [], "toolchains": [],
+    bare = {"label": "old-set", "harness_commits": [], "toolchains": {},
             "providers": [], "efforts": ["high"]}
     comp = validate.comparability([_set_report("new-set"), bare])
     assert comp["unverifiable"]
@@ -580,11 +578,12 @@ def test_a_dirty_harness_tree_is_flagged():
 # Set-level validation
 # ══════════════════════════════════════════════════════════════════════════
 
-def _write_run(dir_: Path, task: str, run: int, **overrides) -> None:
-    out = dir_ / "terraform" / "warm"
+def _write_run(dir_: Path, task: str, run: int, *, stack: str = "terraform",
+               **overrides) -> None:
+    out = dir_ / stack / "warm"
     out.mkdir(parents=True, exist_ok=True)
     payload = {
-        "model": dir_.name, "task": task, "stack": "terraform", "run": run,
+        "model": dir_.name, "task": task, "stack": stack, "run": run,
         "condition": "warm",
         "content": "x" * 400 + "\n```hcl\nresource \"aws_s3_bucket\" \"a\" {}\n```\n",
         "stages": {
@@ -596,6 +595,20 @@ def _write_run(dir_: Path, task: str, run: int, **overrides) -> None:
     }
     payload.update(overrides)
     (out / f"{task}_run{run}.json").write_text(json.dumps(payload))
+
+
+def _crash_overrides(error: str) -> dict:
+    """Mirrors bench.runner's exception handler (runner.py, the `except
+    Exception as e` block around line 781): one harness failure stamps
+    `result["error"]` AND `result["validity"]["reasons"]` with the same
+    `runner_error` text, at the same call site."""
+    return {
+        "error": error,
+        "validity": {
+            "valid": False, "reason": "runner_error", "content_length": None,
+            "verdict": "invalid", "reasons": [f"runner_error: {error}"],
+        },
+    }
 
 
 def test_uneven_k_is_refused_as_not_the_same_experiment(tmp_path):
@@ -627,6 +640,173 @@ def test_errored_runs_stay_in_the_denominator_and_refuse_above_the_limit(tmp_pat
     assert report["error_share"] > validate.CRASH_LIMIT
     assert any("died in the harness" in p for p in report["problems"])
     assert report["verdict"] == "refused"
+
+
+def test_runner_error_is_not_double_counted_from_the_stored_verdict():
+    """classify_run's own `result.get('error')` check and the run's stored
+    `validity` block (stamped by the same runner.py exception handler) both
+    carry a `runner_error` reason for one harness failure. One failure, one
+    reason."""
+    result = {
+        "model": "m", "stack": "terraform", "task": "T2-generate", "run": 0,
+        "stages": {},
+        **_crash_overrides("HTTP 500 after 10 retries"),
+    }
+    classification = validate.classify_run(result, spec={})
+    runner_errors = [r for r in classification["invalid_reasons"] if r.startswith("runner_error")]
+    assert len(runner_errors) == 1
+
+
+def test_runner_error_dedup_keeps_the_more_informative_message():
+    """Step 1 truncates `result['error']` to 160 chars; the stored verdict
+    (step 2) carries the untruncated text from the same exception. When the
+    two copies differ only in how much detail survived, keep the fuller one
+    rather than whichever happened to be appended first."""
+    long_error = "HTTP 500: " + "x" * 250
+    result = {
+        "model": "m", "stack": "terraform", "task": "T2-generate", "run": 0,
+        "stages": {},
+        **_crash_overrides(long_error),
+    }
+    classification = validate.classify_run(result, spec={})
+    runner_errors = [r for r in classification["invalid_reasons"] if r.startswith("runner_error")]
+    assert len(runner_errors) == 1
+    assert runner_errors[0] == f"runner_error: {long_error}"
+
+
+def test_crash_rate_at_the_limit_is_not_refused_after_dedup(tmp_path):
+    """The concrete #40 numbers: 3 genuinely failed runs out of 36 is 8.3%,
+    under CRASH_LIMIT. Before the dedup fix, each crashed run's runner_error
+    reason was counted twice (once from `result['error']`, once from the
+    run's own stored `validity`), so this same set read as 6/36 = 17% and
+    was refused."""
+    d = tmp_path / "set"
+    for r in range(33):
+        _write_run(d, "T2-generate", r)
+    for r in range(33, 36):
+        _write_run(d, "T2-generate", r, **_crash_overrides("HTTP 500 after 10 retries"))
+
+    report = validate.validate_result_set(d)
+    assert report["total"] == 36
+    assert report["errored"] == 3
+    assert report["error_share"] == pytest.approx(3 / 36)
+    assert report["error_share"] <= validate.CRASH_LIMIT
+    assert not any("died in the harness" in p for p in report["problems"])
+    assert report["verdict"] != "refused"
+
+
+def test_crash_rate_above_the_limit_is_still_refused(tmp_path):
+    """4 of 36 is 11.1%, over CRASH_LIMIT even after the double-count is
+    fixed - the gate must still catch a genuine crash rate."""
+    d = tmp_path / "set"
+    for r in range(32):
+        _write_run(d, "T2-generate", r)
+    for r in range(32, 36):
+        _write_run(d, "T2-generate", r, **_crash_overrides("HTTP 500 after 10 retries"))
+
+    report = validate.validate_result_set(d)
+    assert report["total"] == 36
+    assert report["errored"] == 4
+    assert report["error_share"] > validate.CRASH_LIMIT
+    assert any("died in the harness" in p for p in report["problems"])
+    assert report["verdict"] == "refused"
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Toolchain drift: per binary, not per stack's whole probe
+# ══════════════════════════════════════════════════════════════════════════
+
+def _toolchain_prov(toolchain: dict) -> dict:
+    return provenance.build_provenance(
+        provider="anthropic", model="m", reasoning_effort="high", toolchain=toolchain,
+        extra={"harness": {"commit": "abc1234", "dirty": False, "branch": "main"},
+               "task": {"prompt_sha256": "abc", "spec_sha256": "def"}},
+    )
+
+
+def test_toolchain_check_passes_when_stacks_probe_different_binaries(tmp_path):
+    """preflight only probes the binaries a stack actually needs, so a
+    multi-stack set legitimately records different binary sets per run -
+    verified from the actual #40 data: bare/chant/knr-ops each probe a
+    different toolchain, but every binary two of them share (kubeconform,
+    yq) agrees on version. That must not be an incomparable-toolchain
+    refusal."""
+    d = tmp_path / "set"
+    bare_tc = {"kubeconform": {"version": "v0.7.0"},
+               "kubectl": {"version": "Client Version: v1.36.1"},
+               "yq": {"version": "v4.53.6"}}
+    chant_tc = {"chant": {"version": "@intentius/chant 0.46.0"},
+                "kubeconform": {"version": "v0.7.0"},
+                "npm": {"version": "11.8.0"},
+                "tsc": {"version": "Version 5.9.3"}}
+    knr_tc = {"flux": {"version": "flux version 2.5.0"},
+              "kubeconform": {"version": "v0.7.0"},
+              "kustomize": {"version": "v5.6.0"},
+              "yq": {"version": "v4.53.6"}}
+
+    for stack, tc in (("bare", bare_tc), ("chant", chant_tc), ("knr-ops", knr_tc)):
+        for r in range(3):
+            _write_run(d, "T2-generate", r, stack=stack, provenance=_toolchain_prov(tc))
+
+    report = validate.validate_result_set(d)
+    assert not any("mixed toolchain" in p for p in report["problems"]), report["problems"]
+    assert report["toolchains"]["kubeconform"] == ["v0.7.0"]
+    assert report["toolchains"]["yq"] == ["v4.53.6"]
+
+
+def test_toolchain_check_refuses_when_one_binary_genuinely_differs(tmp_path):
+    """The check must still catch the failure mode it was written for: the
+    SAME binary recorded at different versions within one set."""
+    d = tmp_path / "set"
+    tc_a = {"kubeconform": {"version": "v0.7.0"}, "yq": {"version": "v4.53.6"}}
+    tc_b = {"kubeconform": {"version": "v0.8.1"}, "yq": {"version": "v4.53.6"}}
+
+    _write_run(d, "T2-generate", 0, stack="bare", provenance=_toolchain_prov(tc_a))
+    _write_run(d, "T2-generate", 1, stack="bare", provenance=_toolchain_prov(tc_b))
+
+    report = validate.validate_result_set(d)
+    assert report["verdict"] == "refused"
+    conflict = next(p for p in report["problems"] if "mixed toolchain" in p)
+    assert "kubeconform" in conflict
+    assert "v0.7.0" in conflict and "v0.8.1" in conflict
+
+
+def test_comparison_passes_when_sets_probe_different_binaries_that_agree():
+    """Cross-set version of the same fix: two sets built from different
+    stack mixes must not be flagged incomparable just because they recorded
+    different binary sets, as long as every binary both sets share agrees."""
+    set_a = {
+        "label": "set-a", "harness_commits": ["abc1234"],
+        "toolchains": {"kubeconform": ["v0.7.0"], "yq": ["v4.53.6"],
+                       "kubectl": ["Client Version: v1.36.1"]},
+        "providers": ["anthropic"], "efforts": ["high"],
+    }
+    set_b = {
+        "label": "set-b", "harness_commits": ["abc1234"],
+        "toolchains": {"kubeconform": ["v0.7.0"], "yq": ["v4.53.6"],
+                       "flux": ["flux version 2.5.0"]},
+        "providers": ["anthropic"], "efforts": ["high"],
+    }
+    comp = validate.comparability([set_a, set_b])
+    assert comp["comparable"] is True, comp["conflicts"]
+
+
+def test_comparison_refuses_when_one_binary_differs_across_sets():
+    set_a = {
+        "label": "set-a", "harness_commits": ["abc1234"],
+        "toolchains": {"kubeconform": ["v0.7.0"]},
+        "providers": ["anthropic"], "efforts": ["high"],
+    }
+    set_b = {
+        "label": "set-b", "harness_commits": ["abc1234"],
+        "toolchains": {"kubeconform": ["v0.8.1"]},
+        "providers": ["anthropic"], "efforts": ["high"],
+    }
+    comp = validate.comparability([set_a, set_b])
+    assert comp["comparable"] is False
+    conflict = next(c for c in comp["conflicts"] if "toolchain" in c)
+    assert "kubeconform" in conflict
+    assert "v0.7.0" in conflict and "v0.8.1" in conflict
 
 
 def test_a_clean_set_validates(tmp_path):
