@@ -43,8 +43,8 @@ KNOWN_BROKEN = {
         "static: `pulumi preview -s dev` needs a backend and a fully qualified "
         "stack name; no pulumi run has ever produced a static verdict",
     "pulumi-typescript":
-        "lint: tsconfig declares types [@pulumi/aws] but the golden ships no "
-        "node_modules, so tsc cannot resolve them (TS2688)",
+        "static: `pulumi preview -s dev` needs a backend and a fully qualified "
+        "stack name (same as pulumi-python; issue #93)",
     "crossplane":
         "static: golden is not valid Crossplane (#98). The composition uses wrong "
         "syntax (`- function: <image>` instead of `- step: <name>` + `functionRef`), "

@@ -331,6 +331,23 @@ def _bootstrap_chant_workspace(workspace: Path) -> None:
             shutil.copy2(golden_dir / name, dest)
 
 
+def _bootstrap_pulumi_typescript_workspace(workspace: Path) -> None:
+    """Symlink the shared golden-base/pulumi-typescript node_modules template
+    into a materialized pulumi-typescript workspace.
+
+    tsc needs node_modules to resolve @pulumi/aws types at lint time
+    (see lint.py). Symlinking node_modules (rather than copying it) means a
+    matrix of pulumi-typescript runs shares one npm ci install instead of
+    per-run installs; see bench.stages.e2e.ensure_pulumi_typescript_node_modules
+    for where that one shared install happens.
+    """
+    golden_dir = e2e.ensure_pulumi_typescript_node_modules()
+
+    node_modules_link = workspace / "node_modules"
+    if not node_modules_link.exists():
+        node_modules_link.symlink_to(golden_dir / "node_modules", target_is_directory=True)
+
+
 def materialize_task(task_dir: Path, workspace: Path, condition: str = "warm") -> dict[str, Any]:
     """Copy seed into workspace, optionally inject docs for warm condition."""
     import yaml
@@ -368,6 +385,11 @@ def materialize_task(task_dir: Path, workspace: Path, condition: str = "warm") -
         _stage_enabled(spec, name) for name in ("lint", "static", "e2e")
     ):
         _bootstrap_chant_workspace(workspace)
+
+    # pulumi-typescript tasks whose spec runs lint need node_modules
+    # bootstrapped so tsc can resolve @pulumi/aws types (issue #94).
+    if spec.get("stack") == "pulumi-typescript" and _stage_enabled(spec, "lint"):
+        _bootstrap_pulumi_typescript_workspace(workspace)
 
     # Load prompt
     prompt_path = task_dir / "prompt.md"
@@ -1095,6 +1117,16 @@ def main() -> None:
             if not preflight.get("passed", False) and not preflight.get("skipped", False):
                 log.error(
                     "Skipping chant stack: golden-base/chant preflight failed:\n%s",
+                    preflight.get("logs", ""),
+                )
+                continue
+
+        if stack == "pulumi-typescript":
+            preflight = e2e.preflight_pulumi_typescript_golden()
+            if not preflight.get("passed", False) and not preflight.get("skipped", False):
+                log.error(
+                    "Skipping pulumi-typescript stack: golden-base/pulumi-typescript preflight "
+                    "failed:\n%s",
                     preflight.get("logs", ""),
                 )
                 continue

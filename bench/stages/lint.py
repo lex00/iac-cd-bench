@@ -102,6 +102,18 @@ def run_lint(workspace: Path, stack: str) -> dict:
     results: list[str] = []
     all_passed = True
 
+    # pulumi-typescript needs node_modules installed for tsc to resolve @pulumi/aws types
+    # Only attempt installation if package-lock.json exists (i.e., this is not an empty workspace)
+    if stack == "pulumi-typescript" and (workspace / "package-lock.json").exists():
+        try:
+            from bench.stages import e2e
+            e2e.ensure_pulumi_typescript_node_modules(workspace)
+        except Exception as e:  # noqa: BLE001
+            return {
+                "passed": False,
+                "logs": f"Failed to install pulumi-typescript node_modules: {e}",
+            }
+
     # Find files for YAML stacks
     yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
     if stack in ("knr-ops", "crossplane", "bare"):
