@@ -7,13 +7,24 @@ terraform plan, pulumi preview.
 
 from __future__ import annotations
 
+import re
 import subprocess
 import logging
 from pathlib import Path
 
+import yaml
+
 from bench.stages import lint as lint_mod
 
 log = logging.getLogger(__name__)
+
+# Vendored CRD JSON schemas (#83), mirrored from datreeio/CRDs-catalog at
+# 7b1e26ef9deea49293714d204c1a2270aab1178f. Vendored rather than fetched at
+# validation time so the gate stays offline and a run's verdict does not
+# depend on a network round trip or on what upstream happened to hold that
+# day. The layout matches the catalog's, so refreshing is a re-fetch.
+SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
+SCHEMA_TEMPLATE = "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
 
 
 def run_static(workspace: Path, stack: str) -> dict:
@@ -53,6 +64,47 @@ def run_static(workspace: Path, stack: str) -> dict:
     }
 
 
+def _kubeconform_valid_count(summary: str) -> int:
+    """How many resources kubeconform actually validated, from its summary.
+
+    `Summary: N resources found in 1 file - Valid: 2, Invalid: 0, Errors: 0,
+    Skipped: 3`. Skipped resources are ones whose schema was missing; they are
+    not evidence of anything, so only the Valid count is returned.
+    """
+    m = re.search(r"Valid:\s*(\d+)", summary)
+    return int(m.group(1)) if m else 0
+
+
+def _flux_kustomization_target(kfile: Path, workspace: Path) -> tuple[str, Path]:
+    """The (name, --path) a Flux Kustomization file should be built with.
+
+    The name comes from the first Kustomization document's `metadata.name`,
+    and the path from its `spec.path` resolved inside the workspace. Both fall
+    back to something usable rather than raising: an unreadable or nameless
+    file still gets built (and fails on its own merits) instead of taking the
+    whole stage down with a parse error.
+    """
+    name = kfile.stem
+    path = kfile.parent
+    try:
+        docs = [d for d in yaml.safe_load_all(kfile.read_text())
+                if isinstance(d, dict)]
+    except (OSError, yaml.YAMLError):
+        return name, path
+
+    for doc in docs:
+        if doc.get("kind") != "Kustomization":
+            continue
+        name = (doc.get("metadata") or {}).get("name") or name
+        spec_path = (doc.get("spec") or {}).get("path")
+        if spec_path:
+            candidate = (workspace / str(spec_path).lstrip("./")).resolve()
+            if candidate.is_dir() and workspace.resolve() in candidate.parents:
+                path = candidate
+        break
+    return name, path
+
+
 def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run kustomize build and flux build for knr-ops."""
     passed = True
@@ -86,8 +138,18 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     for kfile in flux_kustomizations:
         log.info("flux build kustomization %s", kfile)
         try:
+            # `flux build kustomization` takes a NAME, with the manifests
+            # located by --path and the Kustomization itself by
+            # --kustomization-file. Passing the file as the positional NAME
+            # and omitting both flags (#82) left --path empty, so every call
+            # exited 1 on `invalid resource path ""` before flux read a
+            # manifest — the check could not pass, for any input, ever.
+            name, path = _flux_kustomization_target(kfile, workspace)
             proc = subprocess.run(
-                ["flux", "build", "kustomization", str(kfile), "--dry-run"],
+                ["flux", "build", "kustomization", name,
+                 "--path", str(path),
+                 "--kustomization-file", str(kfile),
+                 "--dry-run"],
                 capture_output=True, text=True, timeout=60,
             )
             results.append(f"flux build {kfile.name}: exit={proc.returncode}")
@@ -265,8 +327,35 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     run, one file at a time. --dry-run=client (not =server) deliberately:
     static validation has no cluster dependency (unlike e2e, which applies
     for real against kind), and server-side dry-run would require a live
-    API server to talk to just to check the manifests are well-formed."""
+    API server to talk to just to check the manifests are well-formed.
+
+    That intent is not reachable with kubectl and never was (#81). Even with
+    `--validate=false`, `kubectl apply --dry-run=client` contacts an API
+    server to resolve API groups before it can map a kind to a resource, so
+    with no cluster up every invocation died — first on `failed to download
+    openapi`, then on `couldn't get current server API group list` — and the
+    stage failed 100% of bare runs without judging a single manifest.
+
+    kubeconform is used instead: schema-based, offline by construction, and
+    already pinned in the toolchain. It runs stricter than lint runs it —
+    lint omits `-strict`, this adds it — so the two stages stay distinct
+    gates rather than one gate run twice.
+
+    bare's tasks are ACK and Cluster API resources, whose CRD schemas
+    kubeconform does not ship, so `schemas/` vendors them (#83) and
+    `-schema-location` points at that mirror ahead of the built-in one. The
+    versions are not a choice made here: they are the ones the task fixtures
+    already use — ACK s3/iam/rds at v1alpha1, Cluster API at v1beta1.
+
+    `-ignore-missing-schemas` is deliberately NOT passed. With the schemas
+    vendored, a kind that still fails to resolve is a kind that does not
+    exist, and that is a real defect worth failing: the v3 matrix has models
+    emitting `UserPolicy`, `RolePolicyAttachment` and friends, none of which
+    are ACK IAM kinds. Skipping them would score an invented resource as
+    fine.
+    """
     passed = True
+    validated = 0
 
     yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
     if not yaml_files:
@@ -274,26 +363,37 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         return passed, False
 
     for yfile in yaml_files:
-        log.info("kubectl apply --dry-run=client -f %s", yfile)
+        log.info("kubeconform -strict %s", yfile)
         try:
             proc = subprocess.run(
-                ["kubectl", "apply", "--dry-run=client", "-f", str(yfile)],
+                ["kubeconform", "-strict", "-summary",
+                 "-schema-location", "default",
+                 "-schema-location", str(SCHEMA_DIR / SCHEMA_TEMPLATE),
+                 str(yfile)],
                 capture_output=True, text=True, timeout=60,
             )
-            results.append(f"kubectl apply --dry-run=client -f {yfile.name}: exit={proc.returncode}")
+            results.append(f"kubeconform -strict {yfile.name}: exit={proc.returncode}")
             if proc.stdout:
                 results.append(proc.stdout[:500])
+                validated += _kubeconform_valid_count(proc.stdout)
             if proc.stderr:
                 results.append(f"ERR: {proc.stderr[:500]}")
             if proc.returncode != 0:
                 passed = False
         except subprocess.TimeoutExpired:
-            results.append(f"TIMEOUT: kubectl apply --dry-run=client -f {yfile}")
+            results.append(f"TIMEOUT: kubeconform -strict {yfile}")
             passed = False
         except FileNotFoundError:
-            results.append("NOT FOUND: kubectl")
-            log.warning("Command not found: kubectl")
+            results.append("NOT FOUND: kubeconform")
+            log.warning("Command not found: kubeconform")
             passed = False
             break
+
+    if passed and validated == 0:
+        results.append(
+            "no resource in the workspace resolved to a known schema — every "
+            "kind was skipped, so nothing was validated (see #81)"
+        )
+        return passed, False
 
     return passed, True
