@@ -313,7 +313,7 @@ class AnthropicAdapter(ModelAdapter):
 class OpenAICompatAdapter(ModelAdapter):
     """OpenAI-compatible adapter (works with vLLM, LM Studio, any compatible server)."""
 
-    def __init__(self, model: str, base_url: str, api_key: str = "«redacted:sk-…»", reasoning_effort: str | None = None):
+    def __init__(self, model: str, base_url: str, api_key: str = "EMPTY", reasoning_effort: str | None = None):
         self.model = model
         self.base_url = base_url.rstrip("/")
         # Preserve the version segment (/v1 OpenAI-style, /v4 Zhipu/GLM-style);
