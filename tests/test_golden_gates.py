@@ -39,9 +39,6 @@ STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python",
 
 # stack -> why it cannot pass yet
 KNOWN_BROKEN = {
-    "pulumi-python":
-        "static: `pulumi preview -s dev` needs a backend and a fully qualified "
-        "stack name; no pulumi run has ever produced a static verdict",
     "pulumi-typescript":
         "lint: tsconfig declares types [@pulumi/aws] but the golden ships no "
         "node_modules, so tsc cannot resolve them (TS2688)",
