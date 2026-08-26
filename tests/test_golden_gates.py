@@ -46,9 +46,13 @@ KNOWN_BROKEN = {
         "lint: tsconfig declares types [@pulumi/aws] but the golden ships no "
         "node_modules, so tsc cannot resolve them (TS2688)",
     "crossplane":
-        "static: `crossplane render` pulls Composition Function images from "
-        "xpkg.upbound.io via Docker, so the gate needs a network and a live "
-        "registry — and the pinned tag does not resolve",
+        "static: inapplicable by design (#92). `crossplane render` requires pulling "
+        "Composition Function Docker images from xpkg.upbound.io; the pinned versions "
+        "(v0.2.0, v0.5.0) do not exist. A gate depending on external registries and "
+        "network access is categorically unlike offline gates, makes results "
+        "non-reproducible from checkout, and conflates environment with model quality. "
+        "Lint validates manifest syntax; semantic validates correctness. Static is "
+        "measured on fewer axes but honestly.",
 }
 
 
