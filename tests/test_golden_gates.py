@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+from bench.preflight import STACK_BINARIES
 from bench.stages import lint as lint_mod
 from bench.stages import static as static_mod
 
@@ -75,6 +76,14 @@ def test_golden_passes_its_own_gates(stack):
         pytest.xfail(KNOWN_BROKEN[stack])
     if not (GOLDEN / stack).is_dir():
         pytest.skip(f"no golden-base/{stack}")
+
+    # Skip rather than fail when the toolchain is absent. A missing binary is
+    # an environment problem, and reporting it as a gate defect here would
+    # bury the real signal in noise — which is the mistake preflight exists to
+    # avoid (#88). preflight is what refuses a *run* on missing tools.
+    missing = [b for b in STACK_BINARIES.get(stack, ()) if shutil.which(b) is None]
+    if missing:
+        pytest.skip(f"toolchain missing for {stack}: {missing}")
 
     ws = _materialize(stack)
     try:
