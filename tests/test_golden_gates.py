@@ -42,6 +42,9 @@ KNOWN_BROKEN = {
     "pulumi-python":
         "static: `pulumi preview -s dev` needs a backend and a fully qualified "
         "stack name; no pulumi run has ever produced a static verdict",
+    "pulumi-typescript":
+        "static: `pulumi preview -s dev` needs a backend and a fully qualified "
+        "stack name (same as pulumi-python; issue #93)",
     "crossplane":
         "static: `crossplane render` pulls Composition Function images from "
         "xpkg.upbound.io via Docker, so the gate needs a network and a live "
