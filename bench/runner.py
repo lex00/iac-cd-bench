@@ -37,94 +37,263 @@ log = logging.getLogger(__name__)
 # Code block extractor — writes model-generated code blocks as files
 # ──────────────────────────────────────────────────────────────────────────
 
-def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -> list[Path]:
-    """Extract fenced code blocks from model output and write them as files."""
-    # Find all backticked file paths and fenced code blocks
-    path_re = re.compile(r'`([^`\s]+(?:\.(yaml|yml|py|ts|tf|json|sh))[^`\s]*)`')
-    block_re = re.compile(r'```(\w*)\n(.*?)```', re.DOTALL)
+# A backticked token that names a file: `src/composites/defaults.ts`. The
+# extension set is deliberately narrow — a model's prose is full of backticked
+# identifiers, and every one of them that looks path-shaped is a chance to
+# misfile a code block (issue #76).
+PATH_RE = re.compile(r'`([^`\s]+(?:\.(yaml|yml|py|ts|tf|json|sh))[^`\s]*)`')
 
-    path_matches = [(m.start(), m.group(1)) for m in path_re.finditer(content)]
-    block_matches = [(m.start(), m.group(1), m.group(2).strip()) for m in block_re.finditer(content)]
+# Fenced blocks. Two changes from the old `` ```(\w*)\n ``:
+#
+# The info string is captured whole. A fence written
+# ```ts src/composites/defaults.ts did not match `(\w*)\n` at all, which left
+# the regex to re-anchor on the block's *closing* fence and pair it with the
+# next block's opening one — so the most explicit declaration form a model
+# can use was the one form that silently dropped the block, and scrambled
+# every block after it.
+#
+# The opening fence must start its own line (leading indentation is fine —
+# models indent fences under list items), and its info string may not contain
+# a backtick. Widening the info string without those guards makes a stray ```
+# *inside a paragraph* ("...and trailing ``` fences;" — a real
+# opus/bare/T2-generate answer) look like an opening fence, which inverts
+# open/close for the whole document and writes the prose between blocks as
+# the manifests. The old `\w*` was accidentally immune to that; the anchor
+# makes the immunity deliberate.
+BLOCK_RE = re.compile(r'^[ \t]*```([^\n`]*)\n(.*?)```', re.DOTALL | re.MULTILINE)
+
+# A bare path standing on its own line, optionally decorated the way models
+# decorate a filename heading: backticks, bold, a list bullet, a markdown
+# heading, a `File:` label, a trailing colon.
+DECLARATION_RE = re.compile(
+    r'^[ \t]{0,3}(?:[-*+]\s+|#{1,6}\s+)?'
+    r'(?:(?:file|filename|path)\s*[:=]\s*)?'
+    r'(?:\*\*|__)?`?([^`\s*]+\.(?:yaml|yml|py|ts|tf|json|sh))`?(?:\*\*|__)?'
+    r'\s*[:.]?\s*$',
+    re.IGNORECASE,
+)
+
+# `// src/composites/defaults.ts` or `# base/deploy.yaml` as the code's first
+# line — a comment whose entire content is a path, nothing else.
+FIRST_LINE_PATH_RE = re.compile(
+    r'^\s*(?://|#|;)\s*([^\s*]+\.(?:yaml|yml|py|ts|tf|json|sh))\s*$'
+)
+
+LANG_EXT = {"yaml": ".yaml", "yml": ".yaml", "json": ".json", "python": ".py",
+            "py": ".py", "typescript": ".ts", "ts": ".ts", "hcl": ".tf",
+            "terraform": ".tf", "bash": ".sh", "sh": ".sh"}
+
+# Only extract YAML/JSON/Python/TypeScript/HCL blocks (skip shell, text, markdown)
+EXTRACT_LANGS = {"yaml", "yml", "json", "python", "py", "typescript", "ts", "hcl", "terraform"}
+# For K8s stacks (knr-ops, crossplane, bare), only extract manifests that look like K8s resources
+K8S_STACKS = {"knr-ops", "crossplane", "bare"}
+# For terraform, only extract .tf files
+TF_STACKS = {"terraform"}
+# For chant, the model writes TypeScript source (not the YAML the stack
+# emits); only extract .ts blocks so lint/static/e2e build the source and
+# gate on the YAML chant emits, rather than misdetecting the model's
+# commentary/example-output blocks as the artifact to validate.
+CHANT_STACKS = {"chant"}
+
+
+def _parse_fence_info(info: str) -> tuple[str, str | None]:
+    """Split a fence info string into (language, declared path or None).
+
+    Handles ```ts, ```ts src/x.ts, ```ts title="src/x.ts", ```yaml:base/x.yaml.
+    """
+    info = info.strip()
+    if not info:
+        return "", None
+
+    head, sep, rest = info.partition(":")
+    if sep and " " not in head and _is_path_token(rest.strip().strip('"\'`')):
+        return head.strip().lower(), rest.strip().strip('"\'`')
+
+    parts = info.split()
+    lang = parts[0].split(":")[0].strip().lower()
+    for tok in parts[1:]:
+        for key in ("title=", "file=", "filename=", "path=", "name="):
+            if tok.lower().startswith(key):
+                tok = tok[len(key):]
+                break
+        tok = tok.strip('"\'`{}[]()<>,')
+        if _is_path_token(tok):
+            return lang, tok
+    return lang, None
+
+
+def _is_path_token(tok: str) -> bool:
+    return bool(re.fullmatch(r'[^\s`]+\.(?:yaml|yml|py|ts|tf|json|sh)', tok or ""))
+
+
+def _usable_path(path_str: str) -> bool:
+    """The old extractor's guard: skip dotfiles and archives. Keeping it also
+    keeps `../x.ts` out of the matcher, but containment is enforced for real
+    in _resolve_dest — this is a filter, not a security boundary."""
+    return not path_str.startswith(".") and not path_str.endswith(".gz")
+
+
+def _declared_path(content: str, block_pos: int, code: str, prev_end: int) -> str | None:
+    """The path a block *declares* for itself, or None.
+
+    Only the two unambiguous prose forms count (the third, the fence info
+    string, is read by the caller): a path standing alone on the last
+    non-blank line before the fence, and a first-line comment whose whole
+    content is a path. A filename that merely appears somewhere in the
+    surrounding prose is not a declaration — that conflation is what wrote
+    issue #76's `src/envs/prod/infra/main.ts` block to the workspace root as
+    `defaults.ts`, because `defaults.ts` happened to be mentioned in an
+    earlier explanatory sentence.
+    """
+    for line in reversed(content[prev_end:block_pos].splitlines()):
+        if not line.strip():
+            continue
+        m = DECLARATION_RE.match(line)
+        if m:
+            return m.group(1)
+        break
+
+    first = code.split("\n", 1)[0] if code else ""
+    m = FIRST_LINE_PATH_RE.match(first)
+    return m.group(1) if m else None
+
+
+def _accepts(stack: str, lang: str, code: str, *, named: bool) -> bool:
+    """Per-stack block filter. `named` blocks (those with a path) are held to
+    a slightly looser bar than unnamed ones, exactly as before: an untagged
+    fence following a filename is extracted, an untagged fence on its own is
+    not written as a K8s manifest."""
+    if lang not in EXTRACT_LANGS and lang not in ("", "yaml"):
+        return False
+    if stack in K8S_STACKS and lang in ("yaml", "yml"):
+        clean = "\n".join(l for l in code.split("\n") if not l.strip().startswith("#"))
+        if "apiVersion" not in clean:
+            return False
+    if not named and stack in K8S_STACKS and lang not in ("yaml", "yml"):
+        # For K8s stacks, don't write non-YAML files (also skip empty-lang blocks)
+        return False
+    if stack in TF_STACKS and lang not in ("hcl", "terraform", ""):
+        return False
+    if stack in CHANT_STACKS and lang not in ("typescript", "ts", ""):
+        return False
+    return True
+
+
+def _resolve_dest(workspace: Path, path_str: str) -> tuple[Path | None, str | None]:
+    """Resolve a declared path inside the workspace, or refuse it.
+
+    Returns (destination, None) or (None, reason). An absolute path, a `..`
+    that climbs out, or a symlink pointing elsewhere never gets written: the
+    run records the refusal instead. Silently relocating such a file to the
+    workspace root is what turned a correct answer into a build failure, so
+    this fails loudly rather than guessing.
+    """
+    root = workspace.resolve()
+    try:
+        dest = (workspace / path_str).resolve()
+    except (OSError, RuntimeError) as exc:  # symlink loops, name too long
+        return None, f"{path_str}: unresolvable ({exc})"
+    if dest == root:
+        return None, f"{path_str}: resolves to the workspace root itself"
+    if root not in dest.parents:
+        return None, f"{path_str}: resolves outside the workspace ({dest})"
+    # Hand back the unresolved join, not `dest`: it names the same file, and
+    # keeping the workspace's own spelling keeps `extracted_files` comparable
+    # with every result set already on disk.
+    return workspace / path_str, None
+
+
+def extract_code_blocks_detailed(
+    content: str, workspace: Path, stack: str = "knr-ops"
+) -> tuple[list[Path], list[str]]:
+    """Extract fenced code blocks from model output and write them as files.
+
+    Returns (files written, refusal reasons). Placement is by *declared* path
+    — fence info string, a filename on its own line above the fence, or a
+    first-line path comment — with the old nearest-following-prose-mention
+    heuristic kept only for blocks that declare nothing, so answers that
+    already extracted correctly still do.
+    """
+    path_matches = [(m.start(), m.group(1)) for m in PATH_RE.finditer(content)]
+    block_matches = [(m.start(), m.end(), *_parse_fence_info(m.group(1)), m.group(2).strip())
+                     for m in BLOCK_RE.finditer(content)]
 
     if not block_matches:
-        return []
+        return [], []
 
-    # Only extract YAML/JSON/Python/TypeScript/HCL blocks (skip shell, text, markdown)
-    extract_langs = {"yaml", "yml", "json", "python", "py", "typescript", "ts", "hcl", "terraform"}
-    # For K8s stacks (knr-ops, crossplane, bare), only extract manifests that look like K8s resources
-    k8s_stacks = {"knr-ops", "crossplane", "bare"}
-    # For terraform, only extract .tf files
-    tf_stacks = {"terraform"}
-    # For chant, the model writes TypeScript source (not the YAML the stack
-    # emits); only extract .ts blocks so lint/static/e2e build the source and
-    # gate on the YAML chant emits, rather than misdetecting the model's
-    # commentary/example-output blocks as the artifact to validate.
-    chant_stacks = {"chant"}
+    assigned: dict[int, str] = {}
+    used_paths: set[str] = set()
+
+    # Pass 1 — explicit declarations win, and they win before any prose
+    # mention gets a chance to claim the block.
+    prev_end = 0
+    for block_pos, block_end, lang, fence_path, code in block_matches:
+        declared = fence_path or _declared_path(content, block_pos, code, prev_end)
+        prev_end = block_end
+        # A *declaration* is taken at its word even when it climbs out of the
+        # workspace, so _resolve_dest can refuse it on the record. Only the
+        # prose heuristic keeps the old dotfile filter.
+        if declared and declared.endswith(".gz"):
+            declared = None
+        if declared and _accepts(stack, lang, code, named=True):
+            assigned[block_pos] = declared
+            used_paths.add(declared)
+
+    # Pass 2 — the legacy heuristic, over what pass 1 left: each unclaimed
+    # prose path takes the nearest following unclaimed block.
+    for path_pos, path_str in path_matches:
+        if not _usable_path(path_str) or path_str in used_paths:
+            continue
+        for block_pos, _block_end, lang, _fence_path, code in block_matches:
+            if block_pos in assigned or block_pos <= path_pos:
+                continue
+            if not _accepts(stack, lang, code, named=True):
+                continue
+            assigned[block_pos] = path_str
+            used_paths.add(path_str)
+            break
 
     written: list[Path] = []
-    used_blocks: set[int] = set()
+    errors: list[str] = []
 
-    # Match each path with its nearest subsequent code block
-    for path_pos, path_str in path_matches:
-        # Skip dotfiles and non-standard extensions
-        if path_str.startswith(".") or path_str.endswith(".gz"):
+    for block_pos, _block_end, lang, _fence_path, code in block_matches:
+        path_str = assigned.get(block_pos)
+        if path_str is None:
+            if not _accepts(stack, lang, code, named=False):
+                continue
+            ext = LANG_EXT.get(lang, ".txt")
+            n = len([p for p in written if str(p).endswith(ext)])
+            name = f"generated_{n}{ext}"
+            while (workspace / name).exists():
+                n += 1
+                name = f"generated_{n}{ext}"
+            path_str = name
+        elif not _accepts(stack, lang, code, named=True):
             continue
 
-        for block_pos, lang, code in block_matches:
-            if block_pos in used_blocks:
-                continue
-            # Only extract blocks with recognized language tags
-            if lang not in extract_langs and lang not in ("", "yaml"):
-                continue
-            # For K8s stacks, skip non-K8s manifests (must have apiVersion)
-            if stack in k8s_stacks and lang in ("yaml", "yml"):
-                lines = [l for l in code.split("\n") if not l.strip().startswith("#")]
-                clean_code = "\n".join(lines)
-                if "apiVersion" not in clean_code:
-                    continue
-            # For terraform, skip non-HCL blocks
-            if stack in tf_stacks and lang not in ("hcl", "terraform", ""):
-                continue
-            # For chant, skip anything that isn't TypeScript source
-            if stack in chant_stacks and lang not in ("typescript", "ts", ""):
-                continue
-            if block_pos > path_pos:
-                dest = workspace / path_str
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                dest.write_text(code + "\n")
-                written.append(dest)
-                used_blocks.add(block_pos)
-                log.info("Wrote extracted file: %s (%d chars)", path_str, len(code))
-                break
-
-    # Write any remaining unused blocks with generic names (only recognized langs)
-    for block_pos, lang, code in block_matches:
-        if block_pos not in used_blocks:
-            if lang not in extract_langs and lang not in ("", "yaml"):
-                continue
-            # For K8s stacks, skip non-K8s manifests
-            if stack in k8s_stacks and lang in ("yaml", "yml"):
-                clean_lines = [l for l in code.split("\n") if not l.strip().startswith("#")]
-                if "apiVersion" not in "\n".join(clean_lines):
-                    continue
-            # For K8s stacks, don't write non-YAML files (also skip empty-lang blocks)
-            if stack in k8s_stacks and lang not in ("yaml", "yml"):
-                continue
-            # For terraform, don't write non-HCL files
-            if stack in tf_stacks and lang not in ("hcl", "terraform", ""):
-                continue
-            # For chant, don't write non-TypeScript files
-            if stack in chant_stacks and lang not in ("typescript", "ts", ""):
-                continue
-            ext = {"yaml": ".yaml", "yml": ".yaml", "json": ".json", "python": ".py",
-                   "py": ".py", "typescript": ".ts", "ts": ".ts", "hcl": ".tf",
-                   "bash": ".sh", "sh": ".sh"}.get(lang, ".txt")
-            name = f"generated_{len([p for p in written if str(p).endswith(ext)])}{ext}"
-            dest = workspace / name
+        dest, reason = _resolve_dest(workspace, path_str)
+        if dest is None:
+            log.error("Refusing to write extracted file: %s", reason)
+            errors.append(str(reason))
+            continue
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(code + "\n")
-            written.append(dest)
+        except OSError as exc:
+            # One unwritable name (a file already occupying a parent, a name
+            # the filesystem rejects) must not cost the run every other block.
+            log.error("Could not write extracted file %s: %s", path_str, exc)
+            errors.append(f"{path_str}: could not be written ({exc})")
+            continue
+        written.append(dest)
+        log.info("Wrote extracted file: %s (%d chars)", path_str, len(code))
 
-    return written
+    return written, errors
+
+
+def extract_code_blocks(content: str, workspace: Path, stack: str = "knr-ops") -> list[Path]:
+    """Back-compatible wrapper: the written files, without the refusals."""
+    return extract_code_blocks_detailed(content, workspace, stack)[0]
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -713,9 +882,21 @@ def run_task(
             result["content"] = completion["content"]
 
             # Extract code blocks from model output and write as files in workspace
-            extracted = extract_code_blocks(completion["content"], workspace, stack)
+            extracted, extraction_errors = extract_code_blocks_detailed(
+                completion["content"], workspace, stack)
             if extracted:
                 result["extracted_files"] = [str(p) for p in extracted]
+            # A file the model declared at a path outside the workspace is
+            # never quietly relocated (#76): it is refused, and the refusal is
+            # part of the run record so a build failure downstream can be
+            # traced to the extractor rather than to the model.
+            if extraction_errors:
+                result["extraction_errors"] = extraction_errors
+                log.error(
+                    "Run %s/%s#%d: %d extracted file(s) refused: %s",
+                    stack, task_id, run_idx, len(extraction_errors),
+                    "; ".join(extraction_errors),
+                )
 
             # Run-validity gate (#59): two independent classifiers, ported in
             # parallel PRs and both kept (see bench/validity.py's module

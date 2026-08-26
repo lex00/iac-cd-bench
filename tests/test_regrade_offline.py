@@ -162,25 +162,39 @@ def test_run_without_content_is_skipped(tmp_path):
 
 
 def test_rematerialize_uses_the_runners_own_extractor(tmp_path):
-    """Not a lookalike: the extraction must be bench.runner.extract_code_blocks
-    itself, or a regrade measures a workspace no run ever had."""
+    """Not a lookalike: the extraction must be the runner's own
+    extract_code_blocks_detailed, or a regrade measures a workspace no run
+    ever had."""
     from bench import runner as runner_mod
 
     calls = []
-    original = runner_mod.extract_code_blocks
+    original = runner_mod.extract_code_blocks_detailed
 
     def spy(content, workspace, stack="knr-ops"):
         calls.append(stack)
         return original(content, workspace, stack)
 
-    runner_mod.extract_code_blocks = spy
+    runner_mod.extract_code_blocks_detailed = spy
     ws = Path(tempfile.mkdtemp(prefix="regrade-test-"))
     try:
         written = regrade_offline.rematerialize(
             _stored_run(KNR_ANSWER, {}), ROOT / "tasks" / "knr-ops" / "T2-generate", ws)
     finally:
-        runner_mod.extract_code_blocks = original
+        runner_mod.extract_code_blocks_detailed = original
         shutil.rmtree(ws, ignore_errors=True)
 
     assert calls == ["knr-ops"]
     assert any(str(p).endswith("infra/s3/logs/bucket.yaml") for p in written)
+
+
+def test_extraction_refusals_are_recorded_on_the_regraded_run(tmp_path):
+    """A path that would escape the workspace is refused, and the refusal
+    travels on the regraded result rather than vanishing (#76)."""
+    run = _stored_run(
+        "Put it at `/etc/pwned.yaml`:\n\n"
+        "```yaml\napiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n```\n", {})
+    corrected = regrade_offline.regrade_run(run, ROOT / "tasks")
+
+    assert corrected["extraction_errors"]
+    assert "outside the workspace" in corrected["extraction_errors"][0]
+    assert not Path("/etc/pwned.yaml").exists()

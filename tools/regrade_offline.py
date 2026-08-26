@@ -43,9 +43,19 @@ sys.path.insert(0, str(ROOT))
 
 from bench import runner as runner_mod  # noqa: E402
 from bench import score as score_mod  # noqa: E402
+from bench.stages import lint as lint_mod  # noqa: E402
 from bench.stages import semantic as semantic_mod  # noqa: E402
+from bench.stages import static as static_mod  # noqa: E402
 
 TASKS_DIR = ROOT / "tasks"
+
+# Which stages a regrade may recompute. `semantic` is pure Python against the
+# workspace; `lint` and `static` shell out to the stack's real toolchain, so
+# they are opt-in (--stages) and only meaningful on a machine that has the
+# same tools the run had. Issue #76's damage landed on `static` — a file
+# written to the wrong directory built nothing — so recovering those verdicts
+# needs more than a semantic regrade.
+STAGE_RUNNERS = {"lint", "static", "semantic"}
 
 
 def _grader_fingerprint(task_dir: Path) -> str | None:
@@ -66,8 +76,16 @@ def _semantic_verdict(stage: dict[str, Any] | None) -> tuple[bool, int, int]:
     )
 
 
+def _stage_verdict(stage: dict[str, Any] | None) -> bool | None:
+    stage = stage or {}
+    if stage.get("skipped") or stage.get("inapplicable"):
+        return None
+    return bool(stage.get("passed"))
+
+
 def rematerialize(result: dict[str, Any], task_dir: Path, workspace: Path,
-                  with_node_modules: bool = False) -> list[Path]:
+                  with_node_modules: bool = False,
+                  errors: list[str] | None = None) -> list[Path]:
     """Rebuild the workspace the grader saw: seed, completion, extracted files.
 
     Extraction is `bench.runner.extract_code_blocks` itself, not a copy of
@@ -91,11 +109,15 @@ def rematerialize(result: dict[str, Any], task_dir: Path, workspace: Path,
 
     (workspace / "model_output.md").write_text(content)
     stack = result.get("stack", "knr-ops")
-    return runner_mod.extract_code_blocks(content, workspace, stack)
+    written, refusals = runner_mod.extract_code_blocks_detailed(content, workspace, stack)
+    if errors is not None:
+        errors.extend(refusals)
+    return written
 
 
 def regrade_run(result: dict[str, Any], tasks_dir: Path,
-                with_node_modules: bool = False) -> dict[str, Any]:
+                with_node_modules: bool = False,
+                stages: tuple[str, ...] = ("semantic",)) -> dict[str, Any]:
     """Return a corrected copy of one run. The input dict is not mutated."""
     out = json.loads(json.dumps(result, default=str))
     stack = result.get("stack")
@@ -112,25 +134,50 @@ def regrade_run(result: dict[str, Any], tasks_dir: Path,
         return out
 
     old_stage = (result.get("stages") or {}).get("semantic") or {}
-    if old_stage.get("skipped"):
+    if "semantic" in stages and old_stage.get("skipped"):
         out["regrade"] = {"status": "skipped", "reason": "semantic stage disabled by spec"}
         return out
 
+    stage_before = {name: _stage_verdict((result.get("stages") or {}).get(name))
+                    for name in stages}
+    refusals: list[str] = []
+    new_stages: dict[str, Any] = {}
     workspace = Path(tempfile.mkdtemp(prefix=f"regrade-{stack}-"))
     try:
-        rematerialize(result, task_dir, workspace, with_node_modules=with_node_modules)
-        new_stage = semantic_mod.run_semantic(task_dir, workspace)
+        # lint/static shell out to the stack's toolchain, which for chant means
+        # the node_modules the runner bootstraps; force it on whenever they run.
+        need_modules = with_node_modules or bool({"lint", "static"} & set(stages))
+        rematerialize(result, task_dir, workspace,
+                      with_node_modules=need_modules, errors=refusals)
+        for name in stages:
+            existing = (result.get("stages") or {}).get(name) or {}
+            if existing.get("skipped"):
+                continue
+            if name == "semantic":
+                new_stages[name] = semantic_mod.run_semantic(task_dir, workspace)
+            elif name == "lint":
+                new_stages[name] = lint_mod.run_lint(workspace, str(stack))
+            elif name == "static":
+                new_stages[name] = static_mod.run_static(workspace, str(stack))
     finally:
         shutil.rmtree(workspace, ignore_errors=True)
 
-    after = _semantic_verdict(new_stage)
-    out.setdefault("stages", {})["semantic"] = new_stage
+    out.setdefault("stages", {}).update(new_stages)
+    after = _semantic_verdict(out["stages"].get("semantic"))
     out["score"] = score_mod.compute_score(out)
+    if refusals:
+        out["extraction_errors"] = refusals
     out["regrade"] = {
         "status": "regraded",
         "grader_sha256": _grader_fingerprint(task_dir),
+        "stages": list(stages),
         "before": {"passed": before[0], "passed_count": before[1], "total_count": before[2]},
         "after": {"passed": after[0], "passed_count": after[1], "total_count": after[2]},
+        "stage_verdicts": {
+            name: {"before": stage_before.get(name),
+                   "after": _stage_verdict(out["stages"].get(name))}
+            for name in stages
+        },
         "direction": (
             "fail_to_pass" if after[0] and not before[0]
             else "pass_to_fail" if before[0] and not after[0]
@@ -144,11 +191,13 @@ def regrade_run(result: dict[str, Any], tasks_dir: Path,
 
 def regrade_tree(results_dir: Path, out_dir: Path, tasks_dir: Path = TASKS_DIR,
                  with_node_modules: bool = False,
-                 verbose: bool = True) -> dict[str, Any]:
+                 verbose: bool = True,
+                 stages: tuple[str, ...] = ("semantic",)) -> dict[str, Any]:
     """Regrade every run under `results_dir` into a parallel tree."""
     summary: dict[str, Any] = {
         "source": str(results_dir),
         "out": str(out_dir),
+        "stages": list(stages),
         "runs": 0,
         "regraded": 0,
         "skipped": 0,
@@ -156,6 +205,8 @@ def regrade_tree(results_dir: Path, out_dir: Path, tasks_dir: Path = TASKS_DIR,
         "pass_to_fail": 0,
         "unchanged": 0,
         "assertion_delta": 0,
+        "stage_flips": {name: {"fail_to_pass": 0, "pass_to_fail": 0} for name in stages},
+        "extraction_refusals": 0,
         "changed": [],
     }
 
@@ -171,7 +222,8 @@ def regrade_tree(results_dir: Path, out_dir: Path, tasks_dir: Path = TASKS_DIR,
 
         result = json.loads(src.read_text())
         summary["runs"] += 1
-        corrected = regrade_run(result, tasks_dir, with_node_modules=with_node_modules)
+        corrected = regrade_run(result, tasks_dir, with_node_modules=with_node_modules,
+                                stages=stages)
         dest.write_text(json.dumps(corrected, indent=2, default=str))
 
         info = corrected.get("regrade", {})
@@ -182,12 +234,27 @@ def regrade_tree(results_dir: Path, out_dir: Path, tasks_dir: Path = TASKS_DIR,
         summary[info["direction"]] += 1
         delta = info["after"]["passed_count"] - info["before"]["passed_count"]
         summary["assertion_delta"] += delta
-        if info["direction"] != "unchanged" or delta:
+        if corrected.get("extraction_errors"):
+            summary["extraction_refusals"] += 1
+
+        flips = {}
+        for name, v in (info.get("stage_verdicts") or {}).items():
+            if v["before"] is None or v["after"] is None or v["before"] == v["after"]:
+                continue
+            key = "fail_to_pass" if v["after"] else "pass_to_fail"
+            summary["stage_flips"].setdefault(name, {"fail_to_pass": 0, "pass_to_fail": 0})
+            summary["stage_flips"][name][key] += 1
+            flips[name] = f"{v['before']} -> {v['after']}"
+
+        if info["direction"] != "unchanged" or delta or flips:
             entry = {
                 "run": str(rel),
+                "model": corrected.get("model"),
                 "stack": corrected.get("stack"),
                 "task": corrected.get("task"),
+                "condition": corrected.get("condition"),
                 "direction": info["direction"],
+                "stage_flips": flips,
                 "assertions": f"{info['before']['passed_count']}/{info['before']['total_count']}"
                               f" -> {info['after']['passed_count']}/{info['after']['total_count']}",
                 "composite": f"{info['composite_before']:.3f} -> {info['composite_after']:.3f}",
@@ -195,7 +262,7 @@ def regrade_tree(results_dir: Path, out_dir: Path, tasks_dir: Path = TASKS_DIR,
             summary["changed"].append(entry)
             if verbose:
                 print(f"  {entry['direction']:<13} {rel}  {entry['assertions']}  "
-                      f"composite {entry['composite']}")
+                      f"composite {entry['composite']}  {flips or ''}")
 
     (out_dir / "_regrade_summary.json").write_text(json.dumps(summary, indent=2))
     return summary
@@ -209,8 +276,14 @@ def format_summary(summary: dict[str, Any]) -> str:
         f"  semantic verdict pass -> fail: {summary['pass_to_fail']}",
         f"  unchanged verdict:             {summary['unchanged']}",
         f"  net assertions recovered:      {summary['assertion_delta']:+d}",
-        f"  corrected results written to:  {summary['out']}",
     ]
+    for name, flips in (summary.get("stage_flips") or {}).items():
+        if flips["fail_to_pass"] or flips["pass_to_fail"]:
+            lines.append(f"  {name} stage flips:{'':14.14}"
+                         f"+{flips['fail_to_pass']} / -{flips['pass_to_fail']}")
+    if summary.get("extraction_refusals"):
+        lines.append(f"  runs with refused extractions: {summary['extraction_refusals']}")
+    lines.append(f"  corrected results written to:  {summary['out']}")
     return "\n".join(lines)
 
 
@@ -225,7 +298,16 @@ def main() -> None:
     ap.add_argument("--with-node-modules", action="store_true",
                     help="Bootstrap chant's node_modules into regraded workspaces "
                          "(only needed if a grader ever inspects installed packages)")
+    ap.add_argument("--stages", default="semantic",
+                    help="Comma-separated stages to recompute: semantic (default), "
+                         "lint, static. lint/static shell out to the stack's real "
+                         "toolchain, so only run them where that toolchain is present.")
     args = ap.parse_args()
+
+    stages = tuple(s.strip() for s in args.stages.split(",") if s.strip())
+    unknown = set(stages) - STAGE_RUNNERS
+    if unknown:
+        raise SystemExit(f"unknown stage(s): {', '.join(sorted(unknown))}")
 
     if not args.results_dir.is_dir():
         raise SystemExit(f"not a directory: {args.results_dir}")
@@ -234,7 +316,7 @@ def main() -> None:
 
     args.out.mkdir(parents=True, exist_ok=True)
     summary = regrade_tree(args.results_dir, args.out, args.tasks_dir,
-                           with_node_modules=args.with_node_modules)
+                           with_node_modules=args.with_node_modules, stages=stages)
     print(format_summary(summary))
 
 
