@@ -38,14 +38,11 @@ STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python",
           "pulumi-typescript", "chant", "bare"]
 
 # stack -> why it cannot pass yet
-KNOWN_BROKEN = {
-    "crossplane":
-        "static: the golden is not valid Crossplane (#98) — the composition "
-        "uses `- function: <image>` where Pipeline mode requires `- step:` + "
-        "`functionRef`, the function input apiVersion is a group that does not "
-        "exist, and `function-automated-edits` is not a real function. Rebuilding "
-        "it is domain work; do not measure this arm until then.",
-}
+# Empty, and it must stay that way: every stack passes its own golden. An entry
+# here is a stack whose numbers cannot be trusted, so adding one is a decision
+# to publish an arm nothing can measure.
+KNOWN_BROKEN: dict[str, str] = {}
+
 
 
 
@@ -130,9 +127,8 @@ def test_every_stack_has_a_golden():
 
 def test_the_known_broken_list_is_not_a_dumping_ground():
     """Every entry needs a reason, and the list must shrink, not grow."""
-    assert len(KNOWN_BROKEN) <= 1, (
-        "more stacks cannot pass their own golden than when this was last "
-        "tightened; "
+    assert len(KNOWN_BROKEN) == 0, (
+        "a stack has been added to the exemption list; "
         "fix the gate rather than extending the exemption list"
     )
     for stack, reason in KNOWN_BROKEN.items():
