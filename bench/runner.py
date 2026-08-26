@@ -31,6 +31,16 @@ GROUNDING_STACKS = frozenset({"knr-ops", "crossplane"})
 log = logging.getLogger(__name__)
 
 
+class GroundingCoverageError(RuntimeError):
+    """Raised when one or more discovered kinds have no usable schema."""
+
+
+def _concise_grounding_error(error: Exception) -> str:
+    """Flatten an unavailable-schema error for result metadata and messages."""
+    message = " ".join(str(error).split())
+    return message or error.__class__.__name__
+
+
 def validate_grounding_stacks(
     stacks: list[str],
     grounding: bool = False,
@@ -487,25 +497,59 @@ def run_task(
             "stages": {},
         }
         if grounding:
-            result["grounding"] = {"kinds": [], "section_chars": 0}
+            result["grounding"] = {
+                "discovered_kinds": [],
+                "resolved_kinds": [],
+                "unavailable_kinds": [],
+                "section_chars": 0,
+            }
 
         # Invoke model
         grounding_complete = not grounding
         try:
             if grounding:
+                assert grounding_client is not None
+                assert grounding_cache is not None
+                client = grounding_client
+                cache = grounding_cache
                 pairs = discover_kinds(workspace)
-                schemas = {
-                    (api_version, kind): grounding_cache.get(
-                        kind, api_version, grounding_client.get_schema
-                    )
-                    for api_version, kind in pairs
+                discovered_kinds = [
+                    f"{api_version}/{kind}" for api_version, kind in pairs
+                ]
+                schemas: dict[tuple[str, str], str] = {}
+                resolved_kinds: list[str] = []
+                unavailable_kinds: list[dict[str, str]] = []
+                for api_version, kind in pairs:
+                    pair = f"{api_version}/{kind}"
+                    try:
+                        schema = cache.get(
+                            kind, api_version, client.get_schema
+                        )
+                    except Exception as exc:
+                        unavailable_kinds.append(
+                            {"pair": pair, "error": _concise_grounding_error(exc)}
+                        )
+                    else:
+                        schemas[(api_version, kind)] = schema
+                        resolved_kinds.append(pair)
+
+                result["grounding"] = {
+                    "discovered_kinds": discovered_kinds,
+                    "resolved_kinds": resolved_kinds,
+                    "unavailable_kinds": unavailable_kinds,
+                    "section_chars": 0,
                 }
+                if unavailable_kinds:
+                    details = "; ".join(
+                        f"{item['pair']}: {item['error']}" for item in unavailable_kinds
+                    )
+                    raise GroundingCoverageError(
+                        f"grounding schema coverage failed: {details}"
+                    )
+
                 section = build_grounding_section(schemas)
                 prompt = prompt + "\n\n" + section
-                result["grounding"] = {
-                    "kinds": [f"{api_version}/{kind}" for api_version, kind in pairs],
-                    "section_chars": len(section),
-                }
+                result["grounding"]["section_chars"] = len(section)
                 grounding_complete = True
 
             completion = adapter.complete(prompt, workspace_files)
@@ -537,6 +581,9 @@ def run_task(
             if run_e2e:
                 result["stages"]["e2e"] = e2e.run_e2e(workspace, stack)
 
+        except GroundingCoverageError as e:
+            result["error"] = str(e)
+            result["stages"]["lint"] = {"passed": False, "logs": str(e)}
         except Exception as e:
             result["error"] = str(e) if grounding_complete else f"grounding failed: {e}"
             result["stages"]["lint"] = {"passed": False, "logs": str(e)}

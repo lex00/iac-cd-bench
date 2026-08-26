@@ -168,7 +168,9 @@ def test_run_task_appends_grounding_prompt_and_records_metadata(tmp_path, monkey
     assert "### Reference schemas" in adapter.prompts[0]
     assert '"type": "object"' in adapter.prompts[0]
     assert client.calls == [("Widget", "example.org/v1")]
-    assert results[0]["grounding"]["kinds"] == ["example.org/v1/Widget"]
+    assert results[0]["grounding"]["discovered_kinds"] == ["example.org/v1/Widget"]
+    assert results[0]["grounding"]["resolved_kinds"] == ["example.org/v1/Widget"]
+    assert results[0]["grounding"]["unavailable_kinds"] == []
     section = "### Reference schemas" + adapter.prompts[0].split("### Reference schemas", 1)[1]
     assert results[0]["grounding"]["section_chars"] == len(section)
     assert "error" not in results[0]
@@ -196,8 +198,66 @@ def test_run_task_records_grounding_failure_without_invoking_model(tmp_path, mon
     )
 
     assert adapter.prompts == []
-    assert results[0]["error"] == "grounding failed: catalog unavailable"
-    assert results[0]["grounding"] == {"kinds": [], "section_chars": 0}
+    assert results[0]["error"] == (
+        "grounding schema coverage failed: example.org/v1/Widget: catalog unavailable"
+    )
+    assert results[0]["grounding"] == {
+        "discovered_kinds": ["example.org/v1/Widget"],
+        "resolved_kinds": [],
+        "unavailable_kinds": [
+            {"pair": "example.org/v1/Widget", "error": "catalog unavailable"}
+        ],
+        "section_chars": 0,
+    }
+    assert results[0]["stages"]["lint"]["passed"] is False
+
+
+def test_run_task_reports_all_unavailable_grounding_kinds_before_model(tmp_path):
+    task_dir = _grounded_task(tmp_path)
+    (task_dir / "seed" / "missing.yaml").write_text(
+        "apiVersion: z.example.org/v1\nkind: Missing\nspec: {}\n"
+    )
+    adapter = CapturingAdapter()
+
+    class PartiallyAvailableClient:
+        def __init__(self):
+            self.calls = []
+
+        def get_schema(self, kind, api_version):
+            self.calls.append((kind, api_version))
+            if kind == "Missing":
+                raise RuntimeError("catalog unavailable")
+            return '{"type": "object"}'
+
+    client = PartiallyAvailableClient()
+    results = runner.run_task(
+        task_dir,
+        adapter,
+        1,
+        False,
+        "warm",
+        grounding=True,
+        grounding_client=client,
+        grounding_cache=SchemaCache(tmp_path / "cache"),
+    )
+
+    assert client.calls == [
+        ("Widget", "example.org/v1"),
+        ("Missing", "z.example.org/v1"),
+    ]
+    assert adapter.prompts == []
+    assert results[0]["grounding"] == {
+        "discovered_kinds": ["example.org/v1/Widget", "z.example.org/v1/Missing"],
+        "resolved_kinds": ["example.org/v1/Widget"],
+        "unavailable_kinds": [
+            {"pair": "z.example.org/v1/Missing", "error": "catalog unavailable"}
+        ],
+        "section_chars": 0,
+    }
+    assert results[0]["error"] == (
+        "grounding schema coverage failed: "
+        "z.example.org/v1/Missing: catalog unavailable"
+    )
     assert results[0]["stages"]["lint"]["passed"] is False
 
 
