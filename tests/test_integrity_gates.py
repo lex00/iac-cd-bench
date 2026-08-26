@@ -598,6 +598,20 @@ def _write_run(dir_: Path, task: str, run: int, **overrides) -> None:
     (out / f"{task}_run{run}.json").write_text(json.dumps(payload))
 
 
+def _crash_overrides(error: str) -> dict:
+    """Mirrors bench.runner's exception handler (runner.py, the `except
+    Exception as e` block around line 781): one harness failure stamps
+    `result["error"]` AND `result["validity"]["reasons"]` with the same
+    `runner_error` text, at the same call site."""
+    return {
+        "error": error,
+        "validity": {
+            "valid": False, "reason": "runner_error", "content_length": None,
+            "verdict": "invalid", "reasons": [f"runner_error: {error}"],
+        },
+    }
+
+
 def test_uneven_k_is_refused_as_not_the_same_experiment(tmp_path):
     """chant-bench's trial-count check: a 1-run task beside 3-run tasks is a
     smoke test that landed on the leaderboard."""
@@ -624,6 +638,76 @@ def test_errored_runs_stay_in_the_denominator_and_refuse_above_the_limit(tmp_pat
     report = validate.validate_result_set(d)
     assert report["total"] == 11
     assert report["errored"] == 2
+    assert report["error_share"] > validate.CRASH_LIMIT
+    assert any("died in the harness" in p for p in report["problems"])
+    assert report["verdict"] == "refused"
+
+
+def test_runner_error_is_not_double_counted_from_the_stored_verdict():
+    """classify_run's own `result.get('error')` check and the run's stored
+    `validity` block (stamped by the same runner.py exception handler) both
+    carry a `runner_error` reason for one harness failure. One failure, one
+    reason."""
+    result = {
+        "model": "m", "stack": "terraform", "task": "T2-generate", "run": 0,
+        "stages": {},
+        **_crash_overrides("HTTP 500 after 10 retries"),
+    }
+    classification = validate.classify_run(result, spec={})
+    runner_errors = [r for r in classification["invalid_reasons"] if r.startswith("runner_error")]
+    assert len(runner_errors) == 1
+
+
+def test_runner_error_dedup_keeps_the_more_informative_message():
+    """Step 1 truncates `result['error']` to 160 chars; the stored verdict
+    (step 2) carries the untruncated text from the same exception. When the
+    two copies differ only in how much detail survived, keep the fuller one
+    rather than whichever happened to be appended first."""
+    long_error = "HTTP 500: " + "x" * 250
+    result = {
+        "model": "m", "stack": "terraform", "task": "T2-generate", "run": 0,
+        "stages": {},
+        **_crash_overrides(long_error),
+    }
+    classification = validate.classify_run(result, spec={})
+    runner_errors = [r for r in classification["invalid_reasons"] if r.startswith("runner_error")]
+    assert len(runner_errors) == 1
+    assert runner_errors[0] == f"runner_error: {long_error}"
+
+
+def test_crash_rate_at_the_limit_is_not_refused_after_dedup(tmp_path):
+    """The concrete #40 numbers: 3 genuinely failed runs out of 36 is 8.3%,
+    under CRASH_LIMIT. Before the dedup fix, each crashed run's runner_error
+    reason was counted twice (once from `result['error']`, once from the
+    run's own stored `validity`), so this same set read as 6/36 = 17% and
+    was refused."""
+    d = tmp_path / "set"
+    for r in range(33):
+        _write_run(d, "T2-generate", r)
+    for r in range(33, 36):
+        _write_run(d, "T2-generate", r, **_crash_overrides("HTTP 500 after 10 retries"))
+
+    report = validate.validate_result_set(d)
+    assert report["total"] == 36
+    assert report["errored"] == 3
+    assert report["error_share"] == pytest.approx(3 / 36)
+    assert report["error_share"] <= validate.CRASH_LIMIT
+    assert not any("died in the harness" in p for p in report["problems"])
+    assert report["verdict"] != "refused"
+
+
+def test_crash_rate_above_the_limit_is_still_refused(tmp_path):
+    """4 of 36 is 11.1%, over CRASH_LIMIT even after the double-count is
+    fixed - the gate must still catch a genuine crash rate."""
+    d = tmp_path / "set"
+    for r in range(32):
+        _write_run(d, "T2-generate", r)
+    for r in range(32, 36):
+        _write_run(d, "T2-generate", r, **_crash_overrides("HTTP 500 after 10 retries"))
+
+    report = validate.validate_result_set(d)
+    assert report["total"] == 36
+    assert report["errored"] == 4
     assert report["error_share"] > validate.CRASH_LIMIT
     assert any("died in the harness" in p for p in report["problems"])
     assert report["verdict"] == "refused"

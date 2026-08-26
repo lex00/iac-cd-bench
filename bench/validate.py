@@ -75,6 +75,30 @@ def _spec_for(result: dict[str, Any]) -> dict[str, Any] | None:
     return _load_spec(str(stack), str(task))
 
 
+def _dedupe_reasons(reasons: list[str]) -> list[str]:
+    """Collapse reasons that describe the same failure more than once.
+
+    A freshly-derived check and a result's own stored verdict can each
+    contribute a reason for the same underlying label — `runner_error` is the
+    concrete case: `classify_run` appends it directly from `result["error"]`
+    and then again from the stored `validity["reasons"]` the runner stamped
+    at the same call site, double-counting one harness failure as two.
+    Dedupe by label (the text before the first colon), keeping first-seen
+    order but preferring whichever phrasing is more informative — the longer
+    string — when the two copies differ only in detail (e.g. one truncated).
+    """
+    kept: dict[str, str] = {}
+    order: list[str] = []
+    for reason in reasons:
+        label = reason.split(":", 1)[0]
+        if label not in kept:
+            order.append(label)
+            kept[label] = reason
+        elif len(reason) > len(kept[label]):
+            kept[label] = reason
+    return [kept[label] for label in order]
+
+
 def classify_run(result: dict[str, Any], spec: dict[str, Any] | None = None) -> dict[str, Any]:
     """Classify one run as valid / partial / invalid, with reasons.
 
@@ -165,6 +189,9 @@ def classify_run(result: dict[str, Any], spec: dict[str, Any] | None = None) -> 
             )
         if not (prov.get("task") or {}).get("prompt_sha256"):
             partial.append("no_prompt_hash: the task prompt was not fingerprinted")
+
+    invalid = _dedupe_reasons(invalid)
+    partial = _dedupe_reasons(partial)
 
     if invalid:
         state = "invalid"
