@@ -173,7 +173,7 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
 
 
 def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
-    """Run crossplane beta render for Crossplane."""
+    """Run crossplane render for Crossplane."""
     passed = True
 
     # Find claims

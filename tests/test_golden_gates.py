@@ -46,9 +46,10 @@ KNOWN_BROKEN = {
         "lint: tsconfig declares types [@pulumi/aws] but the golden ships no "
         "node_modules, so tsc cannot resolve them (TS2688)",
     "crossplane":
-        "static: `crossplane render` pulls Composition Function images from "
-        "xpkg.upbound.io via Docker, so the gate needs a network and a live "
-        "registry — and the pinned tag does not resolve",
+        "static: golden is not valid Crossplane (#98). The composition uses wrong "
+        "syntax (`- function: <image>` instead of `- step: <name>` + `functionRef`), "
+        "wrong apiVersion, and a function that does not exist (`function-automated-edits`). "
+        "Rebuild golden with correct syntax; do not measure until then.",
 }
 
 
