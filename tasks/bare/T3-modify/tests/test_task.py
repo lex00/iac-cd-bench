@@ -1,62 +1,72 @@
 """Semantic grader for bare T3-modify: scale workers in both dev and prod.
 
-bare has no shared base/overlay, so the fix must land in BOTH
-dev/workers.yaml and prod/workers.yaml independently -- this grader asserts
-each environment separately rather than accepting a change in only one.
+bare has no shared base/overlay, so the fix must land in BOTH the dev and
+the prod worker manifests independently -- this grader asserts each
+environment separately rather than accepting a change in only one.
+
+Environment scoping comes from the resource names (`myapp-dev-workers` /
+`myapp-prod-workers`), not from the file the model wrote them to: the
+objects are located by kind+name anywhere in the workspace rather than in
+`dev/workers.yaml` and `prod/workers.yaml` specifically (issue #72).
+
+The scale-up is satisfied by any matching MachineDeployment carrying the
+new replica count; the "unchanged" invariants require *every* matching
+AWSMachineTemplate to still carry the original instance type, so a rewrite
+that leaves a corrected copy beside a mangled one cannot pass on the
+corrected copy alone.
 """
 
+from __future__ import annotations
+
+import sys
 from pathlib import Path
 
 import pytest
-import yaml
 
-
-def _load_docs(path: Path) -> list[dict]:
-    if not path.exists():
-        return []
-    return [d for d in yaml.safe_load_all(path.read_text()) if d]
-
-
-def _find(docs: list[dict], kind: str, name: str) -> dict | None:
-    for d in docs:
-        if d.get("kind") == kind and d.get("metadata", {}).get("name") == name:
-            return d
-    return None
+sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+import _grader_lib as gl  # noqa: E402
 
 
 @pytest.fixture(scope="module")
-def dev_docs():
-    return _load_docs(Path("dev/workers.yaml"))
+def all_docs():
+    return gl.all_docs()
 
 
-@pytest.fixture(scope="module")
-def prod_docs():
-    return _load_docs(Path("prod/workers.yaml"))
+def _find(kind: str, name: str, docs) -> list[dict]:
+    return [d for _p, d in gl.find_docs(docs, kind=kind, name=name)]
 
 
-def test_dev_replicas_scaled(dev_docs):
-    md = _find(dev_docs, "MachineDeployment", "myapp-dev-workers")
-    assert md is not None, "dev/workers.yaml: myapp-dev-workers MachineDeployment not found"
-    assert md["spec"]["replicas"] == 3, \
-        f"dev replicas: expected 3, got {md['spec'].get('replicas')!r}"
+def test_dev_replicas_scaled(all_docs):
+    mds = _find("MachineDeployment", "myapp-dev-workers", all_docs)
+    assert mds, ("myapp-dev-workers MachineDeployment not found anywhere in the "
+                 f"workspace. Workspace contains: {gl.inventory()}")
+    replicas = [gl.deep_get(d, "spec", "replicas") for d in mds]
+    assert any(r == 3 for r in replicas), \
+        f"dev replicas: expected 3, got {replicas!r}"
 
 
-def test_dev_instance_type_unchanged(dev_docs):
-    tmpl = _find(dev_docs, "AWSMachineTemplate", "myapp-dev-workers")
-    assert tmpl is not None, "dev/workers.yaml: myapp-dev-workers AWSMachineTemplate not found"
-    itype = tmpl["spec"]["template"]["spec"]["instanceType"]
-    assert itype == "t3.medium", f"dev instanceType should stay t3.medium, got {itype!r}"
+def test_dev_instance_type_unchanged(all_docs):
+    tmpls = _find("AWSMachineTemplate", "myapp-dev-workers", all_docs)
+    assert tmpls, ("myapp-dev-workers AWSMachineTemplate not found anywhere in the "
+                   f"workspace. Workspace contains: {gl.inventory()}")
+    types = [gl.deep_get(d, "spec", "template", "spec", "instanceType") for d in tmpls]
+    assert all(t == "t3.medium" for t in types), \
+        f"dev instanceType should stay t3.medium, got {types!r}"
 
 
-def test_prod_replicas_scaled(prod_docs):
-    md = _find(prod_docs, "MachineDeployment", "myapp-prod-workers")
-    assert md is not None, "prod/workers.yaml: myapp-prod-workers MachineDeployment not found"
-    assert md["spec"]["replicas"] == 6, \
-        f"prod replicas: expected 6, got {md['spec'].get('replicas')!r}"
+def test_prod_replicas_scaled(all_docs):
+    mds = _find("MachineDeployment", "myapp-prod-workers", all_docs)
+    assert mds, ("myapp-prod-workers MachineDeployment not found anywhere in the "
+                 f"workspace. Workspace contains: {gl.inventory()}")
+    replicas = [gl.deep_get(d, "spec", "replicas") for d in mds]
+    assert any(r == 6 for r in replicas), \
+        f"prod replicas: expected 6, got {replicas!r}"
 
 
-def test_prod_instance_type_unchanged(prod_docs):
-    tmpl = _find(prod_docs, "AWSMachineTemplate", "myapp-prod-workers")
-    assert tmpl is not None, "prod/workers.yaml: myapp-prod-workers AWSMachineTemplate not found"
-    itype = tmpl["spec"]["template"]["spec"]["instanceType"]
-    assert itype == "t3.large", f"prod instanceType should stay t3.large, got {itype!r}"
+def test_prod_instance_type_unchanged(all_docs):
+    tmpls = _find("AWSMachineTemplate", "myapp-prod-workers", all_docs)
+    assert tmpls, ("myapp-prod-workers AWSMachineTemplate not found anywhere in the "
+                   f"workspace. Workspace contains: {gl.inventory()}")
+    types = [gl.deep_get(d, "spec", "template", "spec", "instanceType") for d in tmpls]
+    assert all(t == "t3.large" for t in types), \
+        f"prod instanceType should stay t3.large, got {types!r}"

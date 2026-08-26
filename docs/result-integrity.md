@@ -157,6 +157,53 @@ the set. A set is **refused** (exit 1) when:
 Errored runs stay in the denominator throughout. Dropping them from both sides
 of the ratio is how a catastrophe reads as a triumph.
 
+### 8. Graders locate artifacts by content, never by path
+
+A grader that reads `Path("infra/s3/logs-bucket.yaml").read_text()` is grading
+file placement. When the task prompt never stated a layout, an answer that
+chose `infra/s3/logs/bucket.yaml` scores zero on a convention it was never
+given — and because `read_text()` on a missing path raises rather than
+asserting, *every* assertion in the module errors on that one wrong guess.
+That is #72, caught live: a knr-ops T2-generate run whose `yq` parse and
+`kustomize build` both passed scored 0/6 semantic.
+
+The bias is not symmetric across arms, which is what makes it worse than a
+uniform harshness. chant's graders parse emitted source structurally and
+tolerate layout variation; knr-ops T2 demanded one exact tree. The arm
+comparison this benchmark exists to make was being decided partly by which
+arm's grader happened to be written which way.
+
+The rules now:
+
+- Artifacts are found by what they are — apiVersion/kind/name for YAML, a
+  structural feature of the source for HCL/TypeScript/Python — anywhere in the
+  workspace. `tasks/_grader_lib.py` is the shared implementation.
+- A missing artifact is an assertion failure carrying an inventory of what the
+  workspace *did* contain, never an exception.
+- Locating by content must not become grepping the workspace: a document
+  counts only when it identifies itself as the thing under test.
+  `tests/test_grader_robustness.py` asserts both directions for every grader
+  it covers — the golden-derived answer in a deliberately non-canonical layout
+  passes, and each targeted defect still fails its own assertion.
+
+### 9. A grader fix is applied to stored runs, not paid for again
+
+Every result JSON carries the model's completion in `content`, so the exact
+workspace the grader saw can be rebuilt: seed, `model_output.md`, and
+`bench.runner.extract_code_blocks` (the runner's own extractor, imported, not
+reimplemented).
+
+```
+python3 tools/regrade_offline.py results/<set> --out results-regraded/<set>
+```
+
+The input tree is read-only. Corrected runs go to a parallel tree, each
+carrying a `regrade` block with the before/after semantic verdict and the
+sha256 of the grader that produced it, so a regraded set can never be mistaken
+for an original. Only the semantic stage is recomputed — lint and static ran
+real tools against the same workspace and their verdicts stand — and scores
+are recomputed in full, since correctness and completeness both read semantic.
+
 ## Mechanism map
 
 | iac-cd-bench | ported from | what it fixes here |
@@ -206,6 +253,19 @@ of the ratio is how a catastrophe reads as a triumph.
 - **`consistency` is computed at aggregate level only** and is 0.0 in every
   per-run composite, which drags every composite down by a fixed amount rather
   than measuring anything.
+- **Three graders still pass on their own unmodified seed.** terraform
+  T4-debug's first two assertions, and pulumi-python T4-debug's two, are
+  satisfied by strings the seed already contains (`aws_db_instance`,
+  `deletion_protection`, the word `Secret` inside a defect comment). This is
+  the opposite error to #72 — too loose rather than too strict — and it was
+  deliberately left alone while fixing #72, because tightening it would move
+  every historical terraform/pulumi-python T4 number in the same commit that
+  moves the knr-ops ones. `tests/test_grader_robustness.py` records the
+  current behaviour so a later fix is a visible change, not a silent one.
+- **Four T3-modify tasks declare `assertion_count` but ship no grader**
+  (crossplane, pulumi-python, pulumi-typescript, terraform). Their semantic
+  stage is `inapplicable`, which rule 3 handles honestly, but the declared
+  count is a promise the task does not keep.
 - **No CI enforcement.** chant-bench gates its build on
   `validate_results.py` and on regenerating pages and diffing them. Nothing
   here runs `bench.validate` automatically.
