@@ -77,12 +77,45 @@ def integrity_section(label: str, scored: list[dict], rejected: list[dict]) -> l
         ]
     partial = [r for r in scored if r["_integrity"]["verdict"] == "partial"]
     if partial:
+        partial_reasons: Counter[str] = Counter()
+        for r in partial:
+            for reason in r["_integrity"]["partial_reasons"]:
+                partial_reasons[reason.split(":", 1)[0]] += 1
         lines += [
             "",
-            f"- partial provenance: **{len(partial)}** run(s) carry incomplete "
-            "provenance (no harness commit, prompt hash or toolchain versions) "
-            "and cannot be compared against another result set.",
+            f"- partial: **{len(partial)}** run(s) are scored but flagged.",
+            "",
+            "| Partial reason | Runs |",
+            "| --- | --- |",
         ]
+        lines += [
+            f"| `{k}` | {v} |"
+            for k, v in sorted(partial_reasons.items(), key=lambda kv: -kv[1])
+        ]
+        notes = []
+        if "no_stage_ran" in partial_reasons:
+            notes.append(
+                "`no_stage_ran` means the task's spec disables every build "
+                "stage, so the run scores on the rubric judge alone. Its "
+                "provenance is complete and it compares normally."
+            )
+        # Only these actually leave the run unable to name the experiment it
+        # came from. Saying it of every partial run — #80 — discredited runs
+        # whose provenance was intact.
+        provenance_gaps = sorted(
+            partial_reasons.keys()
+            & {"dirty_harness", "no_harness_commit", "no_prompt_hash",
+               "no_provenance", "no_toolchain", "partial_toolchain"}
+        )
+        if provenance_gaps:
+            n = sum(partial_reasons[k] for k in provenance_gaps)
+            notes.append(
+                f"{n} run(s) carry incomplete provenance "
+                f"({', '.join('`' + g + '`' for g in provenance_gaps)}) and "
+                "cannot be compared against another result set."
+            )
+        if notes:
+            lines += ["", "> " + "  ".join(notes)]
     lines.append("")
     return lines
 

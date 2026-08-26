@@ -10,7 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-from bench.report import archetype_of, collect_result_sets, generate_comparison
+from bench.report import (archetype_of, collect_result_sets, generate_comparison,
+                          integrity_section)
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -127,3 +128,54 @@ def test_makefile_compare_target_flag_exists():
         capture_output=True, text=True, cwd=str(ROOT),
     )
     assert "--compare" in proc.stdout
+
+
+# ── integrity section: partial runs (#80) ────────────────────────────────
+
+def _partial(reasons: list[str]) -> dict:
+    """A scored run the gates flagged partial for the given reasons."""
+    return {"_integrity": {"verdict": "partial", "partial_reasons": reasons,
+                           "invalid_reasons": []}}
+
+
+def test_no_stage_ran_is_not_reported_as_missing_provenance():
+    """A spec-disabled stage set is not a provenance gap. Claiming it is (#80)
+    told readers that 36 runs with intact provenance could not be compared."""
+    section = "\n".join(integrity_section(
+        "set-a",
+        [_partial(["no_stage_ran: every stage was disabled by spec"])] * 3,
+        [],
+    ))
+
+    assert "| `no_stage_ran` | 3 |" in section
+    assert "incomplete provenance" not in section
+    assert "cannot be compared" not in section
+    assert "provenance is complete" in section
+
+
+def test_real_provenance_gaps_still_say_so():
+    section = "\n".join(integrity_section(
+        "set-a",
+        [_partial(["no_harness_commit: the harness commit was not recorded"]),
+         _partial(["no_toolchain: binary versions were not recorded"])],
+        [],
+    ))
+
+    assert "cannot be compared against another result set" in section
+    assert "`no_harness_commit`" in section and "`no_toolchain`" in section
+    assert "2 run(s) carry incomplete provenance" in section
+
+
+def test_mixed_partial_reasons_are_counted_separately():
+    """The comparability warning must name only the runs it applies to, not
+    every partial run in the set."""
+    section = "\n".join(integrity_section(
+        "set-a",
+        [_partial(["no_stage_ran: x"])] * 5 + [_partial(["no_prompt_hash: y"])],
+        [],
+    ))
+
+    assert "| `no_stage_ran` | 5 |" in section
+    assert "| `no_prompt_hash` | 1 |" in section
+    # one run has the gap, not six
+    assert "1 run(s) carry incomplete provenance" in section
