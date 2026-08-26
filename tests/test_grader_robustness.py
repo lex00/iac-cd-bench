@@ -806,8 +806,21 @@ def test_terraform_t2_bucket_without_versioning_fails_only_that():
 
 
 def test_terraform_t4_fix_at_any_path_passes():
-    fixed = (TASKS / "terraform/T4-debug/seed/main.tf").read_text().replace(
-        "deletion_protection = false", "deletion_protection = true")
+    """The point of this test is path independence (#72): a correct fix must
+    be graded wherever the model puts it.
+
+    The fixture has to be a *complete* fix. It used to flip
+    deletion_protection alone and still pass, because the grader's other two
+    assertions matched strings the seed already contained (#75). Now all three
+    seeded defects have to be addressed: the destroyable database, the
+    count/for_each mismatch, and the output indexing a counted resource.
+    """
+    fixed = (TASKS / "terraform/T4-debug/seed/main.tf").read_text()
+    fixed = fixed.replace("deletion_protection = false", "deletion_protection = true")
+    fixed = fixed.replace("count = length(var.envs)", "for_each = toset(var.envs)")
+    fixed = fixed.replace(
+        "aws_db_instance.main[0].endpoint",
+        "{ for k, v in aws_db_instance.main : k => v.endpoint }")
     assert_all(
         grade("terraform/T4-debug", {"infra/db.tf": fixed, "model_output.md": "see files"}),
         "PASSED",

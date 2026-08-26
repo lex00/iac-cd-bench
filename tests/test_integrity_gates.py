@@ -870,3 +870,48 @@ def test_report_excludes_rejected_runs_and_states_the_count(tmp_path):
     assert "**rejected: 1**" in report
     assert "empty_completion" in report
     assert "Runs scored: 1 (rejected: 1)" in report
+
+
+# ── reasoning effort must be uniform within a set ────────────────────────
+
+def _prov(effort: str) -> dict:
+    return {
+        "provenance": {
+            "harness": {"commit": "abc1234", "dirty": False},
+            "provider": "claude-cli",
+            "reasoning_effort": effort,
+            "toolchain": {"terraform": {"version": "1.9.0"}},
+        }
+    }
+
+
+def test_mixed_reasoning_effort_within_one_set_is_refused(tmp_path):
+    """Effort was guarded across sets but not within one, so a set could mix
+    it silently and still validate.
+
+    The benchmark's author reports that reasoning effort moved results more
+    than model choice did in places. That makes a set mixing efforts not one
+    experiment but several averaged together — a harder refusal than the model
+    axis, not a softer one.
+    """
+    d = tmp_path / "claude-haiku-4-5-mixed"
+    _write_run(d, "T2-generate", 0, **_prov("low"))
+    _write_run(d, "T3-modify", 0, **_prov("high"))
+
+    report = validate.validate_result_set(d)
+
+    assert report["verdict"] == "refused", report
+    problem = "\n".join(report["problems"])
+    assert "mixed reasoning effort" in problem
+    assert "high" in problem and "low" in problem
+
+
+def test_uniform_reasoning_effort_is_not_refused(tmp_path):
+    """The other direction — the check must not fire on a correct set."""
+    d = tmp_path / "claude-haiku-4-5-uniform"
+    _write_run(d, "T2-generate", 0, **_prov("low"))
+    _write_run(d, "T3-modify", 0, **_prov("low"))
+
+    report = validate.validate_result_set(d)
+
+    assert not any("reasoning effort" in p for p in report["problems"]), report["problems"]

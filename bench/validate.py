@@ -350,6 +350,18 @@ def validate_result_set(result_dir: Path) -> dict[str, Any]:
         report["problems"].append(
             f"mixed providers within one set: {', '.join(sorted(providers))}"
         )
+    if len(efforts) > 1:
+        # Reasoning effort was guarded across sets (comparability's "reasoning
+        # effort" axis) but not within one, so a set could silently mix
+        # efforts and still validate. Per the benchmark author, effort moved
+        # results more than model choice did in places — which makes a set
+        # that mixes it not one experiment but several averaged together, and
+        # makes this a harder refusal than the model axis, not a softer one.
+        report["problems"].append(
+            f"mixed reasoning effort within one set: "
+            f"{', '.join(sorted(efforts))} — effort moves results more than "
+            "model choice does, so these runs are not one experiment"
+        )
 
     report["verdict"] = (
         "refused" if report["problems"]

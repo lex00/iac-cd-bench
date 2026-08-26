@@ -2,7 +2,7 @@
 # kinds as golden-base/knr-ops/clusters/eksa/cluster.yaml. No kustomize base
 # to inherit from: this file is prod's complete, standalone copy - it is not
 # a patch over dev/cluster.yaml.
-apiVersion: controlplane.cluster.x-k8s.io/v1beta1
+apiVersion: cluster.x-k8s.io/v1beta1
 kind: Cluster
 metadata:
   name: myapp-prod
@@ -13,12 +13,12 @@ spec:
       cidrBlocks:
         - 192.168.0.0/16
   infrastructureRef:
-    apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-    kind: CAPACluster
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: AWSCluster
     name: myapp-prod
   controlPlaneRef:
     apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-    kind: CAPAKubeadmControlPlane
+    kind: KubeadmControlPlane
     name: myapp-prod
 ---
 apiVersion: infrastructure.cluster.x-k8s.io/v1beta1

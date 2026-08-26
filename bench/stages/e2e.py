@@ -357,6 +357,33 @@ def ensure_chant_node_modules(golden_dir: Path | None = None) -> Path:
     return golden_dir
 
 
+def ensure_pulumi_typescript_node_modules(golden_dir: Path | None = None) -> Path:
+    """Install golden-base/pulumi-typescript's node_modules once (from its
+    committed package-lock.json) so tsc can resolve @pulumi/aws types at lint time.
+
+    Idempotent: checks for @pulumi/aws actually present under node_modules
+    rather than just the directory existing, so a partial or stale install
+    re-runs `npm ci` instead of silently reusing it.
+    """
+    golden_dir = golden_dir or (ROOT / "golden-base" / "pulumi-typescript")
+    node_modules = golden_dir / "node_modules"
+    aws_pkg = node_modules / "@pulumi" / "aws"
+    if aws_pkg.is_dir():
+        return golden_dir
+
+    log.info("Installing golden-base/pulumi-typescript node_modules (one-time, "
+             "cached for the rest of this process)")
+    subprocess.run(
+        ["npm", "ci", "--no-audit", "--no-fund"],
+        cwd=str(golden_dir),
+        check=True,
+        capture_output=True,
+        text=True,
+        timeout=300,
+    )
+    return golden_dir
+
+
 def preflight_chant_golden() -> dict:
     """Fairness gate (in the spirit of chant-bench): assert golden-base/chant
     itself passes lint + static before any model run burns tokens on chant
@@ -396,4 +423,36 @@ def preflight_chant_golden() -> dict:
     )
     if not passed:
         log.error("chant golden preflight FAILED:\n%s", logs)
+    return {"passed": passed, "skipped": False, "logs": logs}
+
+
+def preflight_pulumi_typescript_golden() -> dict:
+    """Fairness gate: assert golden-base/pulumi-typescript itself passes lint
+    before any model run burns tokens on pulumi-typescript tasks. The issue is
+    that tsc cannot resolve @pulumi/aws types without a node_modules tree; this
+    gate ensures the fix works by running lint on the golden with its
+    node_modules properly installed."""
+    from bench.stages import lint
+
+    golden_dir = ROOT / "golden-base" / "pulumi-typescript"
+    if not golden_dir.exists():
+        msg = "SKIP: golden-base/pulumi-typescript does not exist yet"
+        log.warning(msg)
+        return {"passed": True, "skipped": True, "logs": msg}
+
+    try:
+        ensure_pulumi_typescript_node_modules(golden_dir)
+    except Exception as e:  # noqa: BLE001 - surfaced as a failed preflight, not a crash
+        msg = f"golden-base/pulumi-typescript node_modules install failed: {e}"
+        log.error(msg)
+        return {"passed": False, "skipped": False, "logs": msg}
+
+    lint_result = lint.run_lint(golden_dir, "pulumi-typescript")
+    passed = bool(lint_result.get("passed"))
+    logs = (
+        f"golden-base/pulumi-typescript preflight: lint={'PASS' if lint_result.get('passed') else 'FAIL'}\n"
+        f"--- lint ---\n{lint_result.get('logs', '')}"
+    )
+    if not passed:
+        log.error("pulumi-typescript golden preflight FAILED:\n%s", logs)
     return {"passed": passed, "skipped": False, "logs": logs}

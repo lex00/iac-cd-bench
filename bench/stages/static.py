@@ -7,13 +7,21 @@ terraform plan, pulumi preview.
 
 from __future__ import annotations
 
+import os
+import re
 import subprocess
 import logging
 from pathlib import Path
 
+import yaml
+
 from bench.stages import lint as lint_mod
 
 log = logging.getLogger(__name__)
+
+# Vendored CRD JSON schemas (#83) live in bench.stages.lint, which this module
+# already imports; both gates validate against the same mirror.
+SCHEMA_DIR = lint_mod.SCHEMA_DIR
 
 
 def run_static(workspace: Path, stack: str) -> dict:
@@ -53,6 +61,47 @@ def run_static(workspace: Path, stack: str) -> dict:
     }
 
 
+def _kubeconform_valid_count(summary: str) -> int:
+    """How many resources kubeconform actually validated, from its summary.
+
+    `Summary: N resources found in 1 file - Valid: 2, Invalid: 0, Errors: 0,
+    Skipped: 3`. Skipped resources are ones whose schema was missing; they are
+    not evidence of anything, so only the Valid count is returned.
+    """
+    m = re.search(r"Valid:\s*(\d+)", summary)
+    return int(m.group(1)) if m else 0
+
+
+def _flux_kustomization_target(kfile: Path, workspace: Path) -> tuple[str, Path]:
+    """The (name, --path) a Flux Kustomization file should be built with.
+
+    The name comes from the first Kustomization document's `metadata.name`,
+    and the path from its `spec.path` resolved inside the workspace. Both fall
+    back to something usable rather than raising: an unreadable or nameless
+    file still gets built (and fails on its own merits) instead of taking the
+    whole stage down with a parse error.
+    """
+    name = kfile.stem
+    path = kfile.parent
+    try:
+        docs = [d for d in yaml.safe_load_all(kfile.read_text())
+                if isinstance(d, dict)]
+    except (OSError, yaml.YAMLError):
+        return name, path
+
+    for doc in docs:
+        if doc.get("kind") != "Kustomization":
+            continue
+        name = (doc.get("metadata") or {}).get("name") or name
+        spec_path = (doc.get("spec") or {}).get("path")
+        if spec_path:
+            candidate = (workspace / str(spec_path).lstrip("./")).resolve()
+            if candidate.is_dir() and workspace.resolve() in candidate.parents:
+                path = candidate
+        break
+    return name, path
+
+
 def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run kustomize build and flux build for knr-ops."""
     passed = True
@@ -64,7 +113,15 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         log.info("kustomize build %s", overlay_dir)
         try:
             proc = subprocess.run(
-                ["kustomize", "build", overlay_dir],
+                # LoadRestrictionsNone (#F8): an overlay legitimately
+                # references a base above it (`../../clusters/kustomization.yaml`),
+                # and kustomize's default restrictor refuses that with
+                # `security; file ... is not in or below ...` — failing the
+                # build for the layout the stack is supposed to use. The
+                # workspace is a disposable temp dir, so the restriction buys
+                # nothing here.
+                ["kustomize", "build", "--load-restrictor",
+                 "LoadRestrictionsNone", overlay_dir],
                 capture_output=True, text=True, timeout=60,
             )
             results.append(f"kustomize build {overlay_dir}: exit={proc.returncode}")
@@ -86,8 +143,18 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     for kfile in flux_kustomizations:
         log.info("flux build kustomization %s", kfile)
         try:
+            # `flux build kustomization` takes a NAME, with the manifests
+            # located by --path and the Kustomization itself by
+            # --kustomization-file. Passing the file as the positional NAME
+            # and omitting both flags (#82) left --path empty, so every call
+            # exited 1 on `invalid resource path ""` before flux read a
+            # manifest — the check could not pass, for any input, ever.
+            name, path = _flux_kustomization_target(kfile, workspace)
             proc = subprocess.run(
-                ["flux", "build", "kustomization", str(kfile), "--dry-run"],
+                ["flux", "build", "kustomization", name,
+                 "--path", str(path),
+                 "--kustomization-file", str(kfile),
+                 "--dry-run"],
                 capture_output=True, text=True, timeout=60,
             )
             results.append(f"flux build {kfile.name}: exit={proc.returncode}")
@@ -107,20 +174,43 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
 
 
 def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
-    """Run crossplane beta render for Crossplane."""
+    """Run crossplane render for Crossplane."""
     passed = True
 
     # Find claims
-    claims = list(workspace.rglob("*claim*.yaml"))
+    # A claim is identified by where it lives as well as what it is called.
+    # The golden puts them in `claims/dev.yaml` and `claims/prod.yaml`, which
+    # `*claim*.yaml` does not match — the directory carries the plural, the
+    # filename does not. The gate therefore found 0 claims on its own
+    # reference implementation and abstained on every crossplane run ever.
+    claims = sorted(set(workspace.rglob("*claim*.yaml"))
+                    | {f for f in workspace.rglob("*.y*ml")
+                       if f.parent.name in ("claims", "claim")})
     compositions = list(workspace.rglob("*composition*.yaml"))
     xrds = list(workspace.rglob("*xrd*.yaml"))
+    functions = list(workspace.rglob("*function*.y*ml"))
 
     for claim in claims:
         log.info("crossplane render %s", claim)
+        if not compositions or not functions:
+            results.append(
+                f"crossplane render {claim.name}: skipped — render needs a "
+                "composition and a functions file, found "
+                f"{len(compositions)} / {len(functions)}"
+            )
+            passed = False
+            continue
         try:
+            # `crossplane render <xr> <composition> <functions>`. The old call
+            # was `crossplane beta render <claim>`: `beta render` was promoted
+            # to a top-level `render` in the pinned CLI (1.20) and errors with
+            # `unexpected argument render`, and two of the three required
+            # arguments were never passed. The gate could not pass for any
+            # input, on any version — see #82 for the identical shape in flux.
             proc = subprocess.run(
-                ["crossplane", "beta", "render", str(claim)],
-                capture_output=True, text=True, timeout=60,
+                ["crossplane", "render", str(claim),
+                 str(compositions[0]), str(functions[0])],
+                capture_output=True, text=True, timeout=120,
             )
             results.append(f"crossplane render {claim.name}: exit={proc.returncode}")
             if proc.stderr:
@@ -174,8 +264,128 @@ def _terraform_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
 
 
 def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
-    """Run pulumi preview for Pulumi stacks."""
+    """Run pulumi preview for Pulumi stacks.
+
+    Sets up a local filesystem backend for Pulumi and initializes the stack,
+    so preview can run offline without requiring a Pulumi Cloud account.
+    Installs Python dependencies from requirements.txt if present.
+    """
     passed = True
+
+    # Check if requirements.txt exists and install dependencies
+    requirements_file = workspace / "requirements.txt"
+    venv_dir = workspace / ".venv"
+    if requirements_file.exists():
+        log.info("Installing Python dependencies from requirements.txt")
+        try:
+            # Create and activate a virtual environment
+            proc = subprocess.run(
+                ["python3", "-m", "venv", str(venv_dir)],
+                capture_output=True, text=True, timeout=120,
+            )
+            if proc.returncode != 0:
+                results.append(f"Failed to create venv: {proc.stderr[:500]}")
+                log.warning("venv creation failed")
+            else:
+                # Install dependencies in the venv
+                python_exe = venv_dir / "bin" / "python3"
+                proc = subprocess.run(
+                    [str(python_exe), "-m", "pip", "install", "-q", "-r", str(requirements_file)],
+                    capture_output=True, text=True, timeout=300,
+                    cwd=str(workspace),
+                )
+                if proc.returncode != 0:
+                    results.append(f"pip install failed: {proc.stderr[:500]}")
+                    log.warning("pip install failed: %s", proc.stderr[:200])
+                else:
+                    # Fix namespace package: create pulumi/aws/__init__.py that imports from pulumi_aws
+                    # This makes "from pulumi.aws import X" work properly (PEP 420 namespace package setup)
+                    try:
+                        pulumi_aws_dir = venv_dir / "lib"
+                        # Find the site-packages directory (handle different Python versions)
+                        site_packages = None
+                        for lib_dir in pulumi_aws_dir.glob("python*"):
+                            sp = lib_dir / "site-packages"
+                            if sp.exists():
+                                site_packages = sp
+                                break
+                        if site_packages:
+                            pulumi_dir = site_packages / "pulumi"
+                            pulumi_aws_dir_path = pulumi_dir / "aws"
+                            pulumi_aws_pkg = site_packages / "pulumi_aws"
+                            if pulumi_dir.exists() and pulumi_aws_pkg.exists():
+                                # Create pulumi/aws directory with __init__.py that acts as a namespace package
+                                if not pulumi_aws_dir_path.exists():
+                                    pulumi_aws_dir_path.mkdir(parents=True, exist_ok=True)
+                                init_file = pulumi_aws_dir_path / "__init__.py"
+                                if not init_file.exists():
+                                    # Use a namespace package approach that delegates to pulumi_aws
+                                    # This allows both 'from pulumi.aws import x' and 'from pulumi.aws.s3 import x'
+                                    init_file.write_text(
+                                        "import sys\n"
+                                        "from pathlib import Path\n"
+                                        "import pulumi_aws\n"
+                                        "# Copy pulumi_aws module into this namespace\n"
+                                        "sys.modules['pulumi.aws'] = pulumi_aws\n"
+                                        "for attr in dir(pulumi_aws):\n"
+                                        "    if not attr.startswith('_'):\n"
+                                        "        globals()[attr] = getattr(pulumi_aws, attr)\n"
+                                    )
+                    except Exception as e:
+                        log.warning("Failed to fix pulumi.aws namespace: %s", e)
+        except Exception as e:
+            results.append(f"Failed to set up venv: {str(e)}")
+            log.warning("venv setup failed: %s", e)
+
+    # Set up local filesystem backend for Pulumi
+    backend_dir = workspace / ".pulumi-backend"
+    backend_dir.mkdir(parents=True, exist_ok=True)
+    backend_url = f"file://{backend_dir.resolve()}"
+
+    # Environment for pulumi commands with local backend
+    pulumi_env = {
+        **os.environ,
+        "PULUMI_BACKEND_URL": backend_url,
+        "PULUMI_CONFIG_PASSPHRASE": "",  # Allow empty passphrase for local dev
+    }
+
+    # If a venv was created, set PYTHONPATH to include the site-packages
+    if venv_dir.exists():
+        for lib_dir in venv_dir.glob("lib/python*"):
+            site_packages = lib_dir / "site-packages"
+            if site_packages.exists():
+                existing_pythonpath = os.environ.get("PYTHONPATH", "")
+                pythonpath = str(site_packages)
+                if existing_pythonpath:
+                    pythonpath = f"{pythonpath}:{existing_pythonpath}"
+                pulumi_env["PYTHONPATH"] = pythonpath
+                break
+
+    # Initialize the stack locally before running preview
+    log.info("pulumi stack init dev with local backend")
+    try:
+        proc = subprocess.run(
+            ["pulumi", "stack", "init", "dev", "--no-select"],
+            capture_output=True, text=True, timeout=60,
+            cwd=str(workspace),
+            env=pulumi_env,
+        )
+        results.append(f"pulumi stack init: exit={proc.returncode}")
+        if proc.returncode != 0:
+            # Stack might already exist (idempotent), or there's a real error
+            if "already exists" not in proc.stderr:
+                results.append(f"ERR: {proc.stderr[:500]}")
+                # Only mark as failed if it's not the "already exists" case
+                if proc.returncode != 0:
+                    log.info("Stack init failed: %s", proc.stderr[:200])
+    except subprocess.TimeoutExpired:
+        results.append("TIMEOUT: pulumi stack init")
+        passed = False
+        return passed, True
+    except FileNotFoundError:
+        results.append("NOT FOUND: pulumi")
+        log.warning("Command not found: pulumi")
+        return False, True
 
     log.info("pulumi preview")
     try:
@@ -183,13 +393,23 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
             ["pulumi", "preview", "-s", "dev", "--non-interactive", "--diff"],
             capture_output=True, text=True, timeout=120,
             cwd=str(workspace),
+            env=pulumi_env,
         )
         results.append(f"pulumi preview: exit={proc.returncode}")
         if proc.stdout:
             results.append(proc.stdout[:2000])
         if proc.stderr:
             results.append(f"ERR: {proc.stderr[:500]}")
-        if proc.returncode not in (0, 1):  # 1 = changes detected (still valid)
+        # Exit 0 is the only success. `pulumi preview` does not signal
+        # "changes detected" with a non-zero code — that is what
+        # --expect-no-changes is for, and it is not passed here. Verified
+        # against the golden (exit 0) and against deliberately broken
+        # programs, a syntax error and an invalid resource argument, which
+        # both exit 255. An earlier version treated exit 1 as success unless
+        # stderr happened to contain the substring "error"; that allowance
+        # covered a case that does not arise, and would have masked any
+        # failure mode that did exit 1 with a quiet stderr.
+        if proc.returncode != 0:
             passed = False
     except subprocess.TimeoutExpired:
         results.append("TIMEOUT: pulumi preview")
@@ -265,8 +485,45 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     run, one file at a time. --dry-run=client (not =server) deliberately:
     static validation has no cluster dependency (unlike e2e, which applies
     for real against kind), and server-side dry-run would require a live
-    API server to talk to just to check the manifests are well-formed."""
+    API server to talk to just to check the manifests are well-formed.
+
+    That intent is not reachable with kubectl and never was (#81). Even with
+    `--validate=false`, `kubectl apply --dry-run=client` contacts an API
+    server to resolve API groups before it can map a kind to a resource, so
+    with no cluster up every invocation died — first on `failed to download
+    openapi`, then on `couldn't get current server API group list` — and the
+    stage failed 100% of bare runs without judging a single manifest.
+
+    kubeconform is used instead: schema-based, offline by construction, and
+    already pinned in the toolchain. It runs stricter than lint runs it —
+    lint omits `-strict`, this adds it — so the two stages stay distinct
+    gates rather than one gate run twice.
+
+    bare's tasks are ACK and Cluster API resources, whose CRD schemas
+    kubeconform does not ship, so `schemas/` vendors them (#83) and
+    `-schema-location` points at that mirror ahead of the built-in one. The
+    versions are not a choice made here: they are the ones the task fixtures
+    already use — ACK s3/iam/rds at v1alpha1, Cluster API at v1beta1.
+
+    `-ignore-missing-schemas` is deliberately NOT passed. With the schemas
+    vendored, a kind that still fails to resolve is a kind that does not
+    exist, and that is a real defect worth failing: the v3 matrix has models
+    emitting `UserPolicy`, `RolePolicyAttachment` and friends, none of which
+    are ACK IAM kinds. Skipping them would score an invented resource as
+    fine.
+
+    `-strict` is deliberately NOT passed either, for the opposite reason. It
+    rejects unknown fields, and field sets drift between CRD releases: under
+    it the bare *golden* failed on `spec.replication.roleRef` and
+    `AWSMachineTemplate.spec.template.spec.instanceProfile`, both real fields
+    from a release other than the one the mirror pins. A gate that fails the
+    reference implementation is the #81/#82 defect wearing a different hat.
+    Dropping it keeps everything that matters — an unresolvable kind still
+    fails, and so does a field of the wrong type — while tolerating the
+    version skew between the mirror and the fixtures.
+    """
     passed = True
+    validated = 0
 
     yaml_files = list(workspace.rglob("*.yaml")) + list(workspace.rglob("*.yml"))
     if not yaml_files:
@@ -274,26 +531,35 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         return passed, False
 
     for yfile in yaml_files:
-        log.info("kubectl apply --dry-run=client -f %s", yfile)
+        log.info("kubeconform %s", yfile)
         try:
             proc = subprocess.run(
-                ["kubectl", "apply", "--dry-run=client", "-f", str(yfile)],
+                ["kubeconform", "-summary",
+                 *lint_mod.kubeconform_schema_args(), str(yfile)],
                 capture_output=True, text=True, timeout=60,
             )
-            results.append(f"kubectl apply --dry-run=client -f {yfile.name}: exit={proc.returncode}")
+            results.append(f"kubeconform {yfile.name}: exit={proc.returncode}")
             if proc.stdout:
                 results.append(proc.stdout[:500])
+                validated += _kubeconform_valid_count(proc.stdout)
             if proc.stderr:
                 results.append(f"ERR: {proc.stderr[:500]}")
             if proc.returncode != 0:
                 passed = False
         except subprocess.TimeoutExpired:
-            results.append(f"TIMEOUT: kubectl apply --dry-run=client -f {yfile}")
+            results.append(f"TIMEOUT: kubeconform {yfile}")
             passed = False
         except FileNotFoundError:
-            results.append("NOT FOUND: kubectl")
-            log.warning("Command not found: kubectl")
+            results.append("NOT FOUND: kubeconform")
+            log.warning("Command not found: kubeconform")
             passed = False
             break
+
+    if passed and validated == 0:
+        results.append(
+            "no resource in the workspace resolved to a known schema — every "
+            "kind was skipped, so nothing was validated (see #81)"
+        )
+        return passed, False
 
     return passed, True
