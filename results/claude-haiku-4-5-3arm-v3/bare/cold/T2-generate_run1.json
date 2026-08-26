@@ -1,0 +1,91 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T2-generate",
+  "stack": "bare",
+  "run": 1,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "b870b4fe89ff9404",
+      "spec_sha256": "0aa384baa7f37e91",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\n  namespace: default\nspec:\n  bucketName: myapp-logs-prod\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n---\napiVersion: iam.services.k8s.aws/v\n[validate CRDs] kubeconform: exit=0\nSummary: 4 resources found in 4 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 4\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kubectl apply --dry-run=client -f logs-bucket.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/prod/logs-bucket.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n\nkubectl apply --dry-run=client -f logs-policy.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/prod/logs-policy.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n\nkubectl apply --dry-run=client -f logs-bucket.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/dev/logs-bucket.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n\nkubectl apply --dry-run=client -f logs-policy.yaml: exit=1\nERR: error: error validating \"/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/dev/logs-policy.yaml\": error validating data: failed to download openapi: Get \"http://localhost:8080/openapi/v2?timeout=32s\": dial tcp [::1]:8080: connect: connection refused; if you choose to ignore these errors, turn validation off with --validate=false\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 6 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_dev_logs_bucket_exists PASSED [ 16%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_prod_logs_bucket_exists PASSED [ 33%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_versioning PASSED [ 50%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_bucket_encryption PASSED [ 66%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_public_access_blocked PASSED [ 83%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T2-generate/tests/test_task.py::test_logs_scoped_iam_grant_present_both_envs PASSED [100%]\n\n============================== 6 passed in 0.02s ===============================\n",
+      "passed_count": 6,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1760,
+    "output": 11343
+  },
+  "content": "# ACK S3 Logs Bucket Addition\n\nI'll provide the four new manifests for the logs buckets and their associated IAM permissions. These assume the existing `dev/iam.yaml` contains a User resource with AWS name `myapp-user-dev`, and `prod/iam.yaml` contains a Role with AWS name `myapp-role-prod`; adjust the `userName` and `roleName` references to match your actual principal names if different.\n\n---\n\n`dev/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-dev\n  namespace: default\nspec:\n  bucketName: myapp-logs-dev\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n    - applyServerSideEncryptionByDefault:\n        sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n`dev/logs-policy.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: UserPolicy\nmetadata:\n  name: myapp-logs-dev-policy\n  namespace: default\nspec:\n  userName: myapp-user-dev\n  policyName: myapp-logs-dev-policy\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-dev/*\"\n        }\n      ]\n    }\n```\n\n`prod/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\n  namespace: default\nspec:\n  bucketName: myapp-logs-prod\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n    - applyServerSideEncryptionByDefault:\n        sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n`prod/logs-policy.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: RolePolicy\nmetadata:\n  name: myapp-logs-prod-policy\n  namespace: default\nspec:\n  roleName: myapp-role-prod\n  policyName: myapp-logs-prod-policy\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-prod/*\"\n        }\n      ]\n    }\n```\n\n---\n\n## Summary\n\n**Buckets** (`logs-bucket.yaml`): Each environment gets a new versioned, AES256-encrypted S3 bucket with all public access blocked.\n\n**Permissions** (`logs-policy.yaml`): Each environment gets an inline policy (UserPolicy for dev, RolePolicy for prod) granting exactly `s3:GetObject` and `s3:PutObject` on its corresponding logs bucket only. The resource ARN uses the wildcard suffix (`/*`) to permit object-level operations while denying bucket-level actions.\n\nBoth directories remain fully independent\u2014applying `kubectl apply -f dev/` and `kubectl apply -f prod/` treats them as separate, non-overlapping deployments.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/dev/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/dev/logs-policy.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/prod/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-bcu6z1x7/prod/logs-policy.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 3046,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 3046,
+      "fenced_blocks": 4,
+      "extracted_files": 4,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

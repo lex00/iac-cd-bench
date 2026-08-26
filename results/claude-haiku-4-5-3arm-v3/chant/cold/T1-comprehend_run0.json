@@ -1,0 +1,129 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T1-comprehend",
+  "stack": "chant",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "4e32be1198d3f07e",
+      "spec_sha256": "0d3da19816f53d7f",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 7944
+  },
+  "content": "# Answers\n\n## Q1: Build Root Resource Mapping\n\n**Mapping of 18 resources to three build roots:**\n\n| Build Root | Resources | Count |\n|---|---|---|\n| `src/envs/dev/infra/main.ts` | `ackCharts`, `assetsBucket`, `databaseInstance`, `iamControllerRelease`, `rdsControllerRelease`, `s3ControllerRelease`, `readerPolicy`, `readerRole`, `readerUser` | 9 |\n| `src/envs/dev/clusters/main.ts` | `clusterCluster`, `clusterControlPlane`, `clusterFluxAddon`, `clusterInfra`, `clusterNodePoolAwsPool`, `clusterNodePoolMachinePool` | 6 |\n| `src/envs/dev/delivery/main.ts` | `sourceGitRepository`, `infraAppKustomization`, `clusterAppKustomization` | 3 |\n\n**Why the delivery Kustomizations appear despite not being self-reconciled:**\n\nThe `delivery/main.ts` build root is the **bootstrap edge** installed directly onto the management cluster via Flux bootstrap (or equivalent direct apply), not by any other Kustomization. It is the entry point that sets up Flux itself. The `sourceGitRepository` points to the source git repo, and the two Kustomizations (`infraAppKustomization` and `clusterAppKustomization`) are the reconciliation objects that pull from that source and apply the outputs of the infra and clusters build roots. They don't reconcile `delivery/main.ts`'s own output (which would be circular), but they do appear in the snapshot because they are part of the bootstrap manifest that gets applied first, after which they pull and reconcile everything else.\n\n---\n\n## Q2: Environment-Specific Resource Differences\n\n**Resources in dev (18) but not prod (1):**\n- `readerUser` (K8s::Iam::User) \u2014 controlled by `ReaderIam` composite's **`programmaticAccess: true`** prop (dev only)\n\n**Resources in prod (20) but not dev (3):**\n1. `assetsReplicaBucket` (K8s::S3::Bucket) \u2014 controlled by `SecureBucket` composite's **replication configuration** prop (cross-region replication to us-west-2 in prod)\n2. `assetsReplicaRole` (K8s::Iam::Role) \u2014 controlled by `SecureBucket` composite's **replication configuration** prop (manages permissions for cross-region replication)\n3. `readerPodIdentity` (K8s::Eks::PodIdentityAssociation) \u2014 controlled by `ReaderIam` composite's **`trust: { mode: \"oidc\" }`** prop (OIDC-based pod identity in prod vs. account-based programmatic access in dev)\n\n---\n\n## Q3: Secret Reference Search Mechanics\n\n**How `\"myapp-dev-db-master\"` matches only `databaseInstance`:**\n\nThe string appears as the `name` field in the `SecretRef` constant:\n```typescript\n// src/envs/dev/infra/main.ts\nconst masterPassword: SecretRef = {\n  name: \"myapp-dev-db-master\",  // \u2190 the literal string searched\n  namespace: INFRA_NAMESPACE,\n  key: \"password\",\n  scope: \"...\",\n};\n\nexport const database = PostgresInstance({\n  masterPassword,  // \u2190 passed to composite\n  ...\n});\n```\n\nInside `PostgresInstance` (postgres-instance.ts):\n```typescript\nmasterUserPassword: secretRef(props.masterPassword),  // \u2190 secretRef() extracts name/namespace/key\n```\n\nInside `secretRef()` (secrets.ts):\n```typescript\nexport function secretRef(ref: SecretRef): { name: string; namespace: string; key: string } {\n  return { name: ref.name, namespace: ref.namespace, key: ref.key };\n}\n```\n\nThis object becomes the value of the DBInstance spec's `masterUserPassword` field, embedding the string there. Only `databaseInstance` holds this reference; nothing else in the golden references this secret name.\n\n**Why the footer reads \"declared only \u00b7 no observation \u00b7 physical ids unavailable\":**\n\nThe search was invoked with `--src src/envs/dev --explain` (declared graph only), **not** `--at latest --env dev` (live observation). The difference:\n- **Declared graph** (offline): Has access to source code and can track name-based references in specs, but has no cluster observation, so no physical IDs. This is what `search-db-secret-reference.txt` is querying.\n- **Live observation graph** (as in `search-buckets-*` and `search-prod-only-pod-identity-*`): Queries the latest observed snapshot of the cluster, so it has physical IDs and timestamps. Footer reads `\u2014 observed from snapshot 25a34bf taken ...`.\n\nThe declared-only footer appears because the query is offline and the Secret itself (which exists out of band) is never observed by chant \u2014 only the reference to it in the DBInstance spec is visible in the declared graph.\n\n---\n\n## Q4: Two Different SPEC-Driven Asymmetries\n\nBoth missing resources are controlled by **different props on the same `ReaderIam` composite**, not the same cause:\n\n**`readerUser` (K8s::Iam::User) \u2014 dev only:**\n- Controlled by: `ReaderIam` composite's **`programmaticAccess: true`** prop\n- Dev source (infra/main.ts): `programmaticAccess: true`\n- Prod source (not provided, but inferred from absence): `programmaticAccess: false`\n- Reason: SPEC dev requires \"programmatic access\" (long-lived IAM credentials), which requires an IAM User; SPEC prod uses \"OIDC trust\" instead, which does not need a User\n\n**`readerPodIdentity` (K8s::Eks::PodIdentityAssociation) \u2014 prod only:**\n- Controlled by: `ReaderIam` composite's **`trust.mode`** prop\n- Dev source: `trust: { mode: \"account\", accountID: \"123456789012\" }`\n- Prod source (inferred): `trust: { mode: \"oidc\" }`\n- Reason: SPEC prod requires \"least-privilege role, OIDC trust\" for EKS Pod Identity, which creates a PodIdentityAssociation binding a service account in the cluster to an IAM role; account-mode trust (dev) uses static AWS accounts, no pod identity needed\n\n---\n\n## Q5: Observed vs. Declared Graph Edges\n\n**Why `graph-ir-dev.json` (`--at latest`) has zero edges:**\n\nThe observed graph (`--at latest`) discovers edges from the **live cluster's observable state** \u2014 status fields, finalizers, owner references that are present in reconciled Kubernetes objects. The HelmRelease objects exist with physical IDs, but they reference the HelmRepository only in their spec (via the `repositoryName` field), not in any observable status structure that the observation system can detect. Name-based references in specs are not strong enough for the observed graph to establish dependency edges.\n\n**File where the three edges do appear:**\n\n**`graph-ir-dev-declared.json`** \u2014 contains exactly **3 edges**, all from the controller HelmReleases to `ackCharts`:\n```json\n\"edges\": [\n  { \"from\": \"iamControllerRelease\", \"to\": \"ackCharts\", \"kind\": \"ref\", \"viaAttr\": \"spec\" },\n  { \"from\": \"rdsControllerRelease\", \"to\": \"ackCharts\", \"kind\": \"ref\", \"viaAttr\": \"spec\" },\n  { \"from\": \"s3ControllerRelease\", \"to\": \"ackCharts\", \"kind\": \"ref\", \"viaAttr\": \"spec\" }\n]\n```\n\n**Why declared has them but observed does not:**\n\nThe declared graph performs **static analysis** on the TypeScript source code (infra/main.ts). It sees the explicit calls:\n```typescript\nexport const s3Controller = AckController({\n  repositoryName: ackCharts.name,  // \u2190 statically visible reference\n  ...\n});\n```\n\nThis establishes a name-based reference edge at declaration time. The observed graph, by contrast, only sees what is **actually observable** in Kubernetes (spec fields alone do not create observable edges), so these references disappear when querying `--at latest`. The declared graph captures intent; the observed graph captures only observable state relationships.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-chant-kqoowd00/src/envs/dev/infra/main.ts",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-chant-kqoowd00/src/envs/dev/clusters/main.ts",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-chant-kqoowd00/src/envs/dev/delivery/main.ts",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-chant-kqoowd00/delivery/main.ts"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 7177,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 7177,
+      "fenced_blocks": 5,
+      "extracted_files": 4,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.675,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Maps every one of the 18 resources recorded in lifecycle-show-dev.txt to the correct one of the three dev build roots (infra/clusters/delivery) using the seeded src/envs/dev/{infra,clusters,delivery}/main.ts, and correctly explains why the delivery-root objects (sourceGitRepository, the two Kustomizations) still appear in the recorded dev snapshot even though no Kustomization reconciles the delivery path itself",
+        "weight": 2.0,
+        "score": 0.75,
+        "justification": "Perfect mapping of all 18 resources to three build roots; but explains delivery objects' appearance via bootstrap timing rather than --src observing entire source tree and reading back declared objects"
+      },
+      {
+        "criterion": "Names every resource-count/resource-kind difference between the recorded dev and prod estates (readerUser only in dev; assetsReplicaBucket, assetsReplicaRole, and readerPodIdentity only in prod) using lifecycle-show-{dev,prod}.txt, search-buckets-{dev,prod}.txt, and search-prod-only-pod-identity-{dev,prod}.txt, and ties each difference to the specific composite call-site prop that causes it (programmaticAccess, replication, podIdentity)",
+        "weight": 3.0,
+        "score": 0.5,
+        "justification": "Correctly names all 4 resources and dev/prod placement; ties 2/4 to correct props (programmaticAccess, replication on assets); but misidentifies assetsReplicaBucket cause as replication instead of separate SecureBucket call, and readerPodIdentity as trust.mode instead of podIdentity"
+      },
+      {
+        "criterion": "Correctly explains search-db-secret-reference.txt's single match (databaseInstance) by tracing masterPassword through secretRef() into PostgresInstance's masterUserPassword field, and correctly explains the fixture's 'declared only \u00b7 no observation \u00b7 physical ids unavailable' footer as a source-graph (no --at/--live) query rather than a snapshot-backed one",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Correctly traces masterPassword through secretRef() into PostgresInstance's masterUserPassword on databaseInstance; correctly identifies sole match; correctly explains footer as source-graph (no --at/--live) query with no cluster observation"
+      },
+      {
+        "criterion": "Correctly explains both the readerUser asymmetry (dev's programmaticAccess: true vs prod's false) and the PodIdentityAssociation asymmetry (only prod's ReaderIam call sets podIdentity), each grounded in the SPEC-driven IAM row rather than treated as unexplained noise",
+        "weight": 2.0,
+        "score": 0.5,
+        "justification": "Correctly explains readerUser asymmetry via programmaticAccess:true/false; incorrectly attributes readerPodIdentity asymmetry to trust.mode instead of podIdentity prop"
+      },
+      {
+        "criterion": "Correctly explains why graph-ir-dev.json's edges array is empty despite the three AckController HelmReleases referencing ackCharts by name, identifies this as the k8s lexicon's --at/--live edge-reconstruction gap rather than a bug in this golden, and correctly points to graph-ir-dev-declared.json as where those same three edges do appear",
+        "weight": 1.0,
+        "score": 0.75,
+        "justification": "Correctly explains why observed graph has zero edges (name-based refs in specs unobservable) and where edges appear (graph-ir-dev-declared.json with 3 edges viaAttr:spec); lacks explicit framing as 'k8s lexicon edge-reconstruction gap'"
+      }
+    ]
+  }
+}

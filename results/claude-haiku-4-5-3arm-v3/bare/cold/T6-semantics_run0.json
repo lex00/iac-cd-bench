@@ -1,0 +1,85 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "bare",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1a23107b88261579",
+      "spec_sha256": "7affb32886e4c84e",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "space_applied_first PASSED [ 85%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T6-semantics/tests/test_task.py::test_q7_no_cross_directory_gating PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q4 reason should mention immutability, got 'Selector requires tier: backend label but pod template lacks it; Kubernetes rejects selector-template label mismatch'\n    assert 'immutable' in 'selector requires tier: backend label but pod template lacks it; kubernetes rejects selector-template label mismatch'\n     +  where 'selector requires tier: backend label but pod template lacks it; kubernetes rejects selector-template label mismatch' = _norm('Selector requires tier: backend label but pod template lacks it; Kubernetes rejects selector-template label mismatch')\n     +    where 'Selector requires tier: backend label but pod template lacks it; Kubernetes rejects selector-template label mismatch' = <built-in method get of dict object at 0x109228580>('reason', '')\n     +      where <built-in method get of dict object at 0x109228580> = {'succeeds': False, 'reason': 'Selector requires tier: backend label but pod template lacks it; Kubernetes rejects selector-template label mismatch'}.get\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T6-semantics/tests/test_task.py:91: AssertionError: q4 reason should mention immutability, got 'Selector requires tier: backend label but pod template lacks it; Kubernetes rejects selector-template label mismatch'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T6-semantics/tests/test_task.py::test_q4_immutable_selector_rejected\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 4842
+  },
+  "content": "```json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\"deleted\": false, \"reason\": \"kubectl apply -f only applies files present on disk; deleted files don't trigger resource deletion without --prune\"},\n  \"q3\": \"exists\",\n  \"q4\": {\"succeeds\": false, \"reason\": \"Selector requires tier: backend label but pod template lacks it; Kubernetes rejects selector-template label mismatch\"},\n  \"q5\": \"client-side\",\n  \"q6\": {\"namespace_first\": true, \"reason\": \"kubectl processes files alphabetically; 00-namespaces.yaml applies first, creating namespaces before subsequent resources reference them\"},\n  \"q7\": {\"blocked\": false, \"reason\": \"Plain kubectl apply has no dependency tracking, health check gates, or reconciliation controller; dev and prod are completely independent\"}\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 762,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 762,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

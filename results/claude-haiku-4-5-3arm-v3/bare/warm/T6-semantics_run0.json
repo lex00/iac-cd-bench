@@ -1,0 +1,85 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "bare",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1a23107b88261579",
+      "spec_sha256": "7affb32886e4c84e",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "ed at the api server'\n     +  where 'kubernetes api validation requires all labels in spec.selector.matchlabels to exist in spec.template.metadata.labels; adding tier: backend to selector without adding it to pod labels violates this invariant and is rejected at the api server' = _norm('Kubernetes API validation requires all labels in spec.selector.matchLabels to exist in spec.template.metadata.labels; adding tier: backend to selector without adding it to pod labels violates this invariant and is rejected at the API server')\n     +    where 'Kubernetes API validation requires all labels in spec.selector.matchLabels to exist in spec.template.metadata.labels; adding tier: backend to selector without adding it to pod labels violates this invariant and is rejected at the API server' = <built-in method get of dict object at 0x106934b00>('reason', '')\n     +      where <built-in method get of dict object at 0x106934b00> = {'succeeds': False, 'reason': 'Kubernetes API validation requires all labels in spec.selector.matchLabels to exist in spec.template.metadata.labels; adding tier: backend to selector without adding it to pod labels violates this invariant and is rejected at the API server'}.get\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T6-semantics/tests/test_task.py:91: AssertionError: q4 reason should mention immutability, got 'Kubernetes API validation requires all labels in spec.selector.matchLabels to exist in spec.template.metadata.labels; adding tier: backend to selector without adding it to pod labels violates this invariant and is rejected at the API server'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/bare/T6-semantics/tests/test_task.py::test_q4_immutable_selector_rejected\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 3465
+  },
+  "content": "```json\n{\n  \"q1\": \"updated-in-place\",\n  \"q2\": {\"deleted\": false, \"reason\": \"kubectl apply without --prune does not delete objects whose manifests are removed from the apply directory; it only creates/updates what is present in the files\"},\n  \"q3\": \"exists\",\n  \"q4\": {\"succeeds\": false, \"reason\": \"Kubernetes API validation requires all labels in spec.selector.matchLabels to exist in spec.template.metadata.labels; adding tier: backend to selector without adding it to pod labels violates this invariant and is rejected at the API server\"},\n  \"q5\": \"client-side\",\n  \"q6\": {\"namespace_first\": true, \"reason\": \"kubectl processes files in alphabetical order; 00-namespaces.yaml is applied before app.yaml, cluster.yaml, and other namespaced resources that depend on the namespaces\"},\n  \"q7\": {\"blocked\": false, \"reason\": \"Plain kubectl apply has no built-in mechanism to check or gate based on other environments; no health checks, dependsOn constraints, or reconciliation controllers exist in a bare stack\"}\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1011,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1011,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

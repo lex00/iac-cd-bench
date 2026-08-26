@@ -1,0 +1,123 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "b3122c3b4be49c31",
+      "spec_sha256": "cb1cc8ee25154a53",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 2543
+  },
+  "content": "## 1. What reconciles, and in what order\n\nMerging PR #42 does not itself deploy anything. Flux's source-controller polls the Git repository on its configured interval (typically 1m), notices the new revision on the tracked branch, and updates the `GitRepository` artifact. Only then do the `Kustomization` objects act \u2014 each one that references that source re-renders its path and applies the diff via server-side apply.\n\nOrder is *not* file order or PR order. It is determined entirely by the `dependsOn` graph in `flux/kustomizations.yaml`. The conventional shape here is:\n\n1. `infra-*` kustomizations (S3, RDS, IAM) reconcile first, since the app depends on them.\n2. Within that tier, S3/RDS/IAM have no ordering guarantee relative to each other unless explicitly chained \u2014 they reconcile concurrently.\n3. `apps` / overlay kustomizations reconcile after their `dependsOn` targets report `Ready`.\n\nSo concretely: the new S3 bucket manifest and the RDS `instanceClass` change land in the infra tier (concurrently), and the prod overlay's replica patch lands in the app tier afterward. Each tier's changes are applied in one pass \u2014 kustomize builds the whole overlay, and Flux applies the full rendered set, pruning anything previously applied that has disappeared.\n\nImportant caveat: the two ACK changes reconcile at the *Kubernetes* level in seconds, but the *AWS* side is asynchronous. Flux marks the `Kustomization` Ready once the manifests are applied and (if health checks are configured) once the named resources report healthy. ACK then makes the AWS API calls in the background. An RDS modification can take many minutes and won't block Flux unless you've listed the `DBInstance` in `spec.healthChecks`.\n\n## 2. Does the RDS instance get recreated?\n\nNo. `instanceClass` (`db.t3.micro` \u2192 `db.t3.medium`) is an in-place modifiable attribute. ACK's RDS controller compares desired vs. observed state and issues a `ModifyDBInstance` call rather than delete-and-create. AWS handles this as a compute resize: the instance reboots (brief downtime on single-AZ; a failover on multi-AZ, which the prod spec requires). Data, endpoint, and identifier are preserved.\n\nWhat *would* force recreation are immutable fields \u2014 `dbInstanceIdentifier`, `engine`, `masterUsername`, `availabilityZone` in some cases. ACK generally refuses to reconcile those rather than silently destroying a database; you'd see the resource stuck with a terminal condition. Worth noting the `applyImmediately` flag: if unset, the modify is deferred to the next maintenance window, so the Flux `Kustomization` will read Ready while the actual resize hasn't happened yet. That gap is a common source of \"Flux says green but nothing changed\" confusion.\n\nAlso relevant to the acceptance criteria: with deletion protection on, ACK cannot delete the instance even if you asked it to \u2014 which is the intended safety property.\n\n## 3. If the S3 bucket manifest is deleted from Git\n\nThis depends entirely on two settings, and the answer is genuinely dangerous if you get them wrong.\n\n- **`prune: true`** on the `Kustomization` (the common default in this repo pattern): Flux garbage-collects the `Bucket` custom resource, because it tracks ownership via inventory labels. Deleting the CR triggers ACK's finalizer, which calls `DeleteBucket` against AWS. **The real bucket is deleted.** If it's non-empty, the delete fails and the CR hangs on its finalizer \u2014 which is a stuck-resource problem rather than a data-loss problem, but the empty-bucket case is straightforward data loss.\n- **`prune: false`**: the CR is orphaned. It stays in the cluster, ACK keeps reconciling it, and the bucket persists \u2014 but it's now unmanaged from Git, which is drift.\n\nThe idiomatic mitigation is the ACK deletion policy annotation, `services.k8s.aws/deletion-policy: retain`, on stateful resources. That tells ACK to drop the finalizer and leave the AWS resource alone when the CR goes away. For any bucket holding application assets or any RDS instance, that annotation should be present. Removing a manifest from Git should mean \"stop managing this,\" not \"destroy it\" \u2014 but with `prune: true` and no retain policy, Flux means the latter.\n\n## 4. The prod-only replica change\n\nThis is where kustomize overlays do the work and Flux does essentially nothing special. There are two `Kustomization` objects pointing at the same `GitRepository` but different paths (`overlays/dev`, `overlays/prod`). Each independently runs `kustomize build` on its own path.\n\nThe new strategic-merge patch setting `replicas: 4` exists only under `overlays/prod/`. When the prod kustomization renders, the patch merges over the base Deployment and the output has 4 replicas. When the dev kustomization renders, that file is never read \u2014 dev's output is byte-identical to what it was before the PR. Flux computes a diff of nothing and takes no action on dev.\n\nThis is exactly the environment-isolation criterion from the spec: changing prod does not touch dev state. The isolation is structural (separate build roots, separate reconcilers, separate inventories), not conditional. There is no `if env == prod` anywhere.\n\nOne wrinkle: if the base Deployment also carries an HPA, the static `replicas: 4` will fight the autoscaler \u2014 Flux reasserts 4 on every reconcile, the HPA scales away, and you get flapping. The usual fix is to omit `replicas` from the managed fields or use the `replicas:` transformer only where no HPA exists.\n\n## 5. Role of `dependsOn`\n\n`dependsOn` is Flux's only ordering primitive across `Kustomization` boundaries, and it's worth being precise about what it does and doesn't guarantee.\n\n**What it does:** kustomization B with `dependsOn: [A]` will not apply until A's `Ready` condition is `True` for the current revision. This is what keeps the app from being applied before the IAM role, S3 bucket, and DB it references exist. It also serializes failure \u2014 if the RDS kustomization fails, the app kustomization simply doesn't run, so you don't get a half-deployed stack referencing missing infra.\n\n**What it doesn't do:** it doesn't order resources *within* a single kustomization (that's kustomize's own apply ordering \u2014 namespaces, CRDs, then everything else), and it doesn't guarantee the underlying *cloud* resources are ready. A `Kustomization` is Ready when its manifests are applied, not when ACK has finished provisioning. To make `dependsOn` mean \"the database actually exists,\" you need `spec.healthChecks` listing the ACK CRs, plus a `spec.timeout` \u2014 then Ready waits for those CRs' `ACK.ResourceSynced` condition.\n\nFor this PR specifically, `dependsOn` is what guarantees the prod app rollout to 4 replicas happens *after* the RDS resize is at least accepted, rather than concurrently. Without health checks on the `DBInstance`, though, that guarantee is thin \u2014 the pods could roll while the database is mid-failover. If the app can't tolerate that, the `DBInstance` belongs in the infra kustomization's health checks.\n\nOne operational note: `dependsOn` chains multiply reconcile latency. A three-tier chain with a 1m interval means changes to the leaf can take several minutes to land even when the upstream tiers are no-ops.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 7181,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 7181,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.9375,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies that Flux reconciles kustomizations on Git merge",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Clearly identifies that source-controller detects Git merge and triggers Kustomization reconciliation via polling/webhook."
+      },
+      {
+        "criterion": "Correctly predicts reconciliation order (dev before prod due to dependsOn)",
+        "weight": 2.0,
+        "score": 0.75,
+        "justification": "Understands dependsOn mechanism and explains ordering principle, but groups dev and prod as 'overlay kustomizations' without explicitly predicting dev\u2192prod sequencing due to dependsOn."
+      },
+      {
+        "criterion": "Identifies that RDS instanceClass change is in-place update, not recreate",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Unambiguously states that instanceClass change uses ModifyDBInstance API (in-place modify), not delete-and-create, with data/endpoint preservation."
+      },
+      {
+        "criterion": "States that ACK operator deletes S3 bucket when manifest is removed (pruning)",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Clearly states that with prune: true (the default), Flux garbage-collects the Bucket CR, triggering ACK's finalizer to call DeleteBucket and delete the real bucket."
+      },
+      {
+        "criterion": "Explains that prod overlay patches are scoped to prod kustomization only",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Clearly explains that the replicas: 4 patch exists only under overlays/prod, kustomize builds each overlay independently, and dev's output is unaffected."
+      }
+    ]
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "chant",
+  "run": 1,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1e15d083a0a90095",
+      "spec_sha256": "f715de7d385d5d34",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "./../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q2_ownership_answered_by_live_marker PASSED [ 28%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q3_orphan_classification FAILED [ 42%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q4_unmarked_orphan_is_adopt_not_delete PASSED [ 57%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q5_build_never_calls_cloud PASSED [ 71%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q6_snapshot_needs_no_controller_reconcile PASSED [ 85%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q7_missing_edges_specific_to_k8s_lexicon PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q3: expected orphan, got 'newly-observed'\n    assert 'newly-observed' == 'orphan'\n      \n      - orphan\n      + newly-observed\n/Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py:79: AssertionError: q3: expected orphan, got 'newly-observed'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q3_orphan_classification\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 3278
+  },
+  "content": "```json\n{\n  \"q1\": {\n    \"behavior\": \"falls-back-to-run\",\n    \"reason\": \"When a file cannot fold to zero module execution, chant falls back per-file to importing and running it. The build succeeds, output is produced, and other files in the same build may still fold. The summary line `fold: N files folded, M ran` confirms this.\"\n  },\n  \"q2\": {\n    \"answered_by\": \"live-marker\",\n    \"reason\": \"chant has no authoritative state file. Ownership is stamped as a live marker (Kubernetes labels `chant.intentius.io/stack`) at synthesis time and read back from the live resource. The invariant is: 'The projection reads ownership from the live marker, never from the snapshot.'\"\n  },\n  \"q3\": \"newly-observed\",\n  \"q4\": {\n    \"action\": \"adopt\",\n    \"reason\": \"Delete is only proposed for orphan resources whose live ownership marker confirms they belong to this stack. An orphan with no marker is classified adopt, never delete.\"\n  },\n  \"q5\": {\n    \"calls_cloud\": false,\n    \"reason\": \"chant build is pure synthesis\u2014it parses TypeScript, evaluates definitions, and serializes output. It never queries cloud providers or Kubernetes API servers; no network call to AWS or K8s happens.\"\n  },\n  \"q6\": {\n    \"requires_controller_reconcile\": false,\n    \"reason\": \"Snapshot only requires each declared entity to exist and be readable through the k8s API server. No controller reconciliation is needed. CAPI/CAPA does not need to have provisioned real EKS infrastructure for the snapshot to record resources as PRESENT.\"\n  },\n  \"q7\": {\n    \"specific_to_k8s_lexicon\": true,\n    \"reason\": \"The k8s lexicon's describeResources() records only identity-depth attributes (namespace, labels, resourceVersion, conditions) with no reference-catalog step. The AWS lexicon has this enrichment to reconstruct edges from live references. Thus the empty edges in --at/--live k8s graphs is specific to k8s implementation today, while declared (offline) graphs have edges for all lexicons.\"\n  }\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1968,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1968,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

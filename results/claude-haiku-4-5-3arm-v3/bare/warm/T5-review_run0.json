@@ -1,0 +1,124 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T5-review",
+  "stack": "bare",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kubectl": {
+        "present": true,
+        "path": "/usr/local/bin/kubectl",
+        "version": "Client Version: v1.36.1"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "2b3940fbd51e98f3",
+      "spec_sha256": "debfcea6b8aad5d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 1807,
+    "output": 2077
+  },
+  "content": "# Security Review: PR Diff Analysis\n\n## Issues Found\n\n### 1. **CRITICAL: Plaintext Database Password in Version Control**\n- **File/Field**: `prod/db-secret.yaml`, `stringData.password`\n- **Issue**: The production database password `\"Summer2026!Prod#db\"` is committed in plaintext to Git. The original placeholder explicitly noted \"NEVER_COMMIT_REAL_VALUE,\" indicating this should be injected out-of-band.\n- **Impact**: Anyone with Git access\u2014current team, future employees, fork viewers, archived backups\u2014gains immediate prod database credentials. This is an uncontained breach.\n- **Fix**: Revert to placeholder. Use a stack-native secrets mechanism: SOPS encryption before commit, Crossplane SecretStore with external secret store, or equivalent. Rotate the password immediately if this merges.\n\n---\n\n### 2. **CRITICAL: Production S3 Bucket Made World-Readable**\n- **File/Field**: `prod/s3-bucket.yaml`, removed `publicAccessBlock`, added `policy` with `\"Principal\": \"*\"`\n- **Issue**: The bucket policy now grants `s3:GetObject` to any unauthenticated principal (`*`). The removal of the public access block has made the asset bucket internet-accessible.\n- **Impact**: All application assets, documents, and potentially sensitive data in `myapp-assets-prod` are now publicly readable. Violates the spec requirement \"no public access.\"\n- **Fix**: Revert to the original `publicAccessBlock` configuration with all four blocks enabled (`true`). If CloudFront distribution is intended, keep the bucket private and grant access only to the CloudFront origin identity (OAI), not the open internet.\n\n---\n\n### 3. **CRITICAL: RDS Instance Publicly Accessible**\n- **File/Field**: `prod/rds.yaml`, `spec.publiclyAccessible`\n- **Issue**: Changed from `false` to `true`, exposing the PostgreSQL instance directly to the internet.\n- **Impact**: The database is now reachable from any IP on port 5432 (assuming security groups allow). Increases attack surface for brute-force, SQL injection, and credential compromise attacks. Violates the spec requirement \"no publicly accessible.\"\n- **Fix**: Revert to `publiclyAccessible: false`. Ensure all application pods access the database via private VPC networking (security group rules, database subnet group, no public route).\n\n---\n\n### 4. **HIGH: RDS Deletion Protection Disabled**\n- **File/Field**: `prod/rds.yaml`, `spec.deletionProtection`\n- **Issue**: Changed from `true` to `false`. A single command or misconfiguration can now delete the production database.\n- **Impact**: Operational risk; accidental deletion could cause data loss and extended outage. Spec requires \"deletion protection on.\"\n- **Fix**: Revert to `deletionProtection: true`. Additionally, ensure backups are configured with >= 7-day retention.\n\n---\n\n### 5. **MEDIUM: Container Resource Limits and Requests Removed**\n- **File/Field**: `prod/app.yaml`, removed `spec.containers[].resources`\n- **Issue**: CPU/memory requests and limits have been deleted. Containers can now consume unbounded resources.\n- **Impact**: Security and operational risks:\n  - No memory limit = potential OOM kill of other pods (noisy neighbor / denial of service)\n  - No CPU limit = resource starvation of co-located workloads\n  - Scheduler has no requests to bin-pack pods efficiently\n- **Fix**: Restore the `resources` section with appropriate requests and limits. For production, never remove these.\n\n---\n\n## Summary Table (Ranked by Severity)\n\n| Severity | File | Issue | Fix |\n|----------|------|-------|-----|\n| **CRITICAL** | db-secret.yaml | Plaintext password committed to Git | Encrypt with SOPS/SecretStore; revert; rotate creds |\n| **CRITICAL** | s3-bucket.yaml | Production bucket world-readable via public policy | Restore `publicAccessBlock` (all true); use OAI for CloudFront |\n| **CRITICAL** | rds.yaml | Database publicly accessible on port 5432 | Set `publiclyAccessible: false` |\n| **HIGH** | rds.yaml | Deletion protection disabled | Set `deletionProtection: true` |\n| **MEDIUM** | app.yaml | Resource limits removed | Restore `resources.requests` and `resources.limits` |\n\n## Recommendation\n\n**Do not merge.** All five issues must be resolved. The three CRITICAL issues represent direct exposure of credentials, data, and infrastructure to unauthorized parties. Revert the diff entirely and re-submit with secrets handled via your stack's encryption mechanism.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 4362,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 4362,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.9791666666666666,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies the plaintext database password committed to prod/db-secret.yaml, replacing the documented out-of-band placeholder",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission explicitly identifies plaintext password 'Summer2026!Prod#db' in prod/db-secret.yaml replacing the documented 'NEVER_COMMIT_REAL_VALUE' placeholder."
+      },
+      {
+        "criterion": "Identifies that prod/s3-bucket.yaml removes the public access block and adds a bucket policy granting s3:GetObject to Principal '*' (public read exposure)",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies removal of publicAccessBlock and addition of bucket policy granting s3:GetObject to Principal '*' in prod/s3-bucket.yaml."
+      },
+      {
+        "criterion": "Identifies that prod/rds.yaml sets publiclyAccessible: true and deletionProtection: false on the production database",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission identifies both publiclyAccessible changed to true and deletionProtection changed to false in prod/rds.yaml."
+      },
+      {
+        "criterion": "Identifies that prod/app.yaml drops the container's resource requests/limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies removal of container resource requests and limits from prod/app.yaml."
+      },
+      {
+        "criterion": "Ranks the four issues by severity in an order consistent with: plaintext password and public bucket as the most severe, RDS exposure next, missing resource limits least severe",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission ranks plaintext password and public bucket as CRITICAL (most severe), RDS issues in middle tier, resource limits as MEDIUM (least severe), matching required ordering."
+      },
+      {
+        "criterion": "Provides a specific, concrete remediation for each issue identified (not just 'fix this')",
+        "weight": 1.0,
+        "score": 0.75,
+        "justification": "Submission provides concrete remediations for password, S3, and RDS issues (SOPS, OAI, specific config values), but resource limits remediation lacks specific numeric values (e.g., cpu: 100m, memory: 128Mi)."
+      }
+    ]
+  }
+}

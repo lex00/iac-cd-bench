@@ -1,0 +1,90 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "chant",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1e15d083a0a90095",
+      "spec_sha256": "f715de7d385d5d34",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 3
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 7 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q1_fold_falls_back_not_a_build_error PASSED [ 14%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q2_ownership_answered_by_live_marker PASSED [ 28%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q3_orphan_classification PASSED [ 42%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q4_unmarked_orphan_is_adopt_not_delete PASSED [ 57%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q5_build_never_calls_cloud PASSED [ 71%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q6_snapshot_needs_no_controller_reconcile PASSED [ 85%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q7_missing_edges_specific_to_k8s_lexicon PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 5583
+  },
+  "content": "```json\n{\n  \"q1\": {\n    \"behavior\": \"falls-back-to-run\",\n    \"reason\": \"The first build output shows 'fold: 0 files folded, 1 ran' but exits successfully with output produced, demonstrating chant executes non-foldable files instead of failing the build.\"\n  },\n  \"q2\": {\n    \"answered_by\": \"live-marker\",\n    \"reason\": \"chant.config.ts explicitly states ownership is 'stamped onto every emitted resource as `chant.intentius.io/stack`', establishing stack ownership via resource labels, not centralized state files.\"\n  },\n  \"q3\": \"orphan\",\n  \"q4\": {\n    \"action\": \"adopt\",\n    \"reason\": \"A resource with no ownership marker exists outside any stack's claim. Proposing adoption brings it under chant's management (stamping the marker), allowing controlled visibility and user decision-making rather than destructive deletion.\"\n  },\n  \"q5\": {\n    \"calls_cloud\": false,\n    \"reason\": \"chant build is compile-time evaluation of TypeScript to Kubernetes manifests; it produces YAML without invoking cloud APIs or querying cluster state.\"\n  },\n  \"q6\": {\n    \"requires_controller_reconcile\": false,\n    \"reason\": \"chant lifecycle snapshot reads Kubernetes object state from the live cluster; CAPI/CAPA resources can be PRESENT (existing as objects in etcd) without actual AWS EKS provisioning being complete.\"\n  },\n  \"q7\": {\n    \"specific_to_k8s_lexicon\": true,\n    \"reason\": \"graph-ir-dev-declared.json (offline source) includes the three edges between controllers and ackCharts; their absence in graph-ir-dev.json (--at latest live snapshot) indicates the k8s lexicon's live graph implementation does not compute edges, not a universal limitation of the --at format.\"\n  }\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1670,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1670,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

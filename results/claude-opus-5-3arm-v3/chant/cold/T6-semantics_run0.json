@@ -1,0 +1,90 @@
+{
+  "model": "claude-opus-5",
+  "task": "T6-semantics",
+  "stack": "chant",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1e15d083a0a90095",
+      "spec_sha256": "f715de7d385d5d34",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 7 items\n\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q1_fold_falls_back_not_a_build_error PASSED [ 14%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q2_ownership_answered_by_live_marker PASSED [ 28%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q3_orphan_classification PASSED [ 42%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q4_unmarked_orphan_is_adopt_not_delete PASSED [ 57%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q5_build_never_calls_cloud PASSED [ 71%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q6_snapshot_needs_no_controller_reconcile PASSED [ 85%]\n../../../../../../../Users/alex/Documents/checkouts/iac-cd-bench/.claude/worktrees/agent-a65f983f4551ef6b3/tasks/chant/T6-semantics/tests/test_task.py::test_q7_missing_edges_specific_to_k8s_lexicon PASSED [100%]\n\n============================== 7 passed in 0.05s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 654
+  },
+  "content": "```json answers.json\n{\n  \"q1\": {\"behavior\": \"falls-back-to-run\", \"reason\": \"Folding is a per-file optimization: a file that can't reduce statically is imported and executed instead; the build still succeeds, and sibling files that can fold still fold (hence '0 folded, 1 ran' vs '1 folded, 0 ran').\"},\n  \"q2\": {\"answered_by\": \"live-marker\", \"reason\": \"Ownership is decided by the chant.intentius.io/stack=iac-cd-bench label (plus app.kubernetes.io/managed-by=chant) stamped on the live object; chant hosts no authoritative state file \u2014 the lifecycle branch holds observation snapshots, not ownership truth.\"},\n  \"q3\": \"orphan\",\n  \"q4\": {\"action\": \"adopt\", \"reason\": \"Without a chant ownership marker the object isn't provably this stack's, so chant will not propose destructive action; it proposes adopt and leaves deletion to an explicit human decision.\"},\n  \"q5\": {\"calls_cloud\": false, \"reason\": \"chant build is a pure offline evaluation of TypeScript composites into YAML manifests; no AWS or Kubernetes API is contacted \u2014 reconciliation is Flux/CAPI/ACK's job at apply time.\"},\n  \"q6\": {\"requires_controller_reconcile\": false, \"reason\": \"The snapshot records the existence/identity of the Kubernetes API objects (uid, resourceVersion) \u2014 PRESENT means the CAPI/CAPA custom resources exist in the cluster, not that a real EKS cluster was provisioned in AWS.\"},\n  \"q7\": {\"specific_to_k8s_lexicon\": true, \"reason\": \"Edges come from the declared IR's reference analysis; the live/--at latest graph builds nodes from observed cluster objects and today's k8s lexicon doesn't reconstruct cross-object refs from live state \u2014 it's a lexicon capability gap, not a format limitation.\"}\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1684,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1684,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

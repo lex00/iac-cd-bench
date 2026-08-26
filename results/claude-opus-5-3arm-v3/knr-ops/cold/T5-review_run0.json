@@ -1,0 +1,123 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "98046b844e60fe7876abe7712ef11506200f4786",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-opus-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "flux": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/flux2/2.5.0/flux",
+        "version": "flux version 2.5.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "kustomize": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/kustomize/5.6.0/kustomize",
+        "version": "v5.6.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "94e5c139053e7db4",
+      "spec_sha256": "43b4e0a5a87c63d9",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 2,
+    "output": 2121
+  },
+  "content": "## PR Security Review\n\n**Note on scope:** I'm working from the rendered diff summary provided in the task, not the raw hunks. Line numbers and exact resource names below are therefore generic \u2014 re-anchor them to the actual files before posting the review comment.\n\n---\n\n### Verdict: **Request changes.** Two blocking issues.\n\n---\n\n## \ud83d\udd34 Critical\n\n### 1. S3 bucket policy grants public read access\n\nA new bucket policy with `Principal: \"*\"` (or `AWS: \"*\"`) and `s3:GetObject` on `arn:aws:s3:::<bucket>/*` makes every object in the application-assets bucket world-readable. This directly violates acceptance criterion #1 (\"no public access\") and, on the prod overlay, exposes any asset that was ever mistakenly written to the bucket \u2014 including build artifacts, user uploads, and backup dumps.\n\nTwo compounding factors worth checking in the same diff:\n- If the bucket has `BlockPublicPolicy` / `RestrictPublicBuckets` enabled via a public access block, this policy will fail to apply at all and the PR will simply break the Flux reconciliation loop \u2014 a silent-ish failure that gets papered over.\n- If the public access block is *also* being relaxed in this PR (or was already off), the exposure is live the moment Flux syncs.\n\n**Required change:** Remove the policy. If the intent is public asset delivery, front the bucket with CloudFront and an Origin Access Control, granting `s3:GetObject` only to the CloudFront service principal with a `aws:SourceArn` condition scoping it to the specific distribution. The scenario spec already calls for CloudFront in prod, so the OAC path is the idiomatic fit. Keep `BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, and `RestrictPublicBuckets` all `true`.\n\n### 2. Plaintext database password in deployment env vars\n\nThe app Deployment sets the DB password as a literal `value:` under `env:`. This is a committed secret in Git \u2014 it's in the repo history the moment this merges, visible to anyone with read access to the repo, visible in `kubectl describe pod`, and it will be captured in any pod spec dumped to logs or an incident bundle.\n\nThis violates acceptance criterion #3 outright. The knr-ops stack's stated mechanism is SOPS-encrypted secrets, so there's an established pattern to follow here rather than an argument to have.\n\n**Required change:**\n- Move the credential into a SOPS-encrypted `Secret` manifest under the appropriate overlay, decrypted by the Flux `kustomize-controller` via its SOPS decryption provider.\n- Reference it from the Deployment with `valueFrom.secretKeyRef` (or, better, mount it as a file and have the app read it, which keeps it out of the process environment entirely).\n- **Rotate the credential.** Removing the value in a follow-up commit does not un-leak it \u2014 the password is compromised as of the moment this branch was pushed. Rotate in RDS and update the encrypted secret. Do not merge a \"fix\" that only deletes the line.\n\nAlso confirm `.sops.yaml` creation rules cover the path of the new secret file, or SOPS will happily let someone commit it unencrypted later.\n\n---\n\n## \ud83d\udfe1 Warning\n\n### 3. Missing resource limits on containers\n\nContainers without `resources.limits` (and `requests`) can consume unbounded CPU and memory on the node. This is a availability/blast-radius concern rather than a confidentiality one, but it's real:\n\n- A memory leak or a malicious/oversized request payload lets one pod OOM the node and evict unrelated workloads.\n- Without `requests`, the scheduler has no signal, so bin-packing degrades and pods land on already-saturated nodes.\n- It's a straightforward denial-of-service amplifier: an attacker who can drive CPU in the app can starve everything co-located.\n\n**Suggested change:** Set `requests` and `limits` for both `cpu` and `memory`, differentiated per overlay (dev smaller than prod). If the cluster has a `LimitRange` or `ResourceQuota` in the namespace, this may be partially mitigated \u2014 worth confirming before deciding whether this blocks. If there's no namespace-level guard, I'd treat it as closer to blocking than advisory, especially on the prod overlay.\n\nConsider adding a Kyverno/Gatekeeper policy or a `kustomize` validation step so this is enforced rather than caught in review.\n\n---\n\n## \ud83d\udd35 Info\n\n### 4. RDS instance class change\n\nThe instance class change is functionally fine and I see no security implication. Two non-blocking notes:\n\n- Confirm the change doesn't implicitly reset attributes managed alongside it. Depending on how the RDS resource is expressed, verify that `deletion_protection`, `backup_retention_period` (must stay \u2265 7 days per spec), `publicly_accessible: false`, and `storage_encrypted` are all still asserted in the rendered output. A class change is a common vehicle for accidental drift on sibling fields.\n- An instance class change on prod is typically a modify-with-downtime or a failover event. Worth a note in the PR description about the maintenance window, though that's an ops concern, not a security one.\n\n---\n\n## Merge checklist\n\n- [ ] Remove public S3 bucket policy; replace with CloudFront OAC if public delivery is genuinely required\n- [ ] Confirm S3 public access block remains fully enabled and is not weakened elsewhere in the diff\n- [ ] Move DB password to SOPS-encrypted Secret + `secretKeyRef`\n- [ ] **Rotate the exposed DB credential** \u2014 independent of the code fix\n- [ ] Verify `.sops.yaml` creation rules cover the new secret path\n- [ ] Add `requests` and `limits` to all containers, per-overlay\n- [ ] Spot-check rendered RDS output for unchanged `deletion_protection`, `backup_retention_period \u2265 7`, `publicly_accessible: false`, `storage_encrypted: true`\n\nItems 1, 2, and the rotation are blocking. Item 3 is blocking on the prod overlay unless a namespace `LimitRange` already covers it.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 5778,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 5778,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.9,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies plaintext password in deployment",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission clearly identifies plaintext DB password in deployment env vars as a committed secret in Git, with proper SOPS remediation and rotation requirement."
+      },
+      {
+        "criterion": "Identifies public S3 bucket access",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission identifies S3 bucket policy with public principal (`Principal: \"*\"`) granting GetObject access, violating acceptance criterion, with specific CloudFront OAC remediation."
+      },
+      {
+        "criterion": "Identifies missing resource limits",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission identifies missing `resources.limits` and `requests` on containers, explains unbounded CPU/memory consumption risk, and provides per-overlay remediation steps."
+      },
+      {
+        "criterion": "Ranks issues by severity correctly",
+        "weight": 2.0,
+        "score": 0.5,
+        "justification": "Submission ranks identified issues (Critical>Warning>Info) logically but does not match reference's expected severity hierarchy (CRITICAL>HIGH>MEDIUM>LOW) and identifies different issues than reference expects."
+      },
+      {
+        "criterion": "Provides specific remediation steps",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission provides specific remediation for each issue: SOPS encryption with .sops.yaml verification, CloudFront OAC with conditions, per-overlay resource limits, and RDS attribute spot-check."
+      }
+    ]
+  }
+}
