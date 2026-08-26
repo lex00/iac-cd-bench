@@ -1,0 +1,106 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "terraform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/terraform",
+        "version": "Terraform v1.15.8"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "dd01970ce92a5964",
+      "spec_sha256": "f6545befc3558903",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 1210,
+    "output": 643
+  },
+  "content": "# Terraform Plan Review \u2014 Missing Input\n\nI'm ready to review the Terraform plan, but **the actual tfplan JSON output is not included in your message**. \n\nTo perform the review you've described, I need:\n\n## What I'm looking for:\n1. **Hidden destructive changes**: DB instance `destroy` + `create` (force replacement) masked among status quo modifications\n2. **Security regression**: Security group rule permitting `0.0.0.0/0` ingress (likely on port 5432 for the RDS or port 443/80 for ALB)\n3. **Context collapse**: 40 changes total where the critical ones require cross-referencing resource types and `before`/`after` states\n\n## Please provide:\n\nThe **tfplan JSON file** (or paste its contents). This is the output of:\n```\nterraform plan -json > plan.json\n```\n\nor for a saved binary plan:\n```\nterraform show -json tfplan > plan.json\n```\n\nOnce you share the plan, I will:\n- \u2705 Identify all `destroy`/`create` pairs (resource recreation)\n- \u2705 Flag the security group rule change (protocol, CIDR block, port)\n- \u2705 Map each change to the acceptance criteria (e.g., RDS deletion protection, bucket encryption)\n- \u2705 Highlight changes that differ between dev and prod workspaces/vars\n- \u2705 Warn if the plan violates the scenario spec (e.g., node count mismatch, unencrypted bucket)\n\nPlease paste or attach the tfplan JSON, and I'll provide a detailed review.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-terraform-be6345kr/generated_0.txt",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-terraform-be6345kr/generated_1.txt"
+  ],
+  "validity": {
+    "valid": false,
+    "reason": "short_stub",
+    "content_length": 1345,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1345,
+      "fenced_blocks": 2,
+      "extracted_files": 2,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.0,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies RDS destroy + create as data loss risk",
+        "weight": 3.0,
+        "score": 0.0,
+        "justification": "Submission does not identify RDS destroy+create as data loss risk; instead requests plan JSON input without analyzing any actual changes."
+      },
+      {
+        "criterion": "Identifies 0.0.0.0/0 ingress as security risk",
+        "weight": 3.0,
+        "score": 0.0,
+        "justification": "Submission does not identify 0.0.0.0/0 ingress security risk; mentions it only as an example of what to look for, then asks for plan input."
+      },
+      {
+        "criterion": "Ranks issues by severity correctly",
+        "weight": 2.0,
+        "score": 0.0,
+        "justification": "Submission performs no analysis and does not rank any issues by severity; only lists what would be looked for if plan were provided."
+      },
+      {
+        "criterion": "Provides specific remediation steps",
+        "weight": 1.0,
+        "score": 0.0,
+        "justification": "Submission does not provide remediation steps; refuses to complete review by requesting terraform plan JSON instead of analyzing provided content."
+      }
+    ]
+  }
+}

@@ -1,0 +1,75 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "terraform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/terraform",
+        "version": "Terraform v1.15.8"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "dca67fd38ca679a8",
+      "spec_sha256": "3ceba1f4315ac819",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "vate/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 7 items\n\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q1_prevent_destroy_errors PASSED [ 14%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q2_count_shrink_destroys_highest_index PASSED [ 28%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q3_count_to_foreach_recreates PASSED [ 42%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q4_ignore_changes_suppresses_config_drift PASSED [ 57%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q5_ignore_changes_suppresses_remote_drift PASSED [ 71%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place PASSED [ 85%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q7_destroy_blocked_by_prevent_destroy PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2429,
+    "output": 6351
+  },
+  "content": "```json\n{\n  \"q1\": \"error\",\n  \"q2\": [\"aws_subnet.private[2]\"],\n  \"q3\": \"destroy-and-recreate-all\",\n  \"q4\": \"no-change\",\n  \"q5\": \"no-change\",\n  \"q6\": \"update-in-place\",\n  \"q7\": {\"completes\": false, \"blocking_resource\": \"aws_s3_bucket.artifacts\"}\n}\n```\n\n---\n\n**Reasoning:**\n\n- **Q1**: Changing `var.env` mutates the `bucket` name (immutable attribute). Terraform's plan would detect required destruction, but the `lifecycle { prevent_destroy = true }` rule causes the plan phase itself to error, rejecting the operation.\n\n- **Q2**: Reducing `az_count` from 3 to 2 leaves instances 0 and 1; instance 2 (the third) is removed from the `count`.\n\n- **Q3**: Switching `count` to `for_each` without `moved` blocks or state `mv` causes Terraform to see old addresses (`[0]`, `[1]`, `[2]`) as orphaned and new keys (`[\"a\"]`, `[\"b\"]`, `[\"c\"]`) as new. Both sets are destroyed and recreated.\n\n- **Q4**: The `lifecycle { ignore_changes = [engine_version] }` rule tells Terraform to ignore this field entirely, so the config change to `\"16.1\"` produces no plan difference.\n\n- **Q5**: `ignore_changes` applies bidirectionally\u2014Terraform ignores drift in `engine_version` on both plan and refresh, so out-of-band auto-upgrades are never flagged.\n\n- **Q6**: In AWS provider 5.0+, `instance_class` supports in-place modification via a maintenance window; it does not force replacement.\n\n- **Q7**: `terraform destroy` halts when it encounters the S3 bucket, because `prevent_destroy = true` blocks any plan that requires its destruction. The plan phase rejects the operation before apply.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1567,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1567,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

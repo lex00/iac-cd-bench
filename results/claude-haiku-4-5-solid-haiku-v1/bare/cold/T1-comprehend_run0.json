@@ -1,0 +1,116 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T1-comprehend",
+  "stack": "bare",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "2c52b32d82e96f26",
+      "spec_sha256": "d200ea0b988b1f75",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 3622,
+    "output": 6457
+  },
+  "content": "# Analysis: kubectl apply Behavior on the Bare Repo PR\n\n---\n\n## 1. File Processing Order and Relevance\n\n**Order:** Lexicographic (alphabetical)\n1. `00-namespaces.yaml`\n2. `app.yaml`  \n3. `s3-bucket.yaml`\n4. `workers.yaml`\n\n**Why order matters (in principle):** Namespaces should exist before resources that reference them. Conceptually, `00-namespaces.yaml` belongs first.\n\n**Why it doesn't matter for this PR:** All namespaces already exist and are unchanged. The three modified files have no cross-file dependencies. The Deployment, workers, and bucket changes are each independent; none depend on another completing first. The processing order is irrelevant to the success or failure of these particular changes.\n\n---\n\n## 2. Workers.yaml Replica Change (4 \u2192 6)\n\n**Does it succeed?** Yes, without issue.\n\n**What happens:**\n- kubectl apply reads the current MachineDeployment state (`replicas: 4`)\n- Detects a difference from the desired manifest (`replicas: 6`)\n- Sends a PATCH/Apply request to update the object\n- The API server accepts it (numeric fields are mutable)\n- The MachineDeployment controller observes the spec change\n- CAPI launches 2 additional EC2 instances (t3.large)\n- Cluster scales from 4 to 6 worker nodes\n\nThis is a standard, uneventful reconciliation.\n\n---\n\n## 3. App.yaml Selector Change (add `version: v2` label)\n\n**The Deployment selector change fails.** Here's the exact behavior:\n\n**Why it fails:**  \n`spec.selector` on a Deployment is an immutable field in Kubernetes. Once set at creation time, it cannot be changed. When kubectl apply attempts to PATCH the Deployment with a different selector value, the API server rejects the change with a validation error like:\n\n```\nerror: Deployment.apps \"myapp-prod\" is invalid: spec.selector: \nselector is immutable\n```\n\n**What happens in the apply invocation:**\n\nkubectl apply is **not** transactional. It processes each object independently and does not roll back on partial failures. Thus:\n\n- **ServiceAccount (`myapp-prod`):** Applies successfully (no changes, no issues)\n- **Deployment (`myapp-prod`):** **FAILS** at the API server validation step. The object remains unchanged in the cluster (replicas still 2, selector still `{app: myapp, env: prod}`)\n- **Service (`myapp-prod`):** Applies successfully (its selector is not being changed and remains `{app: myapp, env: prod}`)\n- **s3-bucket.yaml:** Applies independently (see Q4)\n- **workers.yaml:** Applies independently (see Q2)\n\n**Consequence:** The Deployment stays in its current state. Existing pods (which have labels `{app: myapp, env: prod}`) continue to run and remain matched by both the existing Deployment selector and the Service selector, so traffic flows normally. The attempted selector update has no effect. The user would need to either delete and recreate the Deployment (disruptive) or accept the selector as-is.\n\n---\n\n## 4. myapp-assets-prod-replica Bucket Object Deletion\n\n**Does the object still exist after apply?** Yes, both the Bucket CR and the AWS S3 bucket persist.\n\n**Why:**  \nStandard `kubectl apply` semantics do **not** delete objects that are removed from the manifest. Removal from a manifest is not a deletion signal.\n\n- kubectl apply reads the desired state from the manifest files\n- Compares it with live state (in etcd)\n- Creates or updates objects to match desired state\n- **Does NOT delete objects absent from the manifest**\n\nDeletion requires either:\n- Explicit `kubectl delete` \n- `kubectl apply -f --prune` (delete mode)\n- A GitOps tool (e.g., Flux) configured to track Git as the source of truth\n\nBecause the `myapp-assets-prod-replica` Bucket CR is never explicitly deleted, ACK's controller does not observe a CR deletion event, and therefore does not delete the corresponding AWS S3 bucket. Both remain.\n\n(If the user later runs `kubectl delete -f s3-bucket.yaml`, then the CR deletion would trigger ACK to delete the AWS resource, but that is not happening here.)\n\n---\n\n## 5. Impact on dev/\n\n**No impact whatsoever.**\n\n- The PR only modifies files under `prod/`\n- There is no kustomize overlay, Flux, shared rendering pipeline, or templating mechanism\n- `dev/` and `prod/` are independent, fully written-out directories\n- `kubectl apply -f prod/` only affects the prod environment\n- State and configuration are not shared\n\n`dev/` is completely unaffected, directly or indirectly.\n\n---\n\n## Summary Table\n\n| File | Change | Outcome |\n|------|--------|---------|\n| `00-namespaces.yaml` | None | \u2713 No-op (already applied) |\n| `app.yaml` \u2013 ServiceAccount | None | \u2713 Applies (no-op) |\n| `app.yaml` \u2013 Deployment | Selector mutation (add `version: v2`) | \u2717 **FAILS** (immutable field) |\n| `app.yaml` \u2013 Service | None | \u2713 Applies (no-op) |\n| `s3-bucket.yaml` \u2013 `myapp-assets-prod` | None | \u2713 No-op (already applied) |\n| `s3-bucket.yaml` \u2013 `myapp-assets-prod-replica` | Removed from manifest | \u2713 CR **persists** in cluster (kubectl apply does not delete) |\n| `workers.yaml` | Replicas 4 \u2192 6 | \u2713 Succeeds; scales cluster to 6 nodes |\n\n---\n\n## Key Takeaways for Bare Stacks\n\n1. **kubectl apply does not delete on removal.** Environment isolation and GitOps deletion semantics are not automatic; they require explicit tooling or discipline.\n2. **Immutable fields cannot be changed post-creation.** Deployment selector is immutable; this PR has a design error.\n3. **Failures are not transactional.** One resource's failure does not prevent other resources in the same apply from succeeding.\n4. **Bare stacks have no shared state or cross-env mechanism.** Changes to prod are completely isolated from dev.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-okkex4iq/00-namespaces.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 5569,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 5569,
+      "fenced_blocks": 1,
+      "extracted_files": 1,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 1.0,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies that kubectl apply -f prod/ processes files in lexical filename order (00-namespaces.yaml first because of its numeric prefix), not a dependency graph",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Explicitly identifies lexicographic file ordering (00-namespaces.yaml first), rejects dependency graph concept, and correctly notes the 00- prefix is manual naming convention for sorting."
+      },
+      {
+        "criterion": "Correctly states the workers.yaml replica change (4 to 6) applies successfully in place, since replicas is a mutable field",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Clearly states the replica change (4\u21926) succeeds, applies in place via PATCH, identifies replicas as a mutable field, and describes the CAPI controller's reconciliation to 6 nodes."
+      },
+      {
+        "criterion": "Correctly states the app.yaml selector change is rejected by the API server because spec.selector is immutable on an existing Deployment, and that the other three files in the same kubectl apply -f prod/ invocation still apply independently",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Correctly states selector change is rejected by API server due to spec.selector immutability, provides example error message, and explicitly confirms the other three files (00-namespaces, s3-bucket, workers) apply independently."
+      },
+      {
+        "criterion": "States that kubectl apply has no prune step by default, so the myapp-assets-prod-replica Bucket object and the AWS S3 bucket it manages are NOT deleted merely because the manifest was removed from Git",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Clearly states kubectl apply has no prune by default, confirms both Bucket CR and AWS S3 bucket persist, and explains that manifest removal does not signal deletion without explicit kubectl delete or --prune."
+      },
+      {
+        "criterion": "Recognizes dev/ and prod/ are fully independent, duplicated directories with no shared base, so nothing in this PR can affect dev/",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Explicitly recognizes dev/ and prod/ are fully independent, hand-written directories with no shared base, overlay, or templating mechanism, confirming the PR cannot affect dev/."
+      }
+    ]
+  }
+}

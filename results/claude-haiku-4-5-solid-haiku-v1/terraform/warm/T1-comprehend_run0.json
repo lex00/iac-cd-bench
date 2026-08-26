@@ -1,0 +1,107 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "terraform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/terraform",
+        "version": "Terraform v1.15.8"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "4a59154730b5b054",
+      "spec_sha256": "ae00422e77eb16a1",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 1511,
+    "output": 2274
+  },
+  "content": "# Terraform Plan Behavior: Canonical Scenario Analysis\n\nI'll address each question using the canonical scenario (dev/prod environments with EKS, S3, RDS, IAM, and HTTPS resources).\n\n## 1. What does the next plan show when a variable flips?\n\nWhen a variable flips (e.g., switching from `dev` to `prod` environment, or changing a boolean like `enable_multi_az`):\n\n**Terraform compares current state against the new configuration:**\n\n- **If using separate state files** (e.g., `terraform workspace select prod` after `select dev`): Plan shows *all* dev resources marked for destruction (`-`) and all prod resources marked for creation (`+`). This is because each workspace maintains independent state.\n  \n- **If using a single state file with variables** (e.g., `-var-file=prod.tfvars` instead of `-var-file=dev.tfvars`): Plan shows targeted changes:\n  - RDS instance class: `db.t3.micro \u2192 db.t3.medium` shows `~` (modify)\n  - Multi-AZ toggle: Shows `~` with explanation of multi-AZ enablement\n  - S3 replication: Shows `+` for new replication rule if not present\n  - EKS node count: `2 \u2192 4` shows `~`\n  - IAM role: Changes to trust relationship show `~`\n\n**The key insight:** Terraform shows the *minimal diff* between what's currently deployed (state) and what the configuration now specifies. Only resources whose attributes changed appear in the plan.\n\n---\n\n## 2. What happens if the state file is deleted?\n\n**Critical scenario\u2014Terraform loses all knowledge of deployed infrastructure:**\n\n**Next `terraform plan` shows:**\n- Every resource marked with `+` (create)\n- Terraform believes nothing exists yet\n\n**Next `terraform apply` will fail with:**\n- AWS errors: \"Bucket already exists\" for S3\n- \"DB instance already exists\" for RDS\n- \"IAM user already exists\" for service account\n- CloudFormation/API errors preventing resource creation\n\n**State is orphaned from reality.** Resources exist in AWS but Terraform has no record.\n\n**Recovery path:**\n1. Restore state file from backup (preferred)\n2. Or use `terraform import` to re-associate each resource with state:\n   ```\n   terraform import aws_db_instance.postgres arn:aws:rds:us-east-1:ACCOUNT:db:mydb\n   terraform import aws_s3_bucket.app-assets my-bucket-name\n   ```\n3. Or destroy all resources manually in AWS, then `terraform apply` fresh\n\n**Without recovery, you cannot safely use Terraform with this infrastructure again.**\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\n**Terraform plan output:**\n```\n~ aws_rds_cluster_instance.postgres {\n    instance_class = \"db.t3.micro\" \u2192 \"db.t3.medium\"\n  }\n```\n\nShows `~` (modify in-place) and lists the attribute change.\n\n**What actually happens during `apply`:**\n- AWS RDS performs a **downtime resize** (unless using Aurora with fast failover)\n- Instance is stopped, resized, then restarted\n- Typical downtime: 1\u20135 minutes depending on workload\n- Multi-AZ configuration *reduces* but does not eliminate downtime\n\n**What Terraform does NOT show:**\n- Terraform does not warn about downtime or required maintenance windows\n- Terraform does not indicate if a resize is feasible (e.g., disk space requirements)\n- No indication of backup/restore implications\n\n**For multi-AZ RDS (prod):**\n- Terraform shows `multi_az = true` (already in state)\n- If flipping `multi_az: false \u2192 true`, Terraform shows `~` and AWS takes ~30 minutes to create standby\n- The change is non-blocking for the primary, but you cannot use the instance during standby provisioning\n\n---\n\n## 4. What is the difference between state and configuration?\n\n| Aspect | Configuration (`.tf` files) | State (`.tfstate`) |\n|--------|-----|-----|\n| **What it represents** | Your *desired* infrastructure (intent) | Your *actual* deployed infrastructure (reality) |\n| **Owner** | You write and version-control it | Terraform manages it; stores resource IDs and attributes |\n| **Source of truth** | For *what should exist* | For *what does exist* |\n| **When it changes** | When you edit `.tf` files | When you run `terraform apply` (or drift occurs) |\n| **Example** | `instance_class = var.db_class` | `instance_class = \"db.t3.micro\"` (resolved value + AWS resource ID) |\n| **Drift** | Configuration can become stale if someone manually changes AWS | State can drift if AWS is modified outside Terraform |\n\n**The Plan compares them:**\n```\nterraform plan = (State) vs. (Configuration) \u2192 what changes are needed?\n```\n\n**Example from canonical scenario:**\n- **Configuration says:** `enable_prod_replication = var.environment == \"prod\" ? true : false`\n- **State has:** `enable_prod_replication = false` (dev workspace)\n- **Plan shows:** `+` for replication rule (new resource)\n- **Apply:** Creates cross-region replication and updates state with new S3 replication rule ID\n\n**If drift occurs** (e.g., someone disables S3 versioning in AWS console):\n- Configuration still says: `versioning = true`\n- State still says: `versioning = true`\n- Terraform plan shows: nothing (state and config match)\n- Reality: versioning is actually off in AWS\n- **Result:** Plan is lying; `apply` would fix it on next run, but you won't discover drift until then\n\n---\n\n## Summary Table: Variable Flip Scenario\n\n| Question | Answer |\n|----------|--------|\n| **Plan shows** | Minimal diff: only changed attributes/resources; workspace switch shows full replacement |\n| **State deleted** | Next plan attempts to create everything; apply fails; recovery via `import` or restore |\n| **RDS class change** | Shows `~` (modify); causes production downtime; Terraform does not warn about it |\n| **State vs. Config** | Config = desired; State = actual + metadata; Plan = diff; drift = desync |",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-terraform-wnmtf79h/-var-file=prod.tfvars",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-terraform-wnmtf79h/-var-file=dev.tfvars",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-terraform-wnmtf79h/generated_0.txt"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 5634,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 5634,
+      "fenced_blocks": 3,
+      "extracted_files": 3,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.75,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies that state file deletion loses all tracked resources",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Section 2 explicitly states state file deletion causes Terraform to lose all knowledge of deployed infrastructure; resources exist in AWS but Terraform has no record; plan shows everything as create."
+      },
+      {
+        "criterion": "Correctly predicts plan shows instanceClass change",
+        "weight": 2.0,
+        "score": 0.5,
+        "justification": "Submission identifies that plan shows instanceClass change with attribute values, but incorrectly predicts it as `~` (modify) instead of `-` and `+` (replace); reference explicitly states instance_class is a required replacement attribute requiring destroy+create."
+      },
+      {
+        "criterion": "Explains that RDS instanceClass change may trigger recreate",
+        "weight": 1.0,
+        "score": 0.0,
+        "justification": "Submission describes AWS RDS 'downtime resize' behavior but does not explain that instanceClass change triggers recreate/replacement; contradicts reference which explicitly states Terraform will replace (destroy then create) the RDS instance."
+      },
+      {
+        "criterion": "Distinguishes state (current reality) from config (desired state)",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Section 4 clearly distinguishes configuration (desired state in .tf files) from state (actual deployed infrastructure in .tfstate), explains plan compares them, and provides example of drift; aligns with reference answer."
+      }
+    ]
+  }
+}

@@ -1,0 +1,102 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "terraform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/terraform",
+        "version": "Terraform v1.15.8"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "dd01970ce92a5964",
+      "spec_sha256": "f6545befc3558903",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 1210,
+    "output": 692
+  },
+  "content": "# Review Status: Missing Terraform Plan Input\n\nI'm ready to review the Terraform plan for hidden destructive changes, but **the tfplan JSON output itself was not included in your message**. \n\nTo conduct the review against the canonical scenario and identify the specific risks you've flagged, I need you to provide:\n\n1. **The complete tfplan JSON** (output from `terraform plan -json` or `terraform show -json tfplan`)\n\n## What I'll Look For\n\nOnce provided, I'll examine:\n\n### Primary Concerns\n- **Database recreation**: Any `aws_db_instance` resource showing both `destroy` and `create` actions in the same plan (particularly risky for the RDS PostgreSQL instance specified in prod as `db.t3.medium, multi-AZ, encrypted`)\n- **Security group ingress explosion**: New `aws_security_group_rule` or `ingress` blocks with `0.0.0.0/0` CIDR that violate least-privilege acceptance criteria\n\n### Secondary Validation\n- Mutation of `aws_s3_bucket` versioning, encryption, or replication configuration (must remain intact)\n- Deletion protection changes on RDS (must remain `true`)\n- IAM wildcards in prod roles (acceptance criterion #4)\n- Unintended deletion of `aws_secretsmanager_secret` or encryption key references\n\n### Analysis Output\nI'll flag:\n- Which of the 40 changes are benign (drift corrections, metadata updates)\n- Which represent actual infrastructure mutations\n- Risk severity and blast radius\n- Alignment with the dev/prod isolation requirement\n\n**Please paste or upload the tfplan JSON output, and I'll provide a detailed line-by-line review.**",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1552,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1552,
+      "fenced_blocks": 0,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.0,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies RDS destroy + create as data loss risk",
+        "weight": 3.0,
+        "score": 0.0,
+        "justification": "Submission does not identify the RDS destroy+create risk; instead asks for tfplan JSON input without analyzing provided materials."
+      },
+      {
+        "criterion": "Identifies 0.0.0.0/0 ingress as security risk",
+        "weight": 3.0,
+        "score": 0.0,
+        "justification": "Submission does not identify 0.0.0.0/0 ingress security issue; only lists it as something it will look for if given data."
+      },
+      {
+        "criterion": "Ranks issues by severity correctly",
+        "weight": 2.0,
+        "score": 0.0,
+        "justification": "Submission refuses the task, requesting input data rather than ranking any identified issues by severity."
+      },
+      {
+        "criterion": "Provides specific remediation steps",
+        "weight": 1.0,
+        "score": 0.0,
+        "justification": "Submission provides no remediation steps; declines to review by claiming tfplan JSON was not included."
+      }
+    ]
+  }
+}

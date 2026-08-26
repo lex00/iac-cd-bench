@@ -1,0 +1,105 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "terraform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/terraform",
+        "version": "Terraform v1.15.8"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "4a59154730b5b054",
+      "spec_sha256": "ae00422e77eb16a1",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    }
+  },
+  "tokens": {
+    "input": 1221,
+    "output": 2018
+  },
+  "content": "# Terraform Plan Behavior: Canonical Scenario Analysis\n\nGiven the canonical scenario with dev/prod environments and parameterized resources, here's the predicted behavior:\n\n## 1. **What does the next plan show when a variable flips?**\n\nWhen you flip an environment variable (e.g., switching `environment = \"dev\"` to `environment = \"prod\"` in a single workspace or `.tfvars` file), the plan will show:\n\n- **Resource additions** (`+`): resources scaled up for prod (e.g., EKS cluster scaled from 2 to 4 nodes, RDS upgraded from `db.t3.micro` to `db.t3.medium` with multi-AZ)\n- **Resource deletions** (`-`): dev-sized resources removed\n- **Modifications** (`~`): configuration changes (e.g., S3 adding cross-region replication, ALB replaced by CloudFront on prod)\n- **Count/for_each changes**: if using dynamic block expressions tied to the variable (e.g., `count = var.environment == \"prod\" ? 4 : 2`)\n\nThe plan is **non-destructive preview**\u2014it only shows what would change without applying. No state is modified yet.\n\n---\n\n## 2. **What happens if the state file is deleted?**\n\nThis is catastrophic:\n\n- **Next `terraform plan`** shows all resources as `+` (wanting creation), because Terraform has no record they exist\n- **`terraform apply`** would attempt to create duplicate resources:\n  - S3 bucket creation fails (bucket name already exists globally)\n  - RDS fails (endpoint already provisioned)\n  - EKS cluster fails (same cluster name/ARN exists)\n- **State is now out of sync** with reality\n- **Recovery requires**:\n  - Manually import existing resources: `terraform import aws_db_instance.rds arn:aws:rds:...`\n  - Or destroy deployed resources and rebuild from scratch\n  - Or restore state from backup/version control (if stored remotely, e.g., S3 backend)\n\n**Mitigation**: Always use remote state (S3 backend with versioning, TFC, Terraform Cloud). Local state files should never be the only copy.\n\n---\n\n## 3. **How does Terraform handle the RDS instance class change?**\n\nChanging from `db.t3.micro` (dev) to `db.t3.medium` (prod):\n\n**Plan output:**\n```\n~ aws_db_instance.postgres\n  ~ instance_class = \"db.t3.micro\" \u2192 \"db.t3.medium\"\n```\n\n**Apply behavior:**\n- If `apply_immediately = false` (default): modification is **scheduled for next maintenance window** (typically pending for hours/days); plan shows `~` without disruption indicator\n- If `apply_immediately = true`: **immediate downtime** (1\u20135 minutes), full failover required; Terraform flags this with `~` and the plan is reviewed by operator\n- **Replacement scenario** (rare): If moving to an incompatible generation (e.g., t3 \u2192 t2), Terraform shows `-/+` (destroy and recreate); data loss risk unless using automated backups + restore\n\n**State after apply:**\n- The state file updates `instance_class` to the new value\n- The AWS API reflects the change; Terraform's next plan will show no diff\n\n---\n\n## 4. **What is the difference between state and configuration?**\n\n| Aspect | Configuration | State |\n|---|---|---|\n| **Location** | `.tf` files (version-controlled) | `terraform.tfstate` (local or remote backend) |\n| **Purpose** | Declares desired infrastructure | Records actual deployed infrastructure |\n| **Authoritative** | User's source of truth | Terraform's source of truth for what exists |\n| **Example** | `resource \"aws_db_instance\" \"postgres\" { instance_class = \"db.t3.medium\" }` | `\"instance_class\": \"db.t3.medium\"` (after apply) |\n| **Plan logic** | Config vs. State \u2192 diff determination | If they diverge, manual drift detected (e.g., someone changed instance class via AWS Console) |\n| **Deleted file** | Reapply deletes all managed resources on next `apply` | Deletion orphans real resources; they're untracked but still cost money |\n\n**Drift example**: If a human manually changes the RDS instance class to `db.t3.large` via AWS Console, Terraform's next `plan` detects the mismatch and wants to revert it to `db.t3.medium` (from config).\n\n---\n\n## Summary for Your Scenario\n\nWhen flipping from **dev to prod** in a single Terraform workspace:\n1. Plan shows upscaling, cross-region replication, multi-AZ, and IAM privilege changes\n2. State is the single source of truth; deleting it requires recovery (import or rebuild)\n3. RDS class change is backward-compatible but may require maintenance window or immediate downtime\n4. Configuration is your intent; state is reality; they must align for predictable infrastructure\n\nUse **separate workspaces** (`terraform workspace select prod`) or **separate `.tfvars` files** (`terraform apply -var-file=prod.tfvars`) to keep dev and prod state files isolated, preventing accidental prod-wide deletions.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-terraform-2hdrwsfz/generated_0.txt"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 4626,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 4626,
+      "fenced_blocks": 1,
+      "extracted_files": 1,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  },
+  "judge": {
+    "idiom": 0.875,
+    "judge_model": "claude-haiku-4-5",
+    "prompt_sha256": "8bac4198059e310e",
+    "criteria": [
+      {
+        "criterion": "Identifies that state file deletion loses all tracked resources",
+        "weight": 3.0,
+        "score": 1.0,
+        "justification": "Submission clearly states deleting state causes plan to show all resources as '+' (create) and apply would fail on duplicates with unique constraints. Correctly identifies state loss and recovery implications."
+      },
+      {
+        "criterion": "Correctly predicts plan shows instanceClass change",
+        "weight": 2.0,
+        "score": 0.5,
+        "justification": "Submission predicts plan shows '~' (modification) as primary behavior with '-/+' (replacement) as rare. Reference explicitly states instance_class is a required replacement attribute showing '-/+' as standard. Wrong or missing material detail on expected behavior."
+      },
+      {
+        "criterion": "Explains that RDS instanceClass change may trigger recreate",
+        "weight": 1.0,
+        "score": 1.0,
+        "justification": "Submission correctly explains that instanceClass change may trigger destroy/recreate ('-/+') and explicitly mentions data loss risk unless using automated backups/restore, matching reference expectations."
+      },
+      {
+        "criterion": "Distinguishes state (current reality) from config (desired state)",
+        "weight": 2.0,
+        "score": 1.0,
+        "justification": "Submission clearly distinguishes configuration (.tf files = desired state) from state (.tfstate = actual deployed infrastructure), explains plan computes the diff, and provides drift example. Matches reference answer completely."
+      }
+    ]
+  }
+}

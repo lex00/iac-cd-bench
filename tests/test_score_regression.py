@@ -83,10 +83,10 @@ SAMPLED_HISTORICAL_JSONS = [
 # `skipped` flags. Pinned so a later change to VACUOUS_LOG_MARKERS, or a
 # stage runner quietly changing a log body, shows up as a test failure
 # rather than as a moved leaderboard.
-EXPECTED_TOTAL_RUNS = 1218
-EXPECTED_VACUOUS_RUNS = 773
+EXPECTED_TOTAL_RUNS = 1242
+EXPECTED_VACUOUS_RUNS = 777
 EXPECTED_FULLY_VACUOUS_RUNS = 127
-EXPECTED_CHANGED_COMPOSITES = 791
+EXPECTED_CHANGED_COMPOSITES = 795
 
 
 def _old_composite(stages: dict) -> float:
@@ -178,6 +178,7 @@ def test_stage_gating_alone_changes_nothing():
 
 def test_vacuous_pass_correction_is_the_measured_size_and_only_lowers_scores():
     total = vacuous = fully_vacuous = changed = increased = 0
+    vacuous_increases: list[str] = []
 
     for _json_path, result in _historical_results():
         total += 1
@@ -201,6 +202,11 @@ def test_vacuous_pass_correction_is_the_measured_size_and_only_lowers_scores():
             changed += 1
             if new > old:
                 increased += 1
+                # Did the old formula credit an inapplicable stage as a pass?
+                # Only then is an increase a contradiction of the guard.
+                if any(isinstance(s, dict) and stage_inapplicable(s)
+                       and s.get("passed") for s in stages.values()):
+                    vacuous_increases.append(str(_json_path))
 
     assert total == EXPECTED_TOTAL_RUNS, (
         f"expected {EXPECTED_TOTAL_RUNS} historical result JSONs, found {total} — "
@@ -209,10 +215,25 @@ def test_vacuous_pass_correction_is_the_measured_size_and_only_lowers_scores():
     assert vacuous == EXPECTED_VACUOUS_RUNS
     assert fully_vacuous == EXPECTED_FULLY_VACUOUS_RUNS
     assert changed == EXPECTED_CHANGED_COMPOSITES
-    assert increased == 0, (
-        f"{increased} historical composite(s) went UP under the vacuous-pass "
-        "guard. Withdrawing credit that was never earned can only lower a "
-        "score, so an increase means the guard is crediting something new."
+    # The original form of this assertion was `increased == 0`, on the
+    # reasoning that withdrawing credit never earned can only lower a score.
+    # That is true only of the case it was written against — an inapplicable
+    # stage the old formula counted as a PASS. The old formula divided by a
+    # fixed denominator of 3, so it also counted an inapplicable stage as a
+    # FAILURE, and excluding one of those necessarily RAISES correctness.
+    #
+    # The historical corpus happened to contain only the first kind, so the
+    # blanket claim held by accident until solid-haiku-v1 added runs of the
+    # second kind (e.g. knr-ops T4-debug: lint pass, static inapplicable,
+    # semantic fail — 1/3 becomes 1/2).
+    #
+    # So the invariant is narrower than it was written: removing a *vacuous
+    # pass* may only lower. That is the part worth pinning, and it is what the
+    # guard actually claims.
+    assert not vacuous_increases, (
+        f"{len(vacuous_increases)} run(s) whose inapplicable stage was scored "
+        "as a PASS by the old formula went UP. Withdrawing credit that was "
+        f"never earned can only lower a score: {vacuous_increases[:3]}"
     )
 
 

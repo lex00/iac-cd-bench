@@ -1,0 +1,90 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "chant",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "chant": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/chant",
+        "version": "@intentius/chant 0.46.0"
+      },
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "npm": {
+        "present": true,
+        "path": "/Users/alex/.nvm/versions/node/v24.13.1/bin/npm",
+        "version": "11.8.0"
+      },
+      "tsc": {
+        "present": true,
+        "path": "/Users/alex/.local/share/mise/installs/npm-typescript/5.9.3/node_modules/.bin/tsc",
+        "version": "Version 5.9.3"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "1e15d083a0a90095",
+      "spec_sha256": "f715de7d385d5d34",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "/test_task.py::test_q5_build_never_calls_cloud PASSED [ 71%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/chant/T6-semantics/tests/test_task.py::test_q6_snapshot_needs_no_controller_reconcile PASSED [ 85%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/chant/T6-semantics/tests/test_task.py::test_q7_missing_edges_specific_to_k8s_lexicon PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q3: expected orphan, got 'newly-observed'\n    assert 'newly-observed' == 'orphan'\n      \n      - orphan\n      + newly-observed\n/private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/chant/T6-semantics/tests/test_task.py:79: AssertionError: q3: expected orphan, got 'newly-observed'\nE   AssertionError: q4 action: expected adopt, got 'delete'\n    assert 'delete' == 'adopt'\n      \n      - adopt\n      + delete\n/private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/chant/T6-semantics/tests/test_task.py:86: AssertionError: q4 action: expected adopt, got 'delete'\n=========================== short test summary info ============================\nFAILED ../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/chant/T6-semantics/tests/test_task.py::test_q3_orphan_classification\nFAILED ../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/chant/T6-semantics/tests/test_task.py::test_q4_unmarked_orphan_is_adopt_not_delete\n========================= 2 failed, 5 passed in 0.01s ==========================\n",
+      "passed_count": 5,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 9,
+    "output": 7114
+  },
+  "content": "```json\n{\n  \"q1\": {\n    \"behavior\": \"falls-back-to-run\",\n    \"reason\": \"Both builds in the verify run exit successfully and produce output. The delivery build shows '0 files folded, 1 ran' \u2014 the file could not fold, so it was executed. The clusters build shows '1 file folded, 0 ran'. Per-file fallback allows other files to fold even if one file requires module execution.\"\n  },\n  \"q2\": {\n    \"answered_by\": \"live-marker\",\n    \"reason\": \"chant.config.ts documents that ownership is 'stamped onto every emitted resource as `chant.intentius.io/stack`'. The stack identity is a label on the resource itself, not consulted from a separate state file. The lifecycle layer reads this marker from the live resource to determine ownership.\"\n  },\n  \"q3\": \"newly-observed\",\n  \"q4\": {\n    \"action\": \"delete\",\n    \"reason\": \"An undeclared, unowned resource (no chant.intentius.io/stack label) is extraneous to the declared state. chant lifecycle plan aligns live state with declared state by proposing deletion of resources not part of the declared configuration and not owned by this stack.\"\n  },\n  \"q5\": {\n    \"calls_cloud\": false,\n    \"reason\": \"`chant build src/envs/dev/infra` is a compile step that evaluates TypeScript composites and generates YAML manifests. It performs no reconciliation, state checking, or API calls to AWS or Kubernetes. The generated manifests are pure declarative output.\"\n  },\n  \"q6\": {\n    \"requires_controller_reconcile\": false,\n    \"reason\": \"`chant lifecycle snapshot` reads Custom Resources from the Kubernetes cluster's etcd. The CAPI/CAPA CRs (clusterCluster, clusterInfra) are objects stored in the cluster regardless of whether their reconciliation into actual AWS infrastructure has completed. The snapshot records them as PRESENT based on their existence in the cluster, not on infrastructure provisioning state.\"\n  },\n  \"q7\": {\n    \"specific_to_k8s_lexicon\": true,\n    \"reason\": \"graph-ir-dev-declared.json (offline, no --at latest) shows 3 edges for the same k8s lexicon. The k8s lexicon clearly supports edge tracking in declared mode. The empty edges array in the live graph (with --at latest) is specific to the k8s lexicon's implementation for live graph queries, not a general limitation of the --at latest format.\"\n  }\n}\n```",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 2263,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 2263,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

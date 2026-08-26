@@ -1,0 +1,75 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T6-semantics",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "terraform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/terraform",
+        "version": "Terraform v1.15.8"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "dca67fd38ca679a8",
+      "spec_sha256": "3ceba1f4315ac819",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "warm",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q4_ignore_changes_suppresses_config_drift PASSED [ 57%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q5_ignore_changes_suppresses_remote_drift PASSED [ 71%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place FAILED [ 85%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q7_destroy_blocked_by_prevent_destroy PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q6: expected update-in-place, got 'replace'\n    assert 'update' in 'replace'\n     +  where 'replace' = _norm('replace')\n     +    where 'replace' = <built-in method get of dict object at 0x10b54d140>('q6', '')\n     +      where <built-in method get of dict object at 0x10b54d140> = {'q1': 'error', 'q2': ['aws_subnet.private[2]'], 'q3': 'destroy-and-recreate-all', 'q4': 'no-change', ...}.get\n/private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py:87: AssertionError: q6: expected update-in-place, got 'replace'\n=========================== short test summary info ============================\nFAILED ../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 2429,
+    "output": 2976
+  },
+  "content": "```json\n{\n  \"q1\": \"error\",\n  \"q2\": [\"aws_subnet.private[2]\"],\n  \"q3\": \"destroy-and-recreate-all\",\n  \"q4\": \"no-change\",\n  \"q5\": \"no-change\",\n  \"q6\": \"replace\",\n  \"q7\": {\"completes\": false, \"blocking_resource\": \"aws_s3_bucket.artifacts\"}\n}\n```\n\n**Reasoning:**\n\n- **Q1**: The bucket name is computed from `var.env`. Changing it from `\"prod\"` to `\"staging\"` requires replacing the bucket (AWS doesn't allow renames). However, `lifecycle { prevent_destroy = true }` blocks destruction, causing the plan itself to error.\n\n- **Q2**: Reducing `az_count` from 3 to 2 shrinks the count range. The instance at index `[2]` is destroyed; `[0]` and `[1]` persist.\n\n- **Q3**: Without `moved` blocks, Terraform sees old state addresses (`[0]`, `[1]`, `[2]`) and new config addresses (`[\"a\"]`, `[\"b\"]`, `[\"c\"]`). No automatic matching occurs\u2014all old instances are marked for destruction and new ones for creation.\n\n- **Q4**: The `engine_version` field has `lifecycle { ignore_changes = [engine_version] }`. Terraform will not propose any change, regardless of what the config says.\n\n- **Q5**: Same as Q4\u2014the `ignore_changes` lifecycle rule suppresses drift correction on `engine_version`, even when the actual resource has drifted.\n\n- **Q6**: In AWS RDS, `instance_class` is a replacement-forcing field. Changing instance type requires replacing the instance.\n\n- **Q7**: `terraform destroy` fails when it encounters `aws_s3_bucket.artifacts` because `prevent_destroy = true` is set. Destroy does not complete; the S3 bucket blocks it.",
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 1517,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 1517,
+      "fenced_blocks": 1,
+      "extracted_files": 0,
+      "min_chars": 200,
+      "expects_artifacts": false,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}

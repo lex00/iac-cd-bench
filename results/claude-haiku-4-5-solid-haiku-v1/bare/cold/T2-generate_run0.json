@@ -1,0 +1,86 @@
+{
+  "model": "claude-haiku-4-5",
+  "task": "T2-generate",
+  "stack": "bare",
+  "run": 0,
+  "condition": "cold",
+  "reasoning_effort": "low",
+  "provenance": {
+    "provenance_version": 1,
+    "harness": {
+      "commit": "017d7e6983a6858714092c1aa4b8c9bb5d0342d3",
+      "dirty": false,
+      "branch": "bench/matrix-final"
+    },
+    "provider": "claude-cli",
+    "model": "claude-haiku-4-5",
+    "reasoning_effort": "low",
+    "toolchain": {
+      "kubeconform": {
+        "present": true,
+        "path": "/opt/homebrew/bin/kubeconform",
+        "version": "v0.7.0"
+      },
+      "yq": {
+        "present": true,
+        "path": "/opt/homebrew/bin/yq",
+        "version": "yq (https://github.com/mikefarah/yq/) version v4.53.6"
+      }
+    },
+    "partial": false,
+    "judge_model": "claude-haiku-4-5",
+    "judge_prompt_sha256": "8bac4198059e310e",
+    "task": {
+      "prompt_sha256": "b870b4fe89ff9404",
+      "spec_sha256": "0aa384baa7f37e91",
+      "scenario_sha256": "a666b78376cac7f0"
+    },
+    "condition": "cold",
+    "k": 1
+  },
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\nspec:\n  bucketName: myapp-logs-prod\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n---\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\n\n[validate CRDs] kubeconform: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/dev/logs-bucket.yaml - Bucket myapp-logs-dev is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/s3.services.k8s.aws/bucket_v1alpha1.json#' - at '/spec': missing property 'name'\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kubeconform logs-bucket.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/prod/logs-bucket.yaml - Bucket myapp-logs-prod is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/s3.services.k8s.aws/bucket_v1alpha1.json#' - at '/spec': missing property 'name'\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 1, \nkubeconform logs-policy.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/prod/logs-policy.yaml - Policy myapp-logs-policy is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/iam.services.k8s.aws/policy_v1alpha1.json#' - at '/spec': missing property 'name'\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: \nkubeconform logs-bucket.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/dev/logs-bucket.yaml - Bucket myapp-logs-dev is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/s3.services.k8s.aws/bucket_v1alpha1.json#' - at '/spec': missing property 'name'\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 1, Er\nkubeconform logs-policy.yaml: exit=1\n/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/dev/logs-policy.yaml - Policy myapp-logs-policy is invalid: problem validating schema. Check JSON formatting: jsonschema validation failed with 'file:///private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/schemas/iam.services.k8s.aws/policy_v1alpha1.json#' - at '/spec': missing property 'name'\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 1"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /opt/homebrew/opt/python@3.14/bin/python3.14\nrootdir: /private/tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix\nconfigfile: pyproject.toml\nplugins: anyio-4.13.0\ncollecting ... collected 6 items\n\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/bare/T2-generate/tests/test_task.py::test_dev_logs_bucket_exists PASSED [ 16%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/bare/T2-generate/tests/test_task.py::test_prod_logs_bucket_exists PASSED [ 33%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/bare/T2-generate/tests/test_task.py::test_bucket_versioning PASSED [ 50%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/bare/T2-generate/tests/test_task.py::test_bucket_encryption PASSED [ 66%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/bare/T2-generate/tests/test_task.py::test_public_access_blocked PASSED [ 83%]\n../../../../../../tmp/claude-501/-Users-alex-Documents-checkouts-iac-cd-bench/0f6ad9a4-e6f2-46d1-b36e-7d74f9cda12d/scratchpad/wt-report-fix/tasks/bare/T2-generate/tests/test_task.py::test_logs_scoped_iam_grant_present_both_envs PASSED [100%]\n\n============================== 6 passed in 0.01s ===============================\n",
+      "passed_count": 6,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1760,
+    "output": 6097
+  },
+  "content": "# New ACK-Managed S3 Bucket for Logs\n\nI'll add the logs bucket and grant permissions independently in each environment. These manifests assume the existing User and Role are named `myapp-user` and `myapp-role` respectively \u2014 adjust the `userName` and `roleName` fields to match your actual existing service principals.\n\n`dev/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-dev\nspec:\n  bucketName: myapp-logs-dev\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n    - applyServerSideEncryptionByDefault:\n        sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n`dev/logs-policy.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-policy\nspec:\n  userName: myapp-user\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-dev/*\"\n        }\n      ]\n    }\n```\n\n`prod/logs-bucket.yaml`\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs-prod\nspec:\n  bucketName: myapp-logs-prod\n  versioningConfiguration:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n    - applyServerSideEncryptionByDefault:\n        sseAlgorithm: AES256\n  publicAccessBlockConfiguration:\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n`prod/logs-policy.yaml`\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-policy\nspec:\n  roleName: myapp-role\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\",\n            \"s3:PutObject\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-prod/*\"\n        }\n      ]\n    }\n```\n\n---\n\n**Notes:**\n- Each new policy grants access **only** to the logs bucket; the existing `iam.yaml` policies remain unchanged and retain access only to the assets bucket.\n- Replace `myapp-user` (dev) and `myapp-role` (prod) with your actual User/Role names from the existing `iam.yaml` files.\n- Apply with `kubectl apply -f dev/logs-bucket.yaml dev/logs-policy.yaml` and `kubectl apply -f prod/logs-bucket.yaml prod/logs-policy.yaml`.",
+  "extracted_files": [
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/dev/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/dev/logs-policy.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/prod/logs-bucket.yaml",
+    "/var/folders/jz/jz_28g4x5r7_8qgbd7k3p2740000gn/T/bench-bare-37g_okop/prod/logs-policy.yaml"
+  ],
+  "validity": {
+    "valid": true,
+    "reason": null,
+    "content_length": 2584,
+    "verdict": "valid",
+    "reasons": [],
+    "checks": {
+      "content_chars": 2584,
+      "fenced_blocks": 4,
+      "extracted_files": 4,
+      "min_chars": 200,
+      "expects_artifacts": true,
+      "transcript_structural": [],
+      "transcript_narration": {}
+    }
+  }
+}
