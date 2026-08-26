@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [],
+    "section_chars": 151
+  },
+  "tokens": {
+    "input": 788,
+    "output": 481
+  },
+  "content": "# Security Review: knr-ops PR Diff\n\n## Issues Identified (ranked by severity)\n\n### \ud83d\udd34 CRITICAL\n\n**1. Public read access on S3 bucket**\n- Violates acceptance criteria #1 (\"no public access\") and #4 (least privilege).\n- If this lands on the prod overlay, application assets/replication targets become world-readable.\n- **Fix:** Remove the public-read `Statement` from the bucket policy. If asset delivery is needed, serve via CloudFront with an Origin Access Control (OAC) policy scoped to the distribution only.\n\n**2. Plaintext password in deployment env vars**\n- Directly violates the spec's secret-handling rule: secrets must be SOPS-encrypted in knr-ops.\n- Password will persist in Git history even if removed later \u2014 rotation + history scrubbing required.\n- **Fix:** Replace with SOPS-encrypted `Secret` + `secretKeyRef` in the container spec:\n  ```yaml\n  env:\n    - name: DB_PASSWORD\n      valueFrom:\n        secretKeyRef:\n          name: app-db-credentials\n          key: password\n  ```\n\n### \ud83d\udfe1 WARNING\n\n**3. Missing resource limits on containers**\n- No `resources.limits` means containers can consume unbounded node CPU/memory \u2014 DoS/fair-share risk on shared nodes (prod has 4 \u00d7 t3.large).\n- Best practice (and required for ProdRecommendedKubernetes setups): set requests + limits, ideally enforce via a `LimitRange` in the base namespace manifest.\n- Also blocks any future ` Guaranteed` QoS and admission policies like `LimitRanger`.\n\n### \ud83d\udfe2 INFO\n\n**4. RDS instance class change**\n- Per diff preview: no issue. Ensure change is scoped to the intended overlay only (dev vs prod isolation, criterion #7) and that prod keeps deletion protection, multi-AZ, and encryption.\n\n## Merge Verdict\n\n**Block merge.** Issues 1 and 2 must be fixed before merge:\n\n1. Remove public bucket policy statement \u2192 use CloudFront OAC if assets must be public-facing.\n2. Migrate password to SOPS-encrypted Secret referenced via `secretKeyRef`; rotate the exposed credential.\n3. Add resource requests/limits (or LimitRange) \u2014 recommended before merge, required soon after."
+}

@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 594
+  },
+  "content": "# Security Review: PR Diff\n\n## Issues Identified (Ranked by Severity)\n\n### \ud83d\udd34 Critical \u2014 Block merge\n\n**1. Plaintext password in deployment env vars**\n- Violates acceptance criterion #3 (secrets never in plaintext in Git).\n- Passwords in manifests are readable by anyone with repo access, persist in Git history forever, and leak via `kubectl describe pod`, logs, CI caches.\n- **Fix:** Move to SOPS-encrypted Secret (the knr-ops-native mechanism per spec), referenced via `secretKeyRef` or `envFrom`. Rotate the credential \u2014 it's already compromised by appearing in the diff.\n\n**2. S3 bucket policy grants public read access**\n- Violates acceptance criterion #1 (no public access).\n- Exposes application assets publicly; if the bucket holds anything else, that's exposed too. Also enables enumeration/abuse (bandwidth costs, data exfiltration risk).\n- **Fix:** Remove the public-read policy statement. If public asset delivery is genuinely needed, serve via CloudFront with an Origin Access Identity/Control + bucket policy restricted to the CloudFront principal \u2014 not `Principal: \"*\"`. Also ensure `aws:s3:PublicAccessBlock` (all four flags) is enforced.\n\n### \ud83d\udfe1 Warning \u2014 Should fix before/at merge\n\n**3. Missing resource limits on containers**\n- Noisy-neighbor and DoS risk: a runaway container can starve node resources and impact other workloads, especially on shared prod nodes.\n- **Fix:** Set `resources.requests` and `resources.limits` (CPU/memory) for all containers. Consider adding a `LimitRange` in the base overlay and/or OPA/Gatekeeper policy to enforce it. Also check whether `requests` are set \u2014 required for proper scheduling.\n\n### \ud83d\udfe2 Info / No action\n\n**4. RDS instance class change** \u2014 Sizing change only; no security impact. Verify it matches the environment spec (dev: db.t3.micro; prod: db.t3.medium multi-AZ) and that no RDS security settings were touched.\n\n## Merge Checklist\n\n1. \u274c **Do not merge** until the plaintext password is removed and the credential is rotated.\n2. \u274c **Do not merge** until the public bucket policy is removed/replaced with CloudFront OAI-restricted access.\n3. \u26a0\ufe0f Strongly recommended: add resource requests/limits before merge.\n4. \u2705 RDS change: verify sizing matches env spec, then fine.\n\n**Additional hardening suggestions:** add `Policy: pullIfNotPresent`/digest-pinned images, non-root `securityContext` (`runAsNonRoot: true`, `readOnlyRootFilesystem: true`, drop capabilities), and consider a CI secret-scanning + policy check (e.g., conftest/OPA) to catch plaintext secrets and public buckets pre-merge."
+}

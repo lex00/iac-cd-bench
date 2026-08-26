@@ -1,0 +1,36 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base\npatches:\n  # 1. Scale app deployment to 4 replicas\n  - patch: |-\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: app\n      spec:\n        replicas: 4\n    target:\n      kind: Deployment\n      name: app\n  # 2 & 3. RDS: db.t3.medium + multi-AZ\n  # (Crossplane RDS Instance via kustomize patch)\n  - patch: |-\n      apiVersion: rds.aws.crossplane.io/\n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [],
+    "section_chars": 151
+  },
+  "tokens": {
+    "input": 827,
+    "output": 720
+  },
+  "content": "# Prod Overlay Changes\n\n```yaml\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nresources:\n  - ../../base\n\npatches:\n  # 1. Scale app deployment to 4 replicas\n  - patch: |-\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: app\n      spec:\n        replicas: 4\n    target:\n      kind: Deployment\n      name: app\n\n  # 2 & 3. RDS: db.t3.medium + multi-AZ\n  # (Crossplane RDS Instance via kustomize patch)\n  - patch: |-\n      apiVersion: rds.aws.crossplane.io/v1beta1\n      kind: DBInstance\n      metadata:\n        name: app-db\n      spec:\n        forProvider:\n          dbInstanceClass: db.t3.medium\n          multiAZ: true\n    target:\n      group: rds.aws.crossplane.io\n      kind: DBInstance\n      name: app-db\n\n  # 4. S3 cross-region replication to us-west-2\n  # (Crossplane Bucket replication config)\n  - patch: |-\n      apiVersion: s3.aws.crossplane.io/v1beta2\n      kind: Bucket\n      metadata:\n        name: app-assets\n      spec:\n        forProvider:\n          replicationConfiguration:\n            role: arn:aws:iam::123456789012:role/s3-replication-role\n            rules:\n              - status: Enabled\n                prefix: \"\"\n                destination:\n                  bucket: arn:aws:s3:::app-assets-replica-us-west-2\n                  storageClass: STANDARD\n    target:\n      group: s3.aws.crossplane.io\n      kind: Bucket\n      name: app-assets\n```\n\n## Notes\n\n- **Dev untouched**: All changes live in `overlays/prod/kustomization.yaml` only. Kustomize overlay scoping guarantees dev inherits from base unchanged.\n- **Patches use inline strategic-merge** \u2014 simplest and declarative; only listed fields are overridden, base remains the single source for everything else.\n- **Adjust names/APIs** if your base uses different resource names (e.g., `name: web` vs `app`) or different RDS tooling (e.g., Terraform controller objects instead of Crossplane). For JSON6902 patches instead:\n\n```yaml\npatches:\n  - target:\n      group: rds.aws.crossplane.io\n      kind: DBInstance\n      name: app-db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstanceClass\n        value: db.t3.medium\n      - op: add\n        path: /spec/forProvider/multiAZ\n        value: true\n```\n\n**Prerequisite for replication**: the destination bucket in us-west-2 and the IAM replication role must exist \u2014 ideally defined in the prod overlay's `resources` or provisioned separately, plus versioning enabled on both buckets (required by S3 replication).\n\nVerify isolation:\n\n```bash\nkubectl kustomize overlays/dev | grep -E 'replicas|dbInstanceClass|multiAZ'  # base values\nkubectl kustomize overlays/prod | grep -E 'replicas|dbInstanceClass|multiAZ' # 4, db.t3.medium, true\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-crpdqzyu/generated_0.yaml"
+  ]
+}

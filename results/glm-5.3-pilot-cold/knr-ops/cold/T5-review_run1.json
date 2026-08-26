@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 391
+  },
+  "content": "# Security Review: knr-ops PR\n\n## Issues Found\n\n### \ud83d\udd34 Critical \u2014 block merge\n\n**1. S3 bucket policy grants public read access**\n- Violates acceptance criterion: \"no public access.\"\n- Fix: remove the `s3:GetObject` wildcard principal statement; add `aws:SecureTransport` condition; ensure `PublicAccessBlock` (all four settings) is enforced in both overlays. Note prod replicates to us-west-2 \u2014 public policy would propagate exposure.\n\n**2. Plaintext database password in deployment env vars**\n- Violates \"Secret: never stored in plaintext in Git.\"\n- Fix: remove from manifest. For knr-ops: SOPS-encrypt a `Secret`, place under `overlays/<env>/secrets/`, reference via `secretKeyRef` in env. Consider `external-secrets` or Sealed Secrets as alternatives. Rotate the exposed credential immediately \u2014 it's in Git history.\n\n### \ud83d\udfe1 Warning \u2014 should fix before merge\n\n**3. Missing resource limits on containers**\n- No QoS guarantee; a compromised/misbehaving pod can exhaust node resources (DoS).\n- Fix: add `resources.limits` (and requests) in `base/`; optionally enforce `LimitRange`/`ResourceQuota` per namespace overlay.\n\n### \ud83d\udd35 Info\n\n**4. RDS instance class change** \u2014 no security issue per diff; verify acceptance criteria still hold (deletion protection, not publicly accessible, backup retention \u2265 7 days, prod encrypted/multi-AZ).\n\n## Merge Gate Summary\n\n**Do not merge** until:\n1. Public bucket policy removed (both environments)\n2. Password removed and rotated; replaced with SOPS-encrypted secret\n3. Resource limits added\n4. Re-verify RDS acceptance criteria\n\n1 and 2 are hard blockers; 3 is strongly recommended given prod exposure."
+}

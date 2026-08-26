@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [],
+    "section_chars": 151
+  },
+  "tokens": {
+    "input": 788,
+    "output": 653
+  },
+  "content": "# Security Review: PR Diff\n\n## Issues Identified\n\n### \ud83d\udd34 Critical \u2014 Block merge\n\n**1. Plaintext password in deployment env vars**\n\n```yaml\nenv:\n  - name: DB_PASSWORD\n    value: \"s3cr3tP@ss\"   # plaintext in Git\n```\n\n- **Why:** Violates acceptance criterion #3. Once merged, the secret is permanently in Git history even if removed later. Anyone with repo read access has prod credentials.\n- **Fix:** Use `kind: Secret` with SOPS encryption (stack-native for knr-ops), referenced via `secretKeyRef`:\n  ```yaml\n  env:\n    - name: DB_PASSWORD\n      valueFrom:\n        secretKeyRef:\n          name: app-db-credentials\n          key: password\n  ```\n  Store the Secret SOPS-encrypted in the overlay; rotate the credential since it was already committed.\n\n**2. S3 bucket policy grants public read**\n\n- **Why:** Violates acceptance criterion #1 (\"no public access\"). Bucket holds application assets with versioning \u2014 public exposure risks data leak, enumeration, and cost abuse; likely fails compliance. If assets must be public, that's CloudFront's job (OAC), not a public bucket policy.\n- **Fix:** Remove the `Principal: \"*\"` / `s3:GetObject` public statement. Keep the bucket private and serve via CloudFront with Origin Access Control. Also ensure `PublicAccessBlock` (all four settings) is enabled.\n\n### \ud83d\udfe1 Warning \u2014 Should fix before/at merge\n\n**3. Missing container resource limits**\n\n- **Why:** No `resources.limits` means a compromised or runaway container can exhaust node memory/CPU \u2014 a DoS and node-stability risk on shared clusters. QoS class becomes BestEffort (first evicted, no protection).\n- **Fix:**\n  ```yaml\n  resources:\n    requests: { cpu: 100m, memory: 128Mi }\n    limits: { cpu: 500m, memory: 512Mi }\n  ```\n  Enforce via `LimitRange`/admission policy (Kyverno/Gatekeeper) so it can't regress.\n\n### \ud83d\udfe2 Info / Pass\n\n- **RDS instance class change:** No security issue \u2014 verify it's applied only to the intended overlay (env isolation per criterion #7) and that deletion protection, backup retention \u2265 7d, and `publicly_accessible = false` are unchanged.\n\n## Required Before Merge\n\n| # | Action | Severity |\n|---|---|---|\n| 1 | Replace plaintext env secret with SOPS-encrypted Secret + `secretKeyRef`; **rotate the credential** | Critical |\n| 2 | Remove public-read bucket policy; keep bucket private, serve via CloudFront OAC; confirm PublicAccessBlock | Critical |\n| 3 | Add resource requests/limits; add LimitRange guardrail | Warning |\n| 4 | Confirm RDS change scoped to correct environment overlay | Info |\n\n**Verdict: Request changes.** Items 1 and 2 are hard blockers; item 3 strongly recommended before merge."
+}
