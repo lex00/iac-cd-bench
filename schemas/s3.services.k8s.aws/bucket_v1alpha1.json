@@ -22,8 +22,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "acl": {
           "description": "The canned ACL to apply to the bucket.\n\nThis functionality is not supported for directory buckets.",
@@ -53,14 +52,12 @@
                               "type": "string"
                             }
                           },
-                          "type": "object",
-                          "additionalProperties": false
+                          "type": "object"
                         },
                         "type": "array"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "prefix": {
                     "type": "string"
@@ -75,12 +72,10 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "id": {
                 "type": "string"
@@ -110,27 +105,22 @@
                                 "type": "string"
                               }
                             },
-                            "type": "object",
-                            "additionalProperties": false
+                            "type": "object"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "outputSchemaVersion": {
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -173,14 +163,12 @@
                     "type": "integer"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "createBucketConfiguration": {
           "description": "The configuration information for the bucket.",
@@ -189,8 +177,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "encryption": {
           "description": "Specifies the default server-side-encryption configuration.",
@@ -209,21 +196,18 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "bucketKeyEnabled": {
                     "type": "boolean"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "grantFullControl": {
           "description": "Allows grantee the read, write, read ACP, and write ACP permissions on the\nbucket.\n\nThis functionality is not supported for directory buckets.",
@@ -269,14 +253,12 @@
                               "type": "string"
                             }
                           },
-                          "type": "object",
-                          "additionalProperties": false
+                          "type": "object"
                         },
                         "type": "array"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "prefix": {
                     "type": "string"
@@ -291,12 +273,10 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "id": {
                 "type": "string"
@@ -316,14 +296,12 @@
                       "type": "integer"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "type": "array"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -353,12 +331,10 @@
                                 "type": "string"
                               }
                             },
-                            "type": "object",
-                            "additionalProperties": false
+                            "type": "object"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "format": {
                         "type": "string"
@@ -367,12 +343,10 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "filter": {
                 "description": "Specifies an inventory filter. The inventory only includes objects that meet\nthe filter's criteria.",
@@ -381,8 +355,7 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "id": {
                 "type": "string"
@@ -406,12 +379,10 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -430,8 +401,7 @@
                         "type": "integer"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "expiration": {
                     "description": "Container for the expiration for the lifecycle of the object.\n\nFor more information see, Managing your storage lifecycle (https://docs.aws.amazon.com/AmazonS3/latest/userguide/object-lifecycle-mgmt.html)\nin the Amazon S3 User Guide.",
@@ -448,8 +418,7 @@
                         "type": "boolean"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "filter": {
                     "description": "The Filter is used to identify objects that a Lifecycle Rule applies to.\nA Filter can have exactly one of Prefix, Tag, ObjectSizeGreaterThan, ObjectSizeLessThan,\nor And specified. If the Filter element is left empty, the Lifecycle Rule\napplies to all objects in the bucket.",
@@ -479,14 +448,12 @@
                                   "type": "string"
                                 }
                               },
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "type": "array"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "objectSizeGreaterThan": {
                         "format": "int64",
@@ -509,12 +476,10 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "id": {
                     "type": "string"
@@ -531,8 +496,7 @@
                         "type": "integer"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "noncurrentVersionTransitions": {
                     "items": {
@@ -550,8 +514,7 @@
                           "type": "string"
                         }
                       },
-                      "type": "object",
-                      "additionalProperties": false
+                      "type": "object"
                     },
                     "type": "array"
                   },
@@ -577,20 +540,17 @@
                           "type": "string"
                         }
                       },
-                      "type": "object",
-                      "additionalProperties": false
+                      "type": "object"
                     },
                     "type": "array"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "logging": {
           "description": "Container for logging status information.",
@@ -624,15 +584,13 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "permission": {
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "type": "array"
                 },
@@ -640,12 +598,10 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "metrics": {
           "items": {
@@ -677,14 +633,12 @@
                               "type": "string"
                             }
                           },
-                          "type": "object",
-                          "additionalProperties": false
+                          "type": "object"
                         },
                         "type": "array"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "prefix": {
                     "type": "string"
@@ -699,19 +653,16 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "id": {
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -756,18 +707,15 @@
                                   "type": "string"
                                 }
                               },
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "type": "array"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "id": {
                     "description": "An optional unique identifier for configurations in a notification configuration.\nIf you don't provide one, Amazon S3 will assign an ID.",
@@ -777,8 +725,7 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             },
@@ -810,18 +757,15 @@
                                   "type": "string"
                                 }
                               },
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "type": "array"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "id": {
                     "description": "An optional unique identifier for configurations in a notification configuration.\nIf you don't provide one, Amazon S3 will assign an ID.",
@@ -831,8 +775,7 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             },
@@ -864,18 +807,15 @@
                                   "type": "string"
                                 }
                               },
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "type": "array"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "id": {
                     "description": "An optional unique identifier for configurations in a notification configuration.\nIf you don't provide one, Amazon S3 will assign an ID.",
@@ -885,14 +825,12 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "objectLockEnabledForBucket": {
           "description": "Specifies whether you want S3 Object Lock to be enabled for the new bucket.\n\nThis functionality is not supported for directory buckets.",
@@ -913,14 +851,12 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "policy": {
           "description": "The bucket policy as a JSON document.\n\nFor directory buckets, the only IAM action supported in the bucket policy\nis s3express:CreateSession.",
@@ -942,8 +878,7 @@
               "type": "boolean"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "replication": {
           "description": "A container for replication rules. You can add up to 1,000 rules. The maximum\nsize of a replication configuration is 2 MB.",
@@ -962,8 +897,7 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "destination": {
                     "description": "Specifies information about where to publish analysis or configuration results\nfor an Amazon S3 bucket and S3 Replication Time Control (S3 RTC).",
@@ -975,8 +909,7 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "account": {
                         "type": "string"
@@ -991,8 +924,7 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "metrics": {
                         "description": "A container specifying replication metrics-related settings enabling replication\nmetrics and events.",
@@ -1005,15 +937,13 @@
                                 "type": "integer"
                               }
                             },
-                            "type": "object",
-                            "additionalProperties": false
+                            "type": "object"
                           },
                           "status": {
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "replicationTime": {
                         "description": "A container specifying S3 Replication Time Control (S3 RTC) related information,\nincluding whether S3 RTC is enabled and the time when all objects and operations\non objects must be replicated. Must be specified together with a Metrics\nblock.",
@@ -1029,19 +959,16 @@
                                 "type": "integer"
                               }
                             },
-                            "type": "object",
-                            "additionalProperties": false
+                            "type": "object"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "storageClass": {
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "existingObjectReplication": {
                     "description": "Optional configuration to replicate existing source bucket objects.\n\nThis parameter is no longer supported. To replicate existing objects, see\nReplicating existing objects with S3 Batch Replication (https://docs.aws.amazon.com/AmazonS3/latest/userguide/s3-batch-replication-batch.html)\nin the Amazon S3 User Guide.",
@@ -1050,8 +977,7 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "filter": {
                     "description": "A filter that identifies the subset of objects to which the replication rule\napplies. A Filter must specify exactly one Prefix, Tag, or an And child element.",
@@ -1073,14 +999,12 @@
                                   "type": "string"
                                 }
                               },
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "type": "array"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "prefix": {
                         "type": "string"
@@ -1095,12 +1019,10 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "id": {
                     "type": "string"
@@ -1122,8 +1044,7 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "sseKMSEncryptedObjects": {
                         "description": "A container for filter information for the selection of S3 objects encrypted\nwith Amazon Web Services KMS.",
@@ -1132,25 +1053,21 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "status": {
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "requestPayment": {
           "description": "Container for Payer.",
@@ -1159,8 +1076,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "tagging": {
           "description": "Container for the TagSet and Tag elements.",
@@ -1176,14 +1092,12 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "versioning": {
           "description": "Container for setting the versioning state.",
@@ -1192,8 +1106,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "website": {
           "description": "Container for the request.",
@@ -1205,8 +1118,7 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "indexDocument": {
               "description": "Container for the Suffix element.",
@@ -1215,8 +1127,7 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "redirectAllRequestsTo": {
               "description": "Specifies the redirect behavior of all requests to a website endpoint of\nan Amazon S3 bucket.",
@@ -1228,8 +1139,7 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "routingRules": {
               "items": {
@@ -1245,8 +1155,7 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "redirect": {
                     "description": "Specifies how requests are redirected. In the event of an error, you can\nspecify a different error code to return.",
@@ -1267,25 +1176,21 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         }
       },
       "required": [
         "name"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "BucketStatus defines the observed state of Bucket",
@@ -1310,8 +1215,7 @@
             "ownerAccountID",
             "region"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "conditions": {
           "description": "All CRs managed by ACK have a common `Status.Conditions` member that\ncontains a collection of `ackv1alpha1.Condition` objects that describe\nthe various terminal states of the CR and its backend AWS service API\nresource",
@@ -1344,8 +1248,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -1354,8 +1257,7 @@
           "type": "string"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

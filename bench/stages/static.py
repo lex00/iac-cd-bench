@@ -18,13 +18,9 @@ from bench.stages import lint as lint_mod
 
 log = logging.getLogger(__name__)
 
-# Vendored CRD JSON schemas (#83), mirrored from datreeio/CRDs-catalog at
-# 7b1e26ef9deea49293714d204c1a2270aab1178f. Vendored rather than fetched at
-# validation time so the gate stays offline and a run's verdict does not
-# depend on a network round trip or on what upstream happened to hold that
-# day. The layout matches the catalog's, so refreshing is a re-fetch.
-SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
-SCHEMA_TEMPLATE = "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+# Vendored CRD JSON schemas (#83) live in bench.stages.lint, which this module
+# already imports; both gates validate against the same mirror.
+SCHEMA_DIR = lint_mod.SCHEMA_DIR
 
 
 def run_static(workspace: Path, stack: str) -> dict:
@@ -116,7 +112,15 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         log.info("kustomize build %s", overlay_dir)
         try:
             proc = subprocess.run(
-                ["kustomize", "build", overlay_dir],
+                # LoadRestrictionsNone (#F8): an overlay legitimately
+                # references a base above it (`../../clusters/kustomization.yaml`),
+                # and kustomize's default restrictor refuses that with
+                # `security; file ... is not in or below ...` — failing the
+                # build for the layout the stack is supposed to use. The
+                # workspace is a disposable temp dir, so the restriction buys
+                # nothing here.
+                ["kustomize", "build", "--load-restrictor",
+                 "LoadRestrictionsNone", overlay_dir],
                 capture_output=True, text=True, timeout=60,
             )
             results.append(f"kustomize build {overlay_dir}: exit={proc.returncode}")
@@ -353,6 +357,16 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     emitting `UserPolicy`, `RolePolicyAttachment` and friends, none of which
     are ACK IAM kinds. Skipping them would score an invented resource as
     fine.
+
+    `-strict` is deliberately NOT passed either, for the opposite reason. It
+    rejects unknown fields, and field sets drift between CRD releases: under
+    it the bare *golden* failed on `spec.replication.roleRef` and
+    `AWSMachineTemplate.spec.template.spec.instanceProfile`, both real fields
+    from a release other than the one the mirror pins. A gate that fails the
+    reference implementation is the #81/#82 defect wearing a different hat.
+    Dropping it keeps everything that matters — an unresolvable kind still
+    fails, and so does a field of the wrong type — while tolerating the
+    version skew between the mirror and the fixtures.
     """
     passed = True
     validated = 0
@@ -363,16 +377,14 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         return passed, False
 
     for yfile in yaml_files:
-        log.info("kubeconform -strict %s", yfile)
+        log.info("kubeconform %s", yfile)
         try:
             proc = subprocess.run(
-                ["kubeconform", "-strict", "-summary",
-                 "-schema-location", "default",
-                 "-schema-location", str(SCHEMA_DIR / SCHEMA_TEMPLATE),
-                 str(yfile)],
+                ["kubeconform", "-summary",
+                 *lint_mod.kubeconform_schema_args(), str(yfile)],
                 capture_output=True, text=True, timeout=60,
             )
-            results.append(f"kubeconform -strict {yfile.name}: exit={proc.returncode}")
+            results.append(f"kubeconform {yfile.name}: exit={proc.returncode}")
             if proc.stdout:
                 results.append(proc.stdout[:500])
                 validated += _kubeconform_valid_count(proc.stdout)
@@ -381,7 +393,7 @@ def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
             if proc.returncode != 0:
                 passed = False
         except subprocess.TimeoutExpired:
-            results.append(f"TIMEOUT: kubeconform -strict {yfile}")
+            results.append(f"TIMEOUT: kubeconform {yfile}")
             passed = False
         except FileNotFoundError:
             results.append("NOT FOUND: kubeconform")

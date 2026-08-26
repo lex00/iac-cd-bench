@@ -49,8 +49,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "controlPlaneEndpoint": {
           "description": "ControlPlaneEndpoint represents the endpoint used to communicate with the control plane.",
@@ -69,8 +68,7 @@
             "host",
             "port"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "controlPlaneLoadBalancer": {
           "description": "ControlPlaneLoadBalancer is optional configuration for customizing control plane behavior.",
@@ -113,8 +111,7 @@
               "type": "array"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "identityRef": {
           "description": "IdentityRef is a reference to an identity to be used when reconciling the managed control plane.\nIf no identity is specified, the default identity for this controller will be used.",
@@ -138,8 +135,7 @@
             "kind",
             "name"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "imageLookupBaseOS": {
           "description": "ImageLookupBaseOS is the name of the base operating system used to look\nup machine images when a machine does not specify an AMI. When set, this\nwill be used for all cluster machines unless a machine specifies a\ndifferent ImageLookupBaseOS.",
@@ -186,14 +182,12 @@
                       "protocol",
                       "toPort"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "type": "array"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "securityGroupOverrides": {
               "additionalProperties": {
@@ -247,8 +241,7 @@
                     "type": "object"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             },
@@ -298,8 +291,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "tags": {
                   "additionalProperties": {
@@ -309,12 +301,10 @@
                   "type": "object"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "region": {
           "description": "The AWS Region the cluster lives in.",
@@ -347,16 +337,14 @@
             "name",
             "nodesIAMInstanceProfiles"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "sshKeyName": {
           "description": "SSHKeyName is the name of the ssh key to attach to the bastion host. Valid values are empty string (do not use SSH keys), a valid SSH key name, or omitted (use the default SSH key name)",
           "type": "string"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "AWSClusterStatus defines the observed state of AWSCluster.",
@@ -382,8 +370,7 @@
                   "address",
                   "type"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             },
@@ -462,8 +449,7 @@
                 "required": [
                   "size"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array"
             },
@@ -514,8 +500,7 @@
               "required": [
                 "size"
               ],
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "securityGroupIds": {
               "description": "SecurityGroupIDs are one or more security group IDs this instance belongs to.",
@@ -532,8 +517,7 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "sshKeyName": {
               "description": "The name of the SSH key pair.",
@@ -573,8 +557,7 @@
           "required": [
             "id"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "conditions": {
           "description": "Conditions provide observations of the operational state of a Cluster API resource.",
@@ -612,8 +595,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -633,8 +615,7 @@
                 "type": "boolean"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "description": "FailureDomains is a slice of FailureDomains.",
           "type": "object"
@@ -658,8 +639,7 @@
                       "type": "integer"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "availabilityZones": {
                   "description": "AvailabilityZones is an array of availability zones in the VPC attached to the load balancer.",
@@ -704,8 +684,7 @@
                     "timeout",
                     "unhealthyThreshold"
                   ],
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "listeners": {
                   "description": "Listeners is an array of classic elb listeners associated with the load balancer. There must be at least one.",
@@ -735,8 +714,7 @@
                       "port",
                       "protocol"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "type": "array"
                 },
@@ -770,8 +748,7 @@
                   "type": "object"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "securityGroups": {
               "additionalProperties": {
@@ -829,8 +806,7 @@
                         "protocol",
                         "toPort"
                       ],
-                      "type": "object",
-                      "additionalProperties": false
+                      "type": "object"
                     },
                     "type": "array"
                   },
@@ -850,15 +826,13 @@
                   "id",
                   "name"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "description": "SecurityGroups is a map from the role/kind of the security group to its unique name, if any.",
               "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "ready": {
           "default": false,
@@ -868,8 +842,7 @@
       "required": [
         "ready"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

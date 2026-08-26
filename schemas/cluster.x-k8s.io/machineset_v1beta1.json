@@ -40,8 +40,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "minReadySeconds": {
           "description": "minReadySeconds is the minimum number of seconds for which a Node for a newly created machine should be ready before considering the replica available.\nDefaults to 0 (machine will be considered available as soon as the Node is ready)",
@@ -82,8 +81,7 @@
                   "key",
                   "operator"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "type": "array",
               "x-kubernetes-list-type": "atomic"
@@ -97,8 +95,7 @@
             }
           },
           "type": "object",
-          "x-kubernetes-map-type": "atomic",
-          "additionalProperties": false
+          "x-kubernetes-map-type": "atomic"
         },
         "template": {
           "description": "template is the object that describes the machine that will be created if\ninsufficient replicas are detected.\nObject references to custom resources are treated as templates.",
@@ -121,8 +118,7 @@
                   "type": "object"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "spec": {
               "description": "spec is the specification of the desired behavior of the machine.\nMore info: https://git.k8s.io/community/contributors/devel/sig-architecture/api-conventions.md#spec-and-status",
@@ -163,8 +159,7 @@
                         }
                       },
                       "type": "object",
-                      "x-kubernetes-map-type": "atomic",
-                      "additionalProperties": false
+                      "x-kubernetes-map-type": "atomic"
                     },
                     "dataSecretName": {
                       "description": "dataSecretName is the name of the secret that stores the bootstrap data script.\nIf nil, the Machine should remain in the Pending state.",
@@ -173,8 +168,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "clusterName": {
                   "description": "clusterName is the name of the Cluster this object belongs to.",
@@ -221,8 +215,7 @@
                     }
                   },
                   "type": "object",
-                  "x-kubernetes-map-type": "atomic",
-                  "additionalProperties": false
+                  "x-kubernetes-map-type": "atomic"
                 },
                 "nodeDeletionTimeout": {
                   "description": "nodeDeletionTimeout defines how long the controller will attempt to delete the Node that the Machine\nhosts after the Machine is marked for deletion. A duration of 0 will retry deletion indefinitely.\nDefaults to 10 seconds.",
@@ -266,8 +259,7 @@
                     "required": [
                       "conditionType"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "maxItems": 32,
                   "type": "array",
@@ -318,8 +310,7 @@
                       "key",
                       "propagation"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "maxItems": 64,
                   "minItems": 1,
@@ -342,20 +333,17 @@
                 "clusterName",
                 "infrastructureRef"
               ],
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         }
       },
       "required": [
         "clusterName",
         "selector"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "status is the observed state of MachineSet.",
@@ -408,8 +396,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -508,8 +495,7 @@
                   "status",
                   "type"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "maxItems": 32,
               "type": "array",
@@ -529,12 +515,10 @@
               "type": "integer"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

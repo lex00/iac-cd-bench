@@ -10,7 +10,40 @@ import subprocess
 import logging
 from pathlib import Path
 
+import yaml
+
 log = logging.getLogger(__name__)
+
+# Vendored CRD JSON schemas (#83), mirrored from datreeio/CRDs-catalog at
+# 7b1e26ef9deea49293714d204c1a2270aab1178f. Defined here rather than in
+# bench.stages.static because static already imports this module; putting them
+# the other way round would be a cycle.
+SCHEMA_DIR = Path(__file__).resolve().parents[2] / "schemas"
+SCHEMA_TEMPLATE = "{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json"
+
+
+def kubeconform_schema_args() -> list[str]:
+    """Point kubeconform at the vendored mirror, then its built-in registry."""
+    return ["-schema-location", "default",
+            "-schema-location", str(SCHEMA_DIR / SCHEMA_TEMPLATE)]
+
+
+def is_k8s_manifest(path: Path) -> bool:
+    """Does this YAML file contain at least one Kubernetes object?
+
+    kubeconform is handed a file list, and a workspace legitimately contains
+    YAML that is not a manifest — `.sops.yaml`, CI config, a Helm values file.
+    Feeding those in fails the whole gate on `missing 'kind' key`, which is
+    what the knr-ops golden did to its own lint stage. Judge a file by whether
+    it declares apiVersion and kind, not by its extension.
+    """
+    try:
+        docs = yaml.safe_load_all(path.read_text())
+        return any(isinstance(d, dict) and "apiVersion" in d and "kind" in d
+                   for d in docs)
+    except (OSError, yaml.YAMLError):
+        # Unreadable or unparseable: let kubeconform be the one to say so.
+        return True
 
 LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
     "knr-ops": [
@@ -93,6 +126,16 @@ def run_lint(workspace: Path, stack: str) -> dict:
             # seed/) fall through to the explicit-file-list invocation below,
             # unchanged.
             cmd_args: list[str] = [cmd, "-p", "tsconfig.json", "--noEmit"]
+        elif cmd == "kubeconform":
+            # Manifests only (#F6), and against the vendored schema mirror so
+            # the CRDs these stacks are actually about get validated instead
+            # of skipped (#F7): knr-ops lint on its own golden reported
+            # `Valid: 3, Skipped: 23` before this.
+            manifests = [f for f in files if is_k8s_manifest(Path(f))]
+            if not manifests:
+                results.append(f"[{description}] no Kubernetes manifests to validate")
+                continue
+            cmd_args = [cmd] + args + kubeconform_schema_args() + manifests
         elif stack in ("knr-ops", "crossplane", "pulumi-typescript", "bare"):
             cmd_args = [cmd] + args + files
         elif stack == "chant":

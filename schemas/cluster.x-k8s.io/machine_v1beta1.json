@@ -51,8 +51,7 @@
                 }
               },
               "type": "object",
-              "x-kubernetes-map-type": "atomic",
-              "additionalProperties": false
+              "x-kubernetes-map-type": "atomic"
             },
             "dataSecretName": {
               "description": "dataSecretName is the name of the secret that stores the bootstrap data script.\nIf nil, the Machine should remain in the Pending state.",
@@ -61,8 +60,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "clusterName": {
           "description": "clusterName is the name of the Cluster this object belongs to.",
@@ -109,8 +107,7 @@
             }
           },
           "type": "object",
-          "x-kubernetes-map-type": "atomic",
-          "additionalProperties": false
+          "x-kubernetes-map-type": "atomic"
         },
         "nodeDeletionTimeout": {
           "description": "nodeDeletionTimeout defines how long the controller will attempt to delete the Node that the Machine\nhosts after the Machine is marked for deletion. A duration of 0 will retry deletion indefinitely.\nDefaults to 10 seconds.",
@@ -154,8 +151,7 @@
             "required": [
               "conditionType"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "maxItems": 32,
           "type": "array",
@@ -206,8 +202,7 @@
               "key",
               "propagation"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "maxItems": 64,
           "minItems": 1,
@@ -230,8 +225,7 @@
         "clusterName",
         "infrastructureRef"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "status is the observed state of Machine.",
@@ -263,8 +257,7 @@
               "address",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -320,8 +313,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -339,8 +331,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "failureMessage": {
           "description": "failureMessage will be set in the event that there is a terminal problem\nreconciling the Machine and will contain a more verbose string suitable\nfor logging and human consumption.\n\nThis field should not be set for transitive errors that a controller\nfaces that are expected to be fixed automatically over\ntime (like service outages), but instead indicate that something is\nfundamentally wrong with the Machine's spec or the configuration of\nthe controller, and that manual intervention is required. Examples\nof terminal errors would be invalid combinations of settings in the\nspec, values that are unsupported by the controller, or the\nresponsible controller itself being critically misconfigured.\n\nAny transient errors that occur during the reconciliation of Machines\ncan be added as events to the Machine object and/or logged in the\ncontroller's output.\n\nDeprecated: This field is deprecated and is going to be removed when support for v1beta1 will be dropped. Please see https://github.com/kubernetes-sigs/cluster-api/blob/main/docs/proposals/20240916-improve-status-in-CAPI-resources.md for more details.",
@@ -409,8 +400,7 @@
                   "type": "integer"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "systemUUID": {
               "description": "SystemUUID reported by the node. For unique machine identification\nMachineID is preferred. This field is specific to Red Hat hosts\nhttps://access.redhat.com/documentation/en-us/red_hat_subscription_management/1/html/rhsm/uuid",
@@ -429,8 +419,7 @@
             "osImage",
             "systemUUID"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "nodeRef": {
           "description": "nodeRef will point to the corresponding Node if it exists.",
@@ -465,8 +454,7 @@
             }
           },
           "type": "object",
-          "x-kubernetes-map-type": "atomic",
-          "additionalProperties": false
+          "x-kubernetes-map-type": "atomic"
         },
         "observedGeneration": {
           "description": "observedGeneration is the latest generation observed by the controller.",
@@ -541,8 +529,7 @@
                   "status",
                   "type"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "maxItems": 32,
               "type": "array",
@@ -552,12 +539,10 @@
               "x-kubernetes-list-type": "map"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

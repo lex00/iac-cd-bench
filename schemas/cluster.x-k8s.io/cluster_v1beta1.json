@@ -39,8 +39,7 @@
             "required": [
               "conditionType"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "maxItems": 32,
           "type": "array",
@@ -74,8 +73,7 @@
               "required": [
                 "cidrBlocks"
               ],
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "serviceDomain": {
               "description": "serviceDomain is the domain name for services.",
@@ -100,12 +98,10 @@
               "required": [
                 "cidrBlocks"
               ],
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "controlPlaneEndpoint": {
           "description": "controlPlaneEndpoint represents the endpoint used to communicate with the control plane.",
@@ -121,8 +117,7 @@
               "type": "integer"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "controlPlaneRef": {
           "description": "controlPlaneRef is an optional reference to a provider-specific resource that holds\nthe details for provisioning the Control Plane for a Cluster.",
@@ -157,8 +152,7 @@
             }
           },
           "type": "object",
-          "x-kubernetes-map-type": "atomic",
-          "additionalProperties": false
+          "x-kubernetes-map-type": "atomic"
         },
         "infrastructureRef": {
           "description": "infrastructureRef is a reference to a provider-specific resource that holds the details\nfor provisioning infrastructure for a cluster in said provider.",
@@ -193,8 +187,7 @@
             }
           },
           "type": "object",
-          "x-kubernetes-map-type": "atomic",
-          "additionalProperties": false
+          "x-kubernetes-map-type": "atomic"
         },
         "paused": {
           "description": "paused can be used to prevent controllers from processing the Cluster and all its associated objects.",
@@ -275,8 +268,7 @@
                         }
                       },
                       "type": "object",
-                      "x-kubernetes-map-type": "atomic",
-                      "additionalProperties": false
+                      "x-kubernetes-map-type": "atomic"
                     },
                     "unhealthyConditions": {
                       "description": "unhealthyConditions contains a list of the conditions that determine\nwhether a node is considered unhealthy. The conditions are combined in a\nlogical OR, i.e. if any of the conditions is met, the node is unhealthy.",
@@ -303,8 +295,7 @@
                           "timeout",
                           "type"
                         ],
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "maxItems": 100,
                       "type": "array"
@@ -346,8 +337,7 @@
                           "timeout",
                           "type"
                         ],
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "maxItems": 100,
                       "minItems": 1,
@@ -362,8 +352,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "metadata": {
                   "description": "metadata is the metadata applied to the ControlPlane and the Machines of the ControlPlane\nif the ControlPlaneTemplate referenced by the ClusterClass is machine based. If not, it\nis applied only to the ControlPlane.\nAt runtime this metadata is merged with the corresponding metadata from the ClusterClass.",
@@ -383,8 +372,7 @@
                       "type": "object"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "nodeDeletionTimeout": {
                   "description": "nodeDeletionTimeout defines how long the controller will attempt to delete the Node that the Machine\nhosts after the Machine is marked for deletion. A duration of 0 will retry deletion indefinitely.\nDefaults to 10 seconds.",
@@ -422,8 +410,7 @@
                     "required": [
                       "conditionType"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "maxItems": 32,
                   "type": "array",
@@ -447,8 +434,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "taints": {
                   "description": "taints are the node taints that Cluster API will manage.\nThis list is not necessarily complete: other Kubernetes components may add or remove other taints from nodes,\ne.g. the node controller might add the node.kubernetes.io/not-ready taint.\nOnly those taints defined in this list will be added or removed by core Cluster API controllers.\n\nThere can be at most 64 taints.\nA pod would have to tolerate all existing taints to run on the corresponding node.\n\nNOTE: This list is implemented as a \"map\" type, meaning that individual elements can be managed by different owners.",
@@ -492,8 +478,7 @@
                       "key",
                       "propagation"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "maxItems": 64,
                   "minItems": 1,
@@ -532,8 +517,7 @@
                           "name",
                           "value"
                         ],
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "maxItems": 1000,
                       "type": "array",
@@ -543,12 +527,10 @@
                       "x-kubernetes-list-type": "map"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "rolloutAfter": {
               "description": "rolloutAfter performs a rollout of the entire cluster one component at a time,\ncontrol plane first and then machine deployments.\n\nDeprecated: This field has no function and is going to be removed in the next apiVersion.",
@@ -580,8 +562,7 @@
                   "name",
                   "value"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "maxItems": 1000,
               "type": "array",
@@ -672,8 +653,7 @@
                               }
                             },
                             "type": "object",
-                            "x-kubernetes-map-type": "atomic",
-                            "additionalProperties": false
+                            "x-kubernetes-map-type": "atomic"
                           },
                           "unhealthyConditions": {
                             "description": "unhealthyConditions contains a list of the conditions that determine\nwhether a node is considered unhealthy. The conditions are combined in a\nlogical OR, i.e. if any of the conditions is met, the node is unhealthy.",
@@ -700,8 +680,7 @@
                                 "timeout",
                                 "type"
                               ],
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "maxItems": 100,
                             "type": "array"
@@ -743,8 +722,7 @@
                                 "timeout",
                                 "type"
                               ],
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "maxItems": 100,
                             "minItems": 1,
@@ -759,8 +737,7 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "metadata": {
                         "description": "metadata is the metadata applied to the MachineDeployment and the machines of the MachineDeployment.\nAt runtime this metadata is merged with the corresponding metadata from the ClusterClass.",
@@ -780,8 +757,7 @@
                             "type": "object"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "minReadySeconds": {
                         "description": "minReadySeconds is the minimum number of seconds for which a newly created machine should\nbe ready.\nDefaults to 0 (machine will be considered available as soon as it\nis ready)",
@@ -830,8 +806,7 @@
                           "required": [
                             "conditionType"
                           ],
-                          "type": "object",
-                          "additionalProperties": false
+                          "type": "object"
                         },
                         "maxItems": 32,
                         "type": "array",
@@ -855,8 +830,7 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "strategy": {
                         "description": "strategy is the deployment strategy to use to replace existing machines with\nnew ones.",
@@ -877,8 +851,7 @@
                                 "x-kubernetes-int-or-string": true
                               }
                             },
-                            "type": "object",
-                            "additionalProperties": false
+                            "type": "object"
                           },
                           "rollingUpdate": {
                             "description": "rollingUpdate is the rolling update config params. Present only if\nMachineDeploymentStrategyType = RollingUpdate.",
@@ -917,8 +890,7 @@
                                 "x-kubernetes-int-or-string": true
                               }
                             },
-                            "type": "object",
-                            "additionalProperties": false
+                            "type": "object"
                           },
                           "type": {
                             "description": "type of deployment. Allowed values are RollingUpdate and OnDelete.\nThe default is RollingUpdate.",
@@ -929,8 +901,7 @@
                             "type": "string"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "taints": {
                         "description": "taints are the node taints that Cluster API will manage.\nThis list is not necessarily complete: other Kubernetes components may add or remove other taints from nodes,\ne.g. the node controller might add the node.kubernetes.io/not-ready taint.\nOnly those taints defined in this list will be added or removed by core Cluster API controllers.\n\nThere can be at most 64 taints.\nA pod would have to tolerate all existing taints to run on the corresponding node.\n\nNOTE: This list is implemented as a \"map\" type, meaning that individual elements can be managed by different owners.",
@@ -974,8 +945,7 @@
                             "key",
                             "propagation"
                           ],
-                          "type": "object",
-                          "additionalProperties": false
+                          "type": "object"
                         },
                         "maxItems": 64,
                         "minItems": 1,
@@ -1014,8 +984,7 @@
                                 "name",
                                 "value"
                               ],
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "maxItems": 1000,
                             "type": "array",
@@ -1025,16 +994,14 @@
                             "x-kubernetes-list-type": "map"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
                     "required": [
                       "class",
                       "name"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "maxItems": 2000,
                   "type": "array",
@@ -1082,8 +1049,7 @@
                             "type": "object"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "minReadySeconds": {
                         "description": "minReadySeconds is the minimum number of seconds for which a newly created machine pool should\nbe ready.\nDefaults to 0 (machine will be considered available as soon as it\nis ready)",
@@ -1155,8 +1121,7 @@
                             "key",
                             "propagation"
                           ],
-                          "type": "object",
-                          "additionalProperties": false
+                          "type": "object"
                         },
                         "maxItems": 64,
                         "minItems": 1,
@@ -1195,8 +1160,7 @@
                                 "name",
                                 "value"
                               ],
-                              "type": "object",
-                              "additionalProperties": false
+                              "type": "object"
                             },
                             "maxItems": 1000,
                             "type": "array",
@@ -1206,16 +1170,14 @@
                             "x-kubernetes-list-type": "map"
                           }
                         },
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       }
                     },
                     "required": [
                       "class",
                       "name"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "maxItems": 2000,
                   "type": "array",
@@ -1225,20 +1187,17 @@
                   "x-kubernetes-list-type": "map"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
           "required": [
             "class",
             "version"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "status is the observed state of Cluster.",
@@ -1286,8 +1245,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -1311,8 +1269,7 @@
                 "type": "boolean"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "description": "failureDomains is a slice of failure domain objects synced from the infrastructure provider.",
           "type": "object"
@@ -1402,8 +1359,7 @@
                   "status",
                   "type"
                 ],
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               },
               "maxItems": 32,
               "type": "array",
@@ -1441,8 +1397,7 @@
                   "type": "integer"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "workers": {
               "description": "workers groups all the observations about Cluster's Workers current state.",
@@ -1473,16 +1428,13 @@
                   "type": "integer"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

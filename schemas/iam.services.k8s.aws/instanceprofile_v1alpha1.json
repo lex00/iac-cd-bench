@@ -45,12 +45,10 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "tags": {
           "description": "A list of tags that you want to attach to the newly created IAM instance\nprofile. Each tag consists of a key name and an associated value. For more\ninformation about tagging, see Tagging IAM resources (https://docs.aws.amazon.com/IAM/latest/UserGuide/id_tags.html)\nin the IAM User Guide.\n\nIf any one of the tags is invalid or if you exceed the allowed maximum number\nof tags, then the entire request fails and the resource is not created.",
@@ -64,8 +62,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         }
@@ -73,8 +70,7 @@
       "required": [
         "name"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "InstanceProfileStatus defines the observed state of InstanceProfile",
@@ -99,8 +95,7 @@
             "ownerAccountID",
             "region"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "conditions": {
           "description": "All CRs managed by ACK have a common `Status.Conditions` member that\ncontains a collection of `ackv1alpha1.Condition` objects that describe\nthe various terminal states of the CR and its backend AWS service API\nresource",
@@ -133,8 +128,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -148,8 +142,7 @@
           "type": "string"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

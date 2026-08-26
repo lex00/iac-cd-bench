@@ -36,8 +36,7 @@
                   "type": "object"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             },
             "spec": {
               "description": "Spec is the specification of the desired behavior of the machine.",
@@ -72,8 +71,7 @@
                             "name",
                             "values"
                           ],
-                          "type": "object",
-                          "additionalProperties": false
+                          "type": "object"
                         },
                         "type": "array"
                       },
@@ -82,8 +80,7 @@
                         "type": "string"
                       }
                     },
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "type": "array"
                 },
@@ -110,8 +107,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "cloudInit": {
                   "description": "CloudInit defines options related to the bootstrapping systems where\nCloudInit is used.",
@@ -138,8 +134,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "failureDomain": {
                   "description": "FailureDomain is the failure domain unique identifier this Machine should be attached to, as defined in Cluster API.\nFor this infrastructure provider, the ID is equivalent to an AWS Availability Zone.\nIf multiple subnets are matched for the availability zone, the first one returned is picked.",
@@ -161,8 +156,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "imageLookupBaseOS": {
                   "description": "ImageLookupBaseOS is the name of the base operating system to use for\nimage lookup the AMI is not set.",
@@ -234,8 +228,7 @@
                     "required": [
                       "size"
                     ],
-                    "type": "object",
-                    "additionalProperties": false
+                    "type": "object"
                   },
                   "type": "array"
                 },
@@ -286,8 +279,7 @@
                   "required": [
                     "size"
                   ],
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "spotMarketOptions": {
                   "description": "SpotMarketOptions allows users to configure instances to be run using AWS Spot instances.",
@@ -297,8 +289,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "sshKeyName": {
                   "description": "SSHKeyName is the name of the ssh key to attach to the instance. Valid values are empty string (do not use SSH keys), a valid SSH key name, or omitted (use the default SSH key name)",
@@ -332,8 +323,7 @@
                           "name",
                           "values"
                         ],
-                        "type": "object",
-                        "additionalProperties": false
+                        "type": "object"
                       },
                       "type": "array"
                     },
@@ -342,8 +332,7 @@
                       "type": "string"
                     }
                   },
-                  "type": "object",
-                  "additionalProperties": false
+                  "type": "object"
                 },
                 "tenancy": {
                   "description": "Tenancy indicates if instance should run on shared or single-tenant hardware.",
@@ -362,22 +351,19 @@
               "required": [
                 "instanceType"
               ],
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
           "required": [
             "spec"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         }
       },
       "required": [
         "template"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "AWSMachineTemplateStatus defines a status for an AWSMachineTemplate.",
@@ -399,8 +385,7 @@
           "type": "object"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"

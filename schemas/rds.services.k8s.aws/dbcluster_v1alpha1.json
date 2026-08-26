@@ -78,12 +78,10 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "dbSubnetGroupName": {
           "description": "A DB subnet group to associate with this DB cluster.\n\nThis setting is required to create a Multi-AZ DB cluster.\n\nValid for Cluster Type: Aurora DB clusters and Multi-AZ DB clusters\n\nConstraints:\n\n  - Must match the name of an existing DB subnet group.\n\nExample: mydbsubnetgroup",
@@ -102,12 +100,10 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "dbSystemID": {
           "description": "Reserved for future use.",
@@ -190,12 +186,10 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "manageMasterUserPassword": {
           "description": "Specifies whether to manage the master user password with Amazon Web Services\nSecrets Manager.\n\nFor more information, see Password management with Amazon Web Services Secrets\nManager (https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/rds-secrets-manager.html)\nin the Amazon RDS User Guide and Password management with Amazon Web Services\nSecrets Manager (https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/rds-secrets-manager.html)\nin the Amazon Aurora User Guide.\n\nValid for Cluster Type: Aurora DB clusters and Multi-AZ DB clusters\n\nConstraints:\n\n  - Can't manage the master user password with Amazon Web Services Secrets\n    Manager if MasterUserPassword is specified.",
@@ -221,8 +215,7 @@
             "key"
           ],
           "type": "object",
-          "x-kubernetes-map-type": "atomic",
-          "additionalProperties": false
+          "x-kubernetes-map-type": "atomic"
         },
         "masterUserSecretKMSKeyID": {
           "description": "The Amazon Web Services KMS key identifier to encrypt a secret that is automatically\ngenerated and managed in Amazon Web Services Secrets Manager.\n\nThis setting is valid only if the master user password is managed by RDS\nin Amazon Web Services Secrets Manager for the DB cluster.\n\nThe Amazon Web Services KMS key identifier is the key ARN, key ID, alias\nARN, or alias name for the KMS key. To use a KMS key in a different Amazon\nWeb Services account, specify the key ARN or alias ARN.\n\nIf you don't specify MasterUserSecretKmsKeyId, then the aws/secretsmanager\nKMS key is used to encrypt the secret. If the secret is in a different Amazon\nWeb Services account, then you can't use the aws/secretsmanager KMS key to\nencrypt the secret, and you must use a customer managed KMS key.\n\nThere is a default KMS key for your Amazon Web Services account. Your Amazon\nWeb Services account has a different default KMS key for each Amazon Web\nServices Region.\n\nValid for Cluster Type: Aurora DB clusters and Multi-AZ DB clusters",
@@ -241,12 +234,10 @@
                   "type": "string"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "masterUsername": {
           "description": "The name of the master user for the DB cluster.\n\nValid for Cluster Type: Aurora DB clusters and Multi-AZ DB clusters\n\nConstraints:\n\n  - Must be 1 to 16 letters or numbers.\n\n  - First character must be a letter.\n\n  - Can't be a reserved word for the chosen database engine.",
@@ -338,8 +329,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "serverlessV2ScalingConfiguration": {
           "description": "Contains the scaling configuration of an Aurora Serverless v2 DB cluster.\n\nFor more information, see Using Amazon Aurora Serverless v2 (https://docs.aws.amazon.com/AmazonRDS/latest/AuroraUserGuide/aurora-serverless-v2.html)\nin the Amazon Aurora User Guide.",
@@ -355,8 +345,7 @@
               "type": "integer"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "snapshotIdentifier": {
           "description": "The identifier for the DB snapshot or DB cluster snapshot to restore from.\n\nYou can use either the name or the Amazon Resource Name (ARN) to specify\na DB cluster snapshot. However, you can use only the ARN to specify a DB\nsnapshot.\n\nConstraints:\n\n  - Must match the identifier of an existing Snapshot.\n\nValid for: Aurora DB clusters and Multi-AZ DB clusters",
@@ -390,8 +379,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -420,12 +408,10 @@
                     "type": "string"
                   }
                 },
-                "type": "object",
-                "additionalProperties": false
+                "type": "object"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         }
@@ -434,8 +420,7 @@
         "dbClusterIdentifier",
         "engine"
       ],
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     },
     "status": {
       "description": "DBClusterStatus defines the observed state of DBCluster",
@@ -460,8 +445,7 @@
             "ownerAccountID",
             "region"
           ],
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "activityStreamKMSKeyID": {
           "description": "The Amazon Web Services KMS key identifier used for encrypting messages in\nthe database activity stream.\n\nThe Amazon Web Services KMS key identifier is the key ARN, key ID, alias\nARN, or alias name for the KMS key.",
@@ -494,8 +478,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -554,8 +537,7 @@
               "status",
               "type"
             ],
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -589,8 +571,7 @@
                 "type": "integer"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -606,8 +587,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -641,8 +621,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -705,8 +684,7 @@
               "type": "string"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "multiAZ": {
           "description": "Indicates whether the DB cluster has instances in multiple Availability Zones.",
@@ -755,12 +733,10 @@
                   "type": "array"
                 }
               },
-              "type": "object",
-              "additionalProperties": false
+              "type": "object"
             }
           },
-          "type": "object",
-          "additionalProperties": false
+          "type": "object"
         },
         "percentProgress": {
           "description": "The progress of the operation as a percentage.",
@@ -796,8 +772,7 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         },
@@ -813,14 +788,12 @@
                 "type": "string"
               }
             },
-            "type": "object",
-            "additionalProperties": false
+            "type": "object"
           },
           "type": "array"
         }
       },
-      "type": "object",
-      "additionalProperties": false
+      "type": "object"
     }
   },
   "type": "object"
