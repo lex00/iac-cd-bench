@@ -511,7 +511,8 @@ def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     try:
         build_out.parent.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
-            ["chant", "build", ".", "-f", "yaml", "-o", str(build_out)],
+            [lint_mod.workspace_bin(workspace, "chant"),
+             "build", ".", "-f", "yaml", "-o", str(build_out)],
             capture_output=True, text=True, timeout=60,
             cwd=str(workspace),
         )
@@ -556,7 +557,47 @@ def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         log.warning("Command not found: kubeconform")
         passed = False
 
+    passed = _chant_scenarios(workspace, results) and passed
     return passed, True
+
+
+def _chant_scenarios(workspace: Path, results: list[str]) -> bool:
+    """Check any declared plan scenarios, offline.
+
+    Everything else in this file validates *shape*: kustomize build,
+    kubeconform, terraform validate, `chant build` all answer "is this
+    well-formed". None of them answer "what does this change do". A chant
+    `Scenario` is a declared assertion about the resulting change set --
+    `noop: true`, exact create/delete counts, or `deletes: [{name, ownership}]`
+    -- evaluated against a recorded snapshot standing in for a live read. No
+    cluster, no credentials, no network.
+
+    A workspace that declares none is not a failure: `chant scenario check`
+    exits 0 with "No scenarios declared", and this returns True. The check only
+    bites when an answer makes a claim about its own effect and breaks it.
+    """
+    try:
+        proc = subprocess.run(
+            [lint_mod.workspace_bin(workspace, "chant"), "scenario", "check"],
+            capture_output=True, text=True, timeout=120,
+            cwd=str(workspace),
+        )
+    except subprocess.TimeoutExpired:
+        results.append("TIMEOUT: chant scenario check")
+        return False
+    except FileNotFoundError:
+        # Already reported by the build step above.
+        return True
+
+    out = (proc.stdout or "") + (proc.stderr or "")
+    if "No scenarios declared" in out:
+        results.append("chant scenario check: none declared")
+        return True
+
+    results.append(f"chant scenario check: exit={proc.returncode}")
+    if out.strip():
+        results.append(out[:800])
+    return proc.returncode == 0
 
 
 def _bare_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:

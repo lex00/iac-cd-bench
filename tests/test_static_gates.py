@@ -235,3 +235,36 @@ spec: {}
     assert "Valid: 0" in out and ("Errors: 1" in out or "Invalid: 1" in out), (
         f"an invented Flux kind must not pass: {out}"
     )
+
+
+# --- the vendored pin has to be the thing that runs ------------------------
+
+
+def test_workspace_bin_prefers_the_local_install(tmp_path):
+    """`golden-base/chant/vendor/` pins two tarballs so the arm is measured
+    against a known build. Shelling out to a bare `chant` ran whatever was
+    globally npm-installed instead, and the pin reached only tsc through the
+    types. Observed on this machine: a global @intentius/chant reporting
+    0.49.0 with no `scenario` command, against a vendored 0.49.0 that has it.
+    Same version string, different surface."""
+    from bench.stages.lint import workspace_bin
+
+    assert workspace_bin(tmp_path, "chant") == "chant", (
+        "with no local install, fall back to PATH rather than failing to launch"
+    )
+
+    local = tmp_path / "node_modules" / ".bin"
+    local.mkdir(parents=True)
+    (local / "chant").write_text("#!/bin/sh\n")
+    assert workspace_bin(tmp_path, "chant") == str(local / "chant")
+
+
+def test_chant_gates_never_invoke_a_bare_chant():
+    """The source fact. A literal ["chant", ...] argv is the bug."""
+    root = Path(__file__).resolve().parent.parent
+    for rel in ("bench/stages/static.py", "bench/stages/lint.py"):
+        src = (root / rel).read_text()
+        assert '["chant"' not in src and "['chant'" not in src, (
+            f"{rel} invokes a bare `chant`, which resolves to the global "
+            "install rather than the workspace's vendored pin"
+        )

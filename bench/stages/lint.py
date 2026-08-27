@@ -28,6 +28,28 @@ def kubeconform_schema_args() -> list[str]:
             "-schema-location", str(SCHEMA_DIR / SCHEMA_TEMPLATE)]
 
 
+def workspace_bin(workspace: Path, name: str) -> str:
+    """Resolve a node CLI to the workspace's own node_modules, not PATH.
+
+    Shelling out to a bare `chant` runs whatever is globally npm-installed on
+    the machine. `golden-base/chant/vendor/` pins two tarballs precisely so the
+    arm is measured against a known build -- and that pin was reaching only
+    tsc, through the types, while `chant lint` and `chant build` ran the global
+    install. The two are not interchangeable: a global `@intentius/chant`
+    reporting version 0.49.0 was missing `scenario`, a command the vendored
+    0.49.0 ships. Same version string, different command surface.
+
+    That is the "it passes here" trap with a reproducibility edge -- results
+    depend on a developer's global install, and CI never caught it because the
+    chant arm is skipped there for want of the private package.
+
+    Falls back to the bare name when the workspace has no local install, so an
+    ephemeral task workspace still runs rather than failing to launch.
+    """
+    local = workspace / "node_modules" / ".bin" / name
+    return str(local) if local.exists() else name
+
+
 def is_k8s_manifest(path: Path) -> bool:
     """Does this YAML file contain at least one Kubernetes object?
 
@@ -156,7 +178,10 @@ def run_lint(workspace: Path, stack: str) -> dict:
         elif stack == "chant":
             # "chant lint ." already targets the workspace itself; only tsc
             # (which needs explicit inputs) gets the discovered .ts files.
-            cmd_args = [cmd] + args + files if cmd == "tsc" else [cmd] + args
+            # Both resolve to the workspace's own install so the vendored pin
+            # is what gets measured, not a global one.
+            exe = workspace_bin(workspace, cmd)
+            cmd_args = [exe] + args + files if cmd == "tsc" else [exe] + args
         else:
             cmd_args = [cmd] + args
         log.info("Running lint: %s (%s)", cmd, description)
