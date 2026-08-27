@@ -218,6 +218,9 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
     # Tasks without a rubric, and runs scored before the judge existed, keep
     # the historical 0.0 so composites stay comparable across result sets.
     scores["idiom"] = idiom_score(result)
+    # Measurable only when the judge actually returned a verdict. A run without
+    # one has no idiom evidence, and 0.0 is not evidence of bad idiom.
+    idiom_applicable = isinstance(result.get("judge"), dict)
 
     # Weighted composite over the axes that were measurable. An axis nothing
     # could be measured on is dropped from numerator and denominator alike,
@@ -228,6 +231,29 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
         applicable.pop("completeness")
     if not correctness_applicable:
         applicable.pop("correctness")
+
+    # #7. Two axes were contributing a guaranteed 0.0 to every composite while
+    # keeping their weight, which is the exact defect rule 10 exists to stop --
+    # an unmeasured axis dropped, not failed:
+    #
+    #   idiom        0.0 unless the run carries a judge verdict, and only
+    #                rubric tasks run the judge. On every gated task it was a
+    #                hard zero with weight 1.
+    #   consistency  hardcoded 0.0 with the comment "computed at aggregate
+    #                level" -- it is a cross-run metric that has no per-run
+    #                value at all, yet it was weighted in every per-run score.
+    #
+    # Together that is weight 2 of 9, so no run could exceed 7/9 = 0.778 no
+    # matter how good it was. chant's perfect runs scored exactly 0.778, which
+    # was the ceiling rather than a result.
+    #
+    # This raises every composite. It does not change the ORDERING, because
+    # both axes were constant across arms -- what it removes is a uniform
+    # depression that made every published number lower than the thing it
+    # claimed to measure.
+    if not idiom_applicable:
+        applicable.pop("idiom")
+    applicable.pop("consistency", None)
     scores["applicable_axes"] = sorted(applicable)
     denom = sum(applicable.values())
     scores["composite"] = (

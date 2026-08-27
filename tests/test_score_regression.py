@@ -65,17 +65,17 @@ SAMPLED_HISTORICAL_JSONS = [
     # 3. 0.2857 -> 0.5. The knr-ops T1-comprehend fixture below did attempt
     # stages and is unmoved, which is the intended surgical scope.
     ("claude-opus-4-8-low/crossplane/warm/T1-comprehend_run0.json",
-     0.7777777777777778, 0.5),
+     1.0, 1.0),
     ("claude-opus-4-8-low/crossplane/warm/T2-generate_run0.json",
-     0.4444444444444444, 0.3888888888888889),
+     0.5714285714285714, 0.5),
     ("claude-opus-4-8-low/crossplane/warm/T2-generate_run2.json",
-     0.3333333333333333, 0.2222222222222222),
+     0.42857142857142855, 0.2857142857142857),
     ("claude-opus-4-8-low/crossplane/warm/T3-modify_run1.json",
-     0.6666666666666666, 0.2857142857142857),
+     0.8571428571428571, 0.4),
     ("claude-opus-4-8-low/knr-ops/warm/T1-comprehend_run1.json",
-     0.5555555555555556, 0.2857142857142857),
+     0.7142857142857143, 0.4),
     ("claude-opus-4-8-low/knr-ops/warm/T2-generate_run0.json",
-     0.3703703703703704, 0.3703703703703704),
+     0.47619047619047616, 0.4761904761904762),
 ]
 
 # Counts measured over the pre-gating subset of results/ (see module
@@ -86,7 +86,7 @@ SAMPLED_HISTORICAL_JSONS = [
 EXPECTED_TOTAL_RUNS = 1374
 EXPECTED_VACUOUS_RUNS = 795
 EXPECTED_FULLY_VACUOUS_RUNS = 127
-EXPECTED_CHANGED_COMPOSITES = 813
+EXPECTED_CHANGED_COMPOSITES = 512
 
 
 def _old_composite(stages: dict) -> float:
@@ -94,7 +94,7 @@ def _old_composite(stages: dict) -> float:
 
     correctness = passed-stage count over a fixed denominator of 3 (+1 when
     `e2e` is present at all); completeness defaults to 1.0 when no assertion
-    ran; idiom and consistency are 0.0 for every historical run.
+    ran. Idiom and consistency are omitted from both sides -- see below.
     """
     stage_pass = sum(
         1 for name in ("lint", "static", "semantic")
@@ -112,7 +112,19 @@ def _old_composite(stages: dict) -> float:
     completeness = passed_count / total_count if total_count else 1.0
     safety = 1.0 if semantic.get("safety_pass", True) else 0.0
 
-    return (correctness * 3 + completeness * 2 + 0.0 * 1 + safety * 2 + 0.0 * 1) / 9
+    # Idiom and consistency are deliberately EXCLUDED, matching what
+    # compute_score now does (#7). They were previously included as a hardcoded
+    # `0.0 * 1` each, which capped every composite at 7/9 = 0.778 regardless of
+    # performance -- chant's perfect runs scored exactly that, because it was
+    # the ceiling and not a result.
+    #
+    # They must be excluded HERE too, or this baseline and the current formula
+    # differ in two ways at once and the comparison below measures neither. The
+    # invariant this file exists to guard is specifically about the vacuous-pass
+    # correction, so the baseline has to differ from current in that respect
+    # alone. Leaving them in produced 562 spurious "increases" -- every run rose
+    # simply because the ceiling was removed.
+    return (correctness * 3 + completeness * 2 + safety * 2) / 7
 
 
 def _historical_results():

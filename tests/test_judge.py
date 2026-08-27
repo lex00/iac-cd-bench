@@ -326,8 +326,12 @@ def test_idiom_axis_uses_judge_verdict():
     }
     scores = compute_score(result)
     assert scores["idiom"] == 0.75
-    # correctness 1*3 + completeness 1*2 + idiom .75*1 + safety 1*2 + consistency 0
-    assert scores["composite"] == pytest.approx((3 + 2 + 0.75 + 2) / 9)
+    # correctness 1*3 + completeness 1*2 + idiom .75*1 + safety 1*2, over a
+    # denominator of 8. `consistency` is no longer in the per-run composite
+    # (#7): it is a cross-run metric with no per-run value, and including it as
+    # a hardcoded 0.0 with weight 1 capped every composite below what it
+    # claimed to measure.
+    assert scores["composite"] == pytest.approx((3 + 2 + 0.75 + 2) / 8)
     assert judge_metadata(result) == {"judge_model": "stub", "prompt_sha256": "abc"}
 
 
