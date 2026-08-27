@@ -44,7 +44,7 @@ def run_static(workspace: Path, stack: str) -> dict:
     elif stack == "terraform":
         all_passed, acted = _terraform_static(workspace, results)
     elif stack in ("pulumi-python", "pulumi-typescript"):
-        all_passed, acted = _pulumi_static(workspace, results)
+        all_passed, acted = _pulumi_static(workspace, results, stack)
     elif stack == "chant":
         all_passed, acted = _chant_static(workspace, results)
     elif stack == "bare":
@@ -407,7 +407,8 @@ def _terraform_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     return passed, True
 
 
-def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
+def _pulumi_static(workspace: Path, results: list[str],
+                   stack: str = "pulumi-python") -> tuple[bool, bool]:
     """Run pulumi preview for Pulumi stacks.
 
     Sets up a local filesystem backend for Pulumi and initializes the stack,
@@ -434,14 +435,24 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     passed = True
 
     if not any((workspace / n).exists() for n in ("Pulumi.yaml", "Pulumi.yml")):
-        runtime = "nodejs" if (workspace / "index.ts").exists() or any(
-            workspace.glob("*.ts")) else "python"
+        # The project NAME is load-bearing, not cosmetic: `pulumi.Config()`
+        # with no argument reads the project's own namespace, so inventing a
+        # name here would make config lookups miss for a reason the model
+        # never caused. Take the golden's, so a scaffolded workspace and the
+        # reference implementation resolve config identically.
+        golden_yaml = ROOT / "golden-base" / stack / "Pulumi.yaml"
+        name = f"iac-cd-bench-{stack}"
+        runtime = "nodejs" if stack.endswith("typescript") else "python"
+        if golden_yaml.exists():
+            m = re.search(r"^name:\s*(\S+)", golden_yaml.read_text(), re.M)
+            if m:
+                name = m.group(1)
         (workspace / "Pulumi.yaml").write_text(
-            f"name: iac-cd-bench-{runtime}\n"
+            f"name: {name}\n"
             f"runtime: {runtime}\n"
             "description: project scaffold supplied by the benchmark harness\n"
         )
-        results.append(f"scaffolded Pulumi.yaml (runtime: {runtime})")
+        results.append(f"scaffolded Pulumi.yaml (name: {name}, runtime: {runtime})")
 
     # Same call, same reason: a python workspace with no requirements.txt gets
     # no venv below, so `pulumi preview` runs against an interpreter with no
@@ -450,7 +461,7 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     # SDK the answer is evaluated against is the SDK the arm was written for.
     if not (workspace / "requirements.txt").exists() and not (workspace / "package.json").exists():
         golden_reqs = ROOT / "golden-base" / "pulumi-python" / "requirements.txt"
-        if golden_reqs.exists() and not any(workspace.glob("*.ts")):
+        if golden_reqs.exists() and runtime == "python":
             (workspace / "requirements.txt").write_text(golden_reqs.read_text())
             results.append("scaffolded requirements.txt from the golden's pins")
 
