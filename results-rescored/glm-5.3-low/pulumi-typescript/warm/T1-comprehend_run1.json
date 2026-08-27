@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 767
+  },
+  "content": "# Predicting Pulumi Preview Behavior\n\n## 1. Which property triggered the replace?\n\nThe RDS instance in this stack is sized per environment (`dbInstanceClass: db.t3.micro` dev / `db.t3.medium` prod) with `multiAz` and `storageEncrypted` on prod. The classic replace triggers for `aws.rds.Instance`:\n\n- **`dbInstanceClass`** \u2014 instance class is a **force-new** property in the AWS provider (resize requires recreate... actually AWS supports modify, but the Pulumi AWS provider historically marks it replace unless `applyImmediately` is set \u2014 in current provider versions `dbInstanceClass` updates in-place with `applyImmediately: true`, otherwise it's an in-place *pending* modify).\n- **`engine`**, **`engineVersion`** (major), **`storageType`**, **`storageEncrypted`** (dev\u2192prod promotion adds encryption \u2192 **replace**), **`multiAz`** is update-in-place.\n- **`dbSubnetGroupName` / `parameterGroupName`** default replacements.\n\nGiven the spec's dev\u2192prod delta, the most likely culprit is **`storageEncrypted`** (or `dbInstanceClass` with `applyImmediately` unset). You confirm it in the preview output:\n\n```\n~ dbInstanceClass: \"db.t3.micro\" => \"db.t3.medium\"      # ~ = update\n+- storageEncrypted: false => true                       # +- = REPLACEMENT\n```\n\nThe property flagged with `+-` (replace) is the answer; Pulumi prints it per-attribute.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target=<urn>` deploys **only** the named URNs. It skips:\n\n- All **other resources** in the program \u2014 nothing else is created, updated, or deleted, even if their properties changed.\n- **Implicit dependents of the target are not auto-included** unless `--target-dependents` is passed (so replacing the DB won't drag the secret/alias resources along by default).\n- **Deletions of resources removed from the program** \u2014 targeted mode won't purge removed resources (you'd need `--target-replace` or a full `pulumi up`).\n\nDanger: because dependencies aren't updated, the target's inputs referencing outputs of *skipped* resources use the **last-known state values** \u2014 the resulting state can drift from the program until a full `up`.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- A value wrapped via `pulumi.secret(...)` (or marked in config with `--secret` / `config:` secret entries, e.g. the `ConfigSecret` for the DB connection string) is **encrypted client-side** with the stack's passphrase or KMS key before being written to the state file.\n- In state: stored as ciphertext `{\"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", \"ciphertext\": \"...\"}` \u2014 never plaintext at rest.\n- In outputs/logs: shown as `[secret]` in previews, CLI output, and **any output that derives from a secret is itself marked secret** (taint propagation through `apply`, interpolations, etc.).\n- Passing secrets between stacks: `StackReference.getOutput` preserves the secret marking.\n- Pitfalls: secrets still appear in **plaintext in the program's inputs** if not wrapped at construction time, and `pulumi config` without `--plaintext`/`--show-secrets` won't reveal them.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-bb4iiv7a/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-typescript/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

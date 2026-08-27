@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 944,
+    "output": 1361
+  },
+  "content": "When a Crossplane claim changes `storageGB: 20 -> 50`, the flow is:\n\n## 1. Trace: Claim \u2192 XRD/XR \u2192 Composition \u2192 managed resources\n\n### a. Claim changes\nA user updates the **Claim** object, for example:\n\n```yaml\nspec:\n  storageGB: 50\n```\n\nCrossplane watches claims continuously.\n\n### b. Claim syncs to the Composite Resource\nThe claim is bound to an **XR** created from the **XRD**.\n\n- **XRD** defines the schema/API, including `storageGB`\n- The **XR** is the actual composite instance backing the claim\n\nSo Crossplane copies/synchronizes the changed field onto the XR spec.\n\n### c. Composition re-renders desired state\nThe **Composition** is the blueprint that says how XR fields map to composed resources.\n\nTypical mapping:\n\n- `spec.storageGB` on the claim/XR\n- patched into the RDS managed resource field, e.g.:\n  `spec.forProvider.allocatedStorage`\n\nIf using function pipeline mode, the patch/transform function recomputes the composed resource specs. If using classic patching, Crossplane directly reapplies the patches.\n\n### d. Managed resources are updated\nCrossplane compares the newly rendered desired state with the existing composed resources:\n\n- **RDS managed resource** now wants `allocatedStorage: 50`\n- **S3 managed resource** likely has no diff if it does not use `storageGB`\n\nCrossplane updates the Kubernetes managed resource objects, and then the provider controller reconciles those to AWS.\n\n---\n\n## 2. Is the RDS instance updated in-place or recreated?\n\n**Usually in-place**, assuming `storageGB` maps to RDS allocated storage and the provider/AWS API supports modifying it.\n\nFor AWS RDS, increasing storage is typically a **ModifyDBInstance** operation, not replacement.\n\n### Important nuance\nWhether Crossplane recreates a resource depends on two things:\n\n1. **Composition mapping**\n   - If `storageGB` patches a mutable field like `allocatedStorage`, update is in-place.\n2. **Provider/external API behavior**\n   - If the field is immutable or the cloud API requires replacement, recreation may happen.\n\nFor the canonical RDS case here:\n- `20 -> 50` storage increase on PostgreSQL RDS is **normally an in-place update**\n- The external DB instance identity remains the same\n- There may be a period of `Modifying` status while AWS applies the change\n\nSo the practical answer is:\n\n**The RDS instance is generally updated in-place, not recreated.**\n\n---\n\n## 3. What happens to the S3 bucket?\n\n**Nothing**, unless the Composition also derives bucket settings from `storageGB`.\n\nIn the usual design:\n\n- `storageGB` affects only the RDS resource\n- S3 bucket config is independent: versioning, encryption, public access block, replication, etc.\n\nTherefore:\n\n- Crossplane still reconciles the bucket resource\n- It sees no desired-state change\n- No update is sent to AWS\n- The bucket remains as-is\n\nSo:\n\n**The S3 bucket is unaffected.**\n\n---\n\n## 4. What role do `ReadinessChecks` play?\n\n`ReadinessChecks` determine when a composed resource is considered **ready**, which affects the readiness of:\n\n- the **XR**\n- the **Claim**\n\nThey do **not** drive the actual patch/update itself. They are about status aggregation.\n\n### In this scenario\nAfter changing `storageGB`:\n\n- Crossplane updates the RDS managed resource\n- AWS begins modifying the DB instance\n- During that time, the RDS managed resource may not be considered ready\n- Because of `ReadinessChecks`, the XR/Claim may temporarily show not-ready or reconciling\n\nExamples of readiness logic:\n- wait for `status.atProvider.dbInstanceStatus == available`\n- wait for a condition like `Ready=True`\n- wait for a non-empty endpoint field\n\n### Practical effect\nReadiness checks help ensure the composite is only reported ready when the underlying resources are actually usable.\n\nSo:\n\n**ReadinessChecks gate readiness/status reporting, not whether the update occurs.**\n\n---\n\n## 5. How does Crossplane handle the reconciliation loop?\n\nCrossplane is **continuously reconciling**, not plan/apply.\n\n### Loop behavior\n1. Claim spec changes\n2. Crossplane observes the change\n3. It reconciles the claim and XR\n4. It re-renders the Composition output\n5. It updates composed managed resources\n6. Provider controllers reconcile those to external AWS resources\n7. Status from managed resources flows back up to XR and then Claim\n8. Crossplane repeats until desired state == actual state\n\n### During the update\nFor the RDS resize:\n\n- desired state says `allocatedStorage=50`\n- actual external state is initially still `20`\n- provider issues/observes AWS modify operation\n- Crossplane keeps reconciling while AWS converges\n- once AWS reports the DB is updated and ready, managed resource status updates\n- XR/Claim eventually become `Ready=True`\n\n### If something fails\nIf AWS rejects the change or it gets stuck:\n\n- managed resource shows error/condition details\n- XR and Claim propagate failure/not-ready status\n- Crossplane keeps retrying reconciliation according to controller behavior\n\n---\n\n# Short direct answers\n\n## 1. Trace\nClaim `storageGB` update propagates to the XR defined by the XRD, the Composition re-renders composed resources, and the RDS managed resource gets an updated desired spec.\n\n## 2. RDS update or recreate?\n**Usually updated in-place** for an RDS storage increase like `20 -> 50`.\n\n## 3. S3 bucket?\n**No change**, unless the Composition explicitly ties bucket config to `storageGB`.\n\n## 4. ReadinessChecks?\nThey control when composed resources/XR/Claim are marked ready; they do **not** perform the update.\n\n## 5. Reconciliation loop?\nCrossplane continuously watches and re-reconciles Claim \u2192 XR \u2192 managed resources \u2192 provider status until actual state matches desired state.\n\nIf you want, I can also show this as a concrete YAML patch path example through a sample Composition.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/crossplane/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

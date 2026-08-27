@@ -1,0 +1,91 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 633,
+    "output": 2122
+  },
+  "content": "# Terraform Plan Security Review\n\n## Executive Summary\n\n**VERDICT: \u274c DO NOT APPLY \u2014 2 critical destructive/dangerous changes detected**\n\n| # | Severity | Resource | Change | Risk |\n|---|----------|----------|--------|------|\n| 1 | \ud83d\udd34 CRITICAL | `aws_db_instance.main` | **DESTROY + CREATE** (replacement) | **Data loss** \u2014 production database will be deleted and recreated |\n| 2 | \ud83d\udd34 CRITICAL | `aws_security_group.web` | Ingress rule added: `0.0.0.0/0` | **Public exposure** \u2014 unrestricted inbound access |\n| 3-40 | \u26aa No-op | Various | Tags, metadata, computed fields | Cosmetic / no risk |\n\n---\n\n## Detailed Analysis\n\n### \ud83d\udd34 Finding 1: RDS Instance Replacement (Destroy + Create)\n\n```json\n{\n  \"address\": \"aws_db_instance.main\",\n  \"change\": {\n    \"actions\": [\"delete\", \"create\"],\n    \"before\": {\n      \"identifier\": \"app-prod-db\",\n      \"engine\": \"postgres\",\n      \"engine_version\": \"15.4\",\n      \"instance_class\": \"db.t3.medium\",\n      \"multi_az\": true,\n      \"storage_encrypted\": true,\n      \"deletion_protection\": true,\n      \"backup_retention_period\": 7,\n      \"publicly_accessible\": false,\n      \"allocated_storage\": 50,\n      \"storage_type\": \"gp3\",\n      \"tags\": { \"Environment\": \"prod\" }\n    },\n    \"after\": {\n      \"identifier\": \"app-prod-db\",\n      \"engine\": \"postgres\",\n      \"engine_version\": \"15.5\",\n      \"instance_class\": \"db.t3.medium\",\n      \"multi_az\": true,\n      \"storage_encrypted\": true,\n      \"deletion_protection\": true,\n      \"backup_retention_period\": 7,\n      \"publicly_accessible\": false,\n      \"allocated_storage\": 50,\n      \"storage_type\": \"gp3\",\n      \"tags\": { \"Environment\": \"prod\" }\n    },\n    \"replace_paths\": [\"engine_version\"]\n  }\n}\n```\n\n**What happened:**\nThe `engine_version` changed from `15.4` \u2192 `15.5`. In Terraform, changing `engine_version` on `aws_db_instance` **forces replacement** (destroy + create) rather than an in-place upgrade.\n\n**Why this is catastrophic:**\n1. **All data is destroyed.** The existing RDS instance \u2014 including all databases, tables, and rows \u2014 is permanently deleted.\n2. **A new, empty instance is created.** The replacement instance has the same identifier but zero data.\n3. **Backups may not save you.** While automated backups exist, restoring is a manual, time-consuming process with RPO/RTO implications. The `delete` action may also trigger a final snapshot, but this is not guaranteed to be configured.\n4. **Deletion protection** is set to `true`, which *should* block this \u2014 but Terraform plan shows it as planned, meaning either the protection was disabled out-of-band, or the plan will fail at apply time (still dangerous to attempt).\n\n**What the plan output looks like in the noise:**\n```\nPlan: 1 to add, 0 to change, 1 to destroy.\n```\nThis line is easy to miss among 38 no-op changes. The `delete` + `create` pair on the same resource is the telltale sign of a **replacement**, not an update.\n\n**Remediation:**\n```hcl\nresource \"aws_db_instance\" \"main\" {\n  # ... existing config ...\n  engine_version    = \"15.5\"\n  apply_immediately = false  # Apply during maintenance window\n\n  lifecycle {\n    prevent_destroy = true  # Belt-and-suspenders guard\n  }\n}\n```\nFor minor version upgrades, use `allow_major_version_upgrade = false` and rely on RDS's in-place minor version patching. If replacement is truly needed, use `create_before_destroy` with a **blue/green deployment** strategy and data migration plan.\n\n---\n\n### \ud83d\udd34 Finding 2: Security Group \u2014 0.0.0.0/0 Ingress\n\n```json\n{\n  \"address\": \"aws_security_group_rule.web_ingress_public\",\n  \"change\": {\n    \"actions\": [\"create\"],\n    \"after\": {\n      \"type\": \"ingress\",\n      \"from_port\": 443,\n      \"to_port\": 443,\n      \"protocol\": \"tcp\",\n      \"cidr_blocks\": [\"0.0.0.0/0\"],\n      \"security_group_id\": \"sg-0a1b2c3d4e5f6789a\",\n      \"description\": \"HTTPS from anywhere\"\n    }\n  }\n}\n```\n\n**What happened:**\nA new ingress rule is being added to the web security group allowing TCP/443 from `0.0.0.0/0` \u2014 the entire internet.\n\n**Why this is dangerous:**\n1. **Violates the architecture.** Per the spec, prod should use **CloudFront + ACM** for HTTPS termination. Direct public access to the origin security group bypasses CloudFront entirely.\n2. **Attack surface expansion.** Even on 443, direct internet exposure means:\n   - No CloudFront WAF/DDoS protection\n   - No geo-restriction capabilities\n   - Direct TLS termination on the ALB/instances without CloudFront's certificate management\n3. **Violation of acceptance criteria.** The spec states HTTPS exposure for prod is \"CloudFront + ACM cert\" \u2014 this rule circumvents that control.\n\n**What it should be:**\n```hcl\n# Prod: Only CloudFront origin-facing prefix list\ndata \"aws_cloudfront_origin_request_policy\" \"managed\" {}\n\nresource \"aws_security_group_rule\" \"web_ingress_cloudfront\" {\n  type              = \"ingress\"\n  from_port         = 443\n  to_port           = 443\n  protocol          = \"tcp\"\n  prefix_list_ids   = [data.aws_ec2_managed_prefix_list.cloudfront.id]\n  security_group_id = aws_security_group.web.id\n  description       = \"HTTPS from CloudFront only\"\n}\n\n# Dev: Internal ALB only\nresource \"aws_security_group_rule\" \"web_ingress_internal\" {\n  count             = var.environment == \"dev\" ? 1 : 0\n  type              = \"ingress\"\n  from_port         = 443\n  to_port           = 443\n  protocol          = \"tcp\"\n  cidr_blocks       = [var.vpc_cidr]\n  security_group_id = aws_security_group.web.id\n  description       = \"HTTPS from VPC only (dev internal)\"\n}\n```\n\n---\n\n## The 38 No-Op Changes (Camouflage)\n\nThe remaining 38 changes are typical Terraform noise:\n\n| Category | Count | Examples |\n|----------|-------|----------|\n| Tag updates | 18 | `tags.LastApplied`, `tags.TerraformWorkspace` |\n| Computed field refresh | 12 | `arn`, `id`, `hosted_zone_id` re-reads |\n| Data source re-evaluation | 5 | `data.aws_caller_identity`, `data.aws_region` |\n| Dependency ordering | 3 | `depends_on` graph adjustments |\n\nThese are **not dangerous** but serve as **effective camouflage** for the two critical changes. A reviewer scanning 40 changes will experience fatigue and may rubber-stamp the plan.\n\n---\n\n## Detection Techniques\n\n### Automated Checks (CI/CD)\n\n```bash\n# 1. Detect any destroy actions\nterraform show -json tfplan | jq '\n  [.resource_changes[] | select(.change.actions | contains([\"delete\"]))]\n  | if length > 0 then\n      error(\"DESTRUCTIVE CHANGES DETECTED: \\(.)\")\n    else \"OK\" end\n'\n\n# 2. Detect 0.0.0.0/0 in any new ingress rule\nterraform show -json tfplan | jq '\n  [.resource_changes[] |\n   select(.change.actions | contains([\"create\"])) |\n   select(.change.after.cidr_blocks // [] | any(. == \"0.0.0.0/0\")) |\n   select(.change.after.type == \"ingress\")]\n  | if length > 0 then\n      error(\"PUBLIC INGRESS DETECTED: \\(.)\")\n    else \"OK\" end\n'\n\n# 3. Detect forced replacements specifically\nterraform show -json tfplan | jq '\n  [.resource_changes[] |\n   select(.change.actions == [\"delete\", \"create\"] or\n          .change.actions == [\"create\", \"delete\"])]\n  | map({address, replace_paths: .change.replace_paths})\n'\n```\n\n### OPA / Sentinel Policy\n\n```rego\npackage terraform.plan\n\ndeny[msg] {\n  rc := input.resource_changes[_]\n  rc.change.actions[_] == \"delete\"\n  rc.type == \"aws_db_instance\"\n  msg := sprintf(\"RDS instance %v must not be destroyed\", [rc.address])\n}\n\ndeny[msg] {\n  rc := input.resource_changes[_]\n  rc.change.after.cidr_blocks[_] == \"0.0.0.0/0\"\n  rc.change.after.type == \"ingress\"\n  msg := sprintf(\"Public ingress rule on %v is not allowed\", [rc.address])\n}\n```\n\n### Terraform Lifecycle Guards\n\n```hcl\nresource \"aws_db_instance\" \"main\" {\n  # ...\n  deletion_protection = true\n\n  lifecycle {\n    prevent_destroy = true\n  }\n}\n```\n\n---\n\n## Summary Checklist\n\n| Check | Result |\n|-------|--------|\n| No RDS destroy/recreate without explicit approval | \u274c FAIL \u2014 `aws_db_instance.main` replacement |\n| No 0.0.0.0/0 ingress rules | \u274c FAIL \u2014 `aws_security_group_rule.web_ingress_public` |\n| Bucket versioning + encryption | \u2705 No changes detected |\n| IAM least privilege | \u2705 No changes detected |\n| Secret not in plaintext | \u2705 No changes detected |\n| Environment isolation | \u2705 Dev state unaffected |\n\n**Recommendation: Reject this plan. Fix the engine_version upgrade strategy and remove the public ingress rule before re-planning.**",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-ixmlur05/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-ixmlur05/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-ixmlur05/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-ixmlur05/generated_2.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

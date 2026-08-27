@@ -1,0 +1,98 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T3-modify",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmp5alc0w0_/generated_3.ts(1,23): error TS2304: Cannot find name 'oldParentResource'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmp5alc0w0_/generated_4.ts(1,21): error TS2304: Cannot find name 'pulumi'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/tmp5alc0w0_/generated_5.ts(1,16): error TS2304: Cannot find name 'aws'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1057,
+    "output": 4186
+  },
+  "content": "# Migrating Flat Pulumi Program to ComponentResource Without Replacement\n\nThe key to a no-replacement migration is **aliases**. When you wrap resources in a `ComponentResource`, their Pulumi URN changes (the parent changes from the stack to the component). Pulumi treats a URN change as a delete+create unless you tell it the resource is the *same* resource under a new name via `aliases`.\n\n## The Core Problem\n\nBefore (flat):\n```\nurn:pulumi:dev::myapp::aws:s3/bucket:Bucket::app-assets\n```\n\nAfter (wrapped in component `WebApp`):\n```\nurn:pulumi:dev::myapp::myapp:index:WebApp$aws:s3/bucket:Bucket::app-assets\n```\n\nThe parent segment changed. Without an alias, Pulumi sees the old URN as gone and the new URN as new \u2192 **replacement**.\n\n---\n\n## Step 1: The Original Flat Program\n\n`index.ts` (before):\n\n```typescript\nimport * as aws from \"@pulumi/aws\";\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as eks from \"@pulumi/eks\";\n\nconst config = new pulumi.Config();\nconst env = pulumi.getStack(); // \"dev\" or \"prod\"\nconst isProd = env === \"prod\";\n\n// --- S3 bucket ---\nconst assets = new aws.s3.BucketV2(\"app-assets\");\n\nnew aws.s3.BucketVersioningV2(\"app-assets-versioning\", {\n    bucket: assets.id,\n    versioningConfiguration: { status: \"Enabled\" },\n});\n\nnew aws.s3.BucketServerSideEncryptionConfigurationV2(\"app-assets-sse\", {\n    bucket: assets.id,\n    rules: [{ applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" } }],\n});\n\nnew aws.s3.BucketPublicAccessBlock(\"app-assets-pab\", {\n    bucket: assets.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n});\n\n// --- RDS ---\nconst db = new aws.rds.Instance(\"app-db\", {\n    engine: \"postgres\",\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    allocatedStorage: 20,\n    multiAz: isProd,\n    storageEncrypted: isProd,\n    deletionProtection: true,\n    backupRetentionPeriod: 7,\n    publiclyAccessible: false,\n    username: \"appuser\",\n    password: config.requireSecret(\"dbPassword\"),\n    skipFinalSnapshot: false,\n    finalSnapshotIdentifier: \"app-db-final\",\n});\n\n// --- EKS ---\nconst cluster = new eks.Cluster(\"app-cluster\", {\n    instanceType: isProd ? \"t3.large\" : \"t3.medium\",\n    desiredCapacity: isProd ? 4 : 2,\n    minSize: isProd ? 4 : 2,\n    maxSize: isProd ? 6 : 3,\n});\n\nexport const bucketName = assets.bucket;\nexport const kubeconfig = cluster.kubeconfig;\n```\n\n---\n\n## Step 2: Define the ComponentResource\n\n`webapp.ts`:\n\n```typescript\nimport * as aws from \"@pulumi/aws\";\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as eks from \"@pulumi/eks\";\n\nexport interface WebAppArgs {\n    isProd: boolean;\n    dbPassword: pulumi.Input<string>;\n    replicationRegion?: string; // \"us-west-2\" for prod\n}\n\nexport class WebApp extends pulumi.ComponentResource {\n    public readonly bucketName: pulumi.Output<string>;\n    public readonly kubeconfig: pulumi.Output<any>;\n    public readonly dbEndpoint: pulumi.Output<string>;\n\n    constructor(\n        name: string,\n        args: WebAppArgs,\n        opts?: pulumi.ComponentResourceOptions,\n    ) {\n        super(\"myapp:index:WebApp\", name, {}, opts);\n\n        const { isProd, dbPassword } = args;\n\n        // Everything now parented to `this`.\n        // Each child carries an alias with the OLD parent (the stack / root).\n\n        // --- S3 bucket ---\n        const assets = new aws.s3.BucketV2(\n            \"app-assets\",\n            {},\n            {\n                parent: this,\n                // Old URN had the stack as parent (no parent segment).\n                aliases: [{ parent: pulumi.rootStackResource }],\n            },\n        );\n\n        new aws.s3.BucketVersioningV2(\n            \"app-assets-versioning\",\n            {\n                bucket: assets.id,\n                versioningConfiguration: { status: \"Enabled\" },\n            },\n            { parent: this, aliases: [{ parent: pulumi.rootStackResource }] },\n        );\n\n        new aws.s3.BucketServerSideEncryptionConfigurationV2(\n            \"app-assets-sse\",\n            {\n                bucket: assets.id,\n                rules: [\n                    {\n                        applyServerSideEncryptionByDefault: {\n                            sseAlgorithm: \"AES256\",\n                        },\n                    },\n                ],\n            },\n            { parent: this, aliases: [{ parent: pulumi.rootStackResource }] },\n        );\n\n        new aws.s3.BucketPublicAccessBlock(\n            \"app-assets-pab\",\n            {\n                bucket: assets.id,\n                blockPublicAcls: true,\n                blockPublicPolicy: true,\n                ignorePublicAcls: true,\n                restrictPublicBuckets: true,\n            },\n            { parent: this, aliases: [{ parent: pulumi.rootStackResource }] },\n        );\n\n        // --- RDS ---\n        const db = new aws.rds.Instance(\n            \"app-db\",\n            {\n                engine: \"postgres\",\n                instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n                allocatedStorage: 20,\n                multiAz: isProd,\n                storageEncrypted: isProd,\n                deletionProtection: true,\n                backupRetentionPeriod: 7,\n                publiclyAccessible: false,\n                username: \"appuser\",\n                password: dbPassword,\n                skipFinalSnapshot: false,\n                finalSnapshotIdentifier: \"app-db-final\",\n            },\n            { parent: this, aliases: [{ parent: pulumi.rootStackResource }] },\n        );\n\n        // --- EKS ---\n        const cluster = new eks.Cluster(\n            \"app-cluster\",\n            {\n                instanceType: isProd ? \"t3.large\" : \"t3.medium\",\n                desiredCapacity: isProd ? 4 : 2,\n                minSize: isProd ? 4 : 2,\n                maxSize: isProd ? 6 : 3,\n            },\n            { parent: this, aliases: [{ parent: pulumi.rootStackResource }] },\n        );\n\n        this.bucketName = assets.bucket;\n        this.kubeconfig = cluster.kubeconfig;\n        this.dbEndpoint = db.endpoint;\n\n        this.registerOutputs({\n            bucketName: this.bucketName,\n            kubeconfig: this.kubeconfig,\n            dbEndpoint: this.dbEndpoint,\n        });\n    }\n}\n```\n\n---\n\n## Step 3: Update the Entrypoint\n\n`index.ts` (after):\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport { WebApp } from \"./webapp\";\n\nconst config = new pulumi.Config();\nconst env = pulumi.getStack();\nconst isProd = env === \"prod\";\n\nconst app = new WebApp(\"app\", {\n    isProd,\n    dbPassword: config.requireSecret(\"dbPassword\"),\n    replicationRegion: isProd ? \"us-west-2\" : undefined,\n});\n\nexport const bucketName = app.bucketName;\nexport const kubeconfig = app.kubeconfig;\nexport const dbEndpoint = app.dbEndpoint;\n```\n\n---\n\n## Key Details That Make This No-Replacement\n\n### 1. The alias `parent` must point to the *old* parent\n\nIn the flat program, resources were created with no explicit `parent`, so their implicit parent is the **root stack resource**. `pulumi.rootStackResource` targets it explicitly.\n\nIf your old resources had *some other* parent, alias to that instead:\n\n```typescript\n{ aliases: [{ parent: oldParentResource }] }\n```\n\n### 2. Resource *logical names* stay the same\n\n`\"app-assets\"`, `\"app-db\"`, etc. are unchanged. If you *also* rename a resource, add a `name` field to the alias:\n\n```typescript\naliases: [{ parent: pulumi.rootStackResource, name: \"old-name\" }]\n```\n\n### 3. The component itself may need an alias\n\nIf you had previously registered a component under a different type/name, alias that too. For a first-time wrap (flat \u2192 component), the component is genuinely new \u2014 no alias needed on `this`. Only the *children* need aliases because *they* already exist in state.\n\n### 4. EKS sub-resources\n\n`eks.Cluster` is itself a ComponentResource that creates many children (VPC CNI, node groups, security groups). Because you alias the **`eks.Cluster` node**, Pulumi re-parents the whole subtree correctly \u2014 the internal children's parents move with it automatically. You do **not** need to alias every internal EKS resource.\n\n---\n\n## Step 4: Verify with a Preview\n\n```bash\npulumi preview --diff\n```\n\n**What you want to see:**\n\n```\nType                          Name              Plan\n+   myapp:index:WebApp        app               create      # component wrapper (logical only)\n    \u2514\u2500 aws:s3/bucketV2:...    app-assets                    # no change / update, NOT replace\n    \u2514\u2500 aws:rds/instance:...   app-db                        # no change / update, NOT replace\n    \u2514\u2500 eks:index:Cluster      app-cluster                   # no change / update, NOT replace\n```\n\n**Red flags \u2014 if you see these, the aliases are wrong:**\n\n```\n-+  aws:rds/instance:Instance  app-db  replace   [diff: parent]\n+   ...  create\n-   ...  delete\n```\n\nA `parent` diff or `replace` on a stateful resource (RDS, S3) means the alias didn't match. Fix the alias target before applying.\n\n---\n\n## Common Pitfalls\n\n| Pitfall | Symptom | Fix |\n|---|---|---|\n| Forgot alias entirely | All children show `replace` | Add `aliases: [{ parent: rootStackResource }]` |\n| Wrong alias parent | Still shows `replace [parent]` | Match the *exact* old parent (root vs. another component) |\n| Renamed resource + no `name` alias | `replace [name]` | Add `name` to alias object |\n| Aliased EKS internals manually | Duplicate/conflicting aliases | Only alias the top-level `eks.Cluster` |\n| Component itself aliased on first wrap | Confusing but harmless | Remove alias from `this` for flat\u2192component |\n\n---\n\n## Safety Net for Stateful Resources\n\nEven with correct aliases, protect the irreplaceable resources during migration:\n\n```typescript\nconst db = new aws.rds.Instance(\"app-db\", { /* ... */ }, {\n    parent: this,\n    aliases: [{ parent: pulumi.rootStackResource }],\n    protect: true,          // block accidental deletion\n    retainOnDelete: true,   // extra insurance during risky migrations\n});\n```\n\nRun the migration, confirm `pulumi preview` shows **zero replacements**, then apply. The `aliases` can remain in code indefinitely (they're cheap) or be removed a release later once all stacks (`dev`, `prod`) are migrated and refreshed.\n\n---\n\n## Summary\n\n1. **Wrap** resources in a `ComponentResource`, parenting each to `this`.\n2. **Alias** every moved child back to its original parent (`pulumi.rootStackResource` for flat programs).\n3. **Preview** and confirm no `replace` operations appear.\n4. **Protect** stateful resources (RDS, S3) as a safety net.\n5. Apply per stack \u2014 `dev` and `prod` migrate independently, preserving environment isolation.\n\nThe URN changes; the physical resources don't move. That's the whole trick.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/index.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/webapp.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/index.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/generated_3.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/generated_4.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/generated_3.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wjd55545/generated_5.ts"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/pulumi-typescript/warm/T3-modify_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,90 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 650,
+    "output": 923
+  },
+  "content": "# Terraform Plan Review \u2014 Findings\n\n## Verdict: \u274c **DO NOT APPLY** \u2014 2 blocking issues found\n\nOf the 40 changes, most are benign (`NoOp`/`Read`/cosmetic drift), but two changes are destructive or insecure and hidden in the noise.\n\n---\n\n## \ud83d\udea8 Blocking Issue #1: RDS instance forced replacement\n\n```\n# module.db.aws_db_instance.this will be destroyed and recreated\n-/+ resource \"aws_db_instance\" \"this\" {\n      ~ identifier            = \"app-db-prod\" -> \"app-db-prod-v2\"   # forces replacement\n      ~ engine_version        = \"15.3\" -> \"15.5\"\n      ~ allocated_storage      = 20 -> 100\n      ~ instance_class         = \"db.t3.medium\" -> \"db.t3.large\"\n      ~ multi_az               = true -> true\n    } # (forces replacement \u2014 attribute change requires new resource)\n```\n\n**Why it's buried:** it appears mid-list after ~15 `NoOp` entries; the `~ identifier` / engine change is the replace trigger.\n\n**Impact:**\n- Database **destroyed and recreated** \u2014 data loss unless snapshot/final_snapshot is configured.\n- Downtime for prod app; secret (DB endpoint) will rotate and must be re-propagated.\n\n**Required before apply:**\n1. Verify `final_snapshot_identifier` / `skip_final_snapshot = false` is set.\n2. Prefer `apply_method = \"immediately\"` maintenance window or `blue/green deployment` (AWS RDS Blue/Green, supported via `aws_rds_blue_green_deployment`) instead of recreate for the class/storage bump.\n3. If recreate is truly needed: schedule maintenance window, confirm backups (`backup_retention_period >= 7`), and rehearse in dev.\n\n---\n\n## \ud83d\udea8 Blocking Issue #2: Security group opened to the world\n\n```\n# aws_security_group_rule.db_ingress will be created\n+ resource \"aws_security_group_rule\" \"db_ingress\" {\n    + type              = \"ingress\"\n    + from_port         = 5432\n    + to_port           = 5432\n    + protocol          = \"tcp\"\n    + cidr_blocks       = [\"0.0.0.0/0\"]     # \u26a0\ufe0f\n    + security_group_id = \"sg-xxxx (db-sg)\"\n  }\n```\n\n**Impact:** PostgreSQL port exposed publicly on the **prod** DB security group. Violates least-privilege acceptance criteria; likely a debug rule committed accidentally.\n\n**Fix:** reject the change; DB ingress should be restricted to the app/EKS node security group:\n\n```hcl\nsource_security_group_id = module.eks.node_security_group_id\n```\n\n---\n\n## \u2705 Non-blocking (spot check of remaining 38)\n\n| # | Change | Assessment |\n|---|---|---|\n| ~12 | `NoOp` tags drift on IAM/S3 | OK |\n| 2 | S3 `InPlace` versioning config refresh | OK |\n| 1 | ACM cert renewal `Update` | OK |\n| 1 | RDS `parameter_group` update | verify apply_method is `pending-reboot`, not blocking |\n| others | Read-only data source refreshes | OK |\n\n---\n\n## Review checklist used (repeatable)\n\n```bash\n# surface destructive changes quickly from a 40-item plan\njq -r '.resource_changes[]\n  | select(.change.actions | (contains([\"delete\"]) or contains([\"create\",\"delete\"])))\n  | .address + \"  actions=\" + (.change.actions|tostring)\n  + \"  replace=\" + (.change.replace_paths // [] | tostring)' tfplan.json\n\n# surface open ingress\njq -r '.resource_changes[]\n  | select(.change.after?.cidr_blocks // [] | index(\"0.0.0.0/0\"))\n  | .address' tfplan.json\n```\n\n**Gate to apply:** remove the `0.0.0.0/0` rule, convert RDS change to in-place/blue-green path, then re-plan and re-review.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-vlx7eie4/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-vlx7eie4/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-vlx7eie4/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,95 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `config`\n --> generated_1.py:1:15\n  |\n1 | db_password = config.get(\"dbPassword\")  # plain string, not a Secret\n  |               ^^^^^^\n\nF821 Undefined name `bucket`\n --> generated_2.py:1:14\n  |\n1 | bucket_url = bucket.arn.apply(lambda arn: f\"https://s3.{region}.amazonaws.com/{arn}\")\n  |              ^^^^^^\n\nF821 Undefined name `region`\n --> generated_2.py:1:57\n  |\n1 | bucket_url = bucket.arn.apply(lambda arn: f\"https://s3.{region}.amazonaws.com/{arn}\")\n  |                   "
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1649,
+    "output": 2130
+  },
+  "content": "# Analysis of the Failures\n\n## Defect 1: Secret read as plain string\n\n```python\ndb_password = config.get(\"dbPassword\")  # plain string, not a Secret\n```\n\nReading a secret with `config.get()` pulls the **decrypted plaintext** into the program as a bare `str`. This:\n- Loses the secret's \"secret-ness\" \u2014 it will appear in **plaintext** in the Pulumi state file and `pulumi preview`/`up` diffs\n- Violates **Acceptance Criteria #3** (never plaintext, encrypted at rest)\n- Returns `None` if the key is unset, silently passing `None` to RDS `password`\n\nThe fix is `config.require_secret(\"dbPassword\")`, which returns an `Output[str]` that stays tracked as secret and is encrypted in state.\n\n## Defect 2: `.apply()` misuse\n\n```python\nbucket_url = bucket.arn.apply(lambda arn: f\"https://s3.{region}.amazonaws.com/{arn}\")\n```\n\nThis particular line **is** valid \u2014 `.apply()` returns an `Output`. The real misuse is the intent: the lambda builds a URL from an **ARN** (`arn:aws:s3:::name`), which produces a garbage URL. What was wanted is a plain string interpolation over an Output, best expressed with `Output.concat` or `.apply()` on the **bucket name/domain**, not the ARN. The symptom \"`.apply()` result used where Output expected\" comes from callers treating it as a `str`.\n\n---\n\n# Fixed `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.require(\"env\")\nregion = config.get(\"region\") or \"us-east-1\"\nis_prod = env == \"prod\"\n\n# FIX 1: secret stays a tracked, encrypted Output[str]\ndb_password = config.require_secret(\"dbPassword\")\n\n# S3 Bucket\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\n)\n\n# Server-side encryption (AC #1)\naws.s3.BucketServerSideEncryptionConfigurationV2(\n    \"app-bucket-sse\",\n    bucket=bucket.id,\n    rules=[aws.s3.BucketServerSideEncryptionConfigurationV2RuleArgs(\n        apply_server_side_encryption_by_default=(\n            aws.s3.BucketServerSideEncryptionConfigurationV2RuleApplyServerSideEncryptionByDefaultArgs(\n                sse_algorithm=\"AES256\",\n            )\n        ),\n    )],\n)\n\n# Block all public access (AC #1)\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-pab\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# FIX 2: build the URL from the regional domain name (an Output), not the ARN.\n# Output.concat keeps it an Output[str] end-to-end \u2014 no manual .apply needed,\n# and it composes cleanly with other Outputs.\nbucket_url = pulumi.Output.concat(\"https://\", bucket.bucket_regional_domain_name)\n\n# RDS Instance (sizing/protection per env \u2014 AC #2, #5)\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.medium\" if is_prod else \"db.t3.micro\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app_user\",  # RDS master username cannot contain hyphens\n    password=db_password,  # Output[str], stays secret in state\n    multi_az=is_prod,\n    storage_encrypted=is_prod,\n    publicly_accessible=False,          # AC #2\n    deletion_protection=is_prod,        # AC #2\n    backup_retention_period=7 if is_prod else 1,  # AC #2 (>=7 on prod)\n    skip_final_snapshot=not is_prod,\n    final_snapshot_identifier=None if not is_prod else f\"appdb-{env}-final\",\n)\n\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n# db_endpoint is fine to export; password is never exported.\n```\n\n---\n\n# Setting the secret correctly (out-of-band, not in Git)\n\n```bash\n# dev\npulumi config set --secret dbPassword <value> --stack dev\n# prod\npulumi config set --secret dbPassword <value> --stack prod\n```\n\nThis writes the value **encrypted** into `Pulumi.<stack>.yaml` (AC #3, #7):\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  myapp:env: prod\n  myapp:region: us-east-1\n  myapp:dbPassword:\n    secure: AAABAK...<ciphertext>...\n```\n\n---\n\n# Summary of Changes\n\n| # | Problem | Root cause | Fix |\n|---|---------|-----------|-----|\n| 1 | Secret leaked as plaintext / `None` risk | `config.get(\"dbPassword\")` returns bare `str` | `config.require_secret(\"dbPassword\")` \u2192 `Output[str]`, encrypted in state |\n| 2 | Bogus URL / Output-vs-str confusion | `.apply()` over `arn`, wrong source attr | `Output.concat(...)` over `bucket_regional_domain_name` |\n| 3 | Prod not hardened | Hardcoded dev-ish values | env-driven `multi_az`, `deletion_protection`, `backup_retention_period`, encryption |\n\n**Key rules to internalize:**\n- Never read secrets with `config.get`/`require` \u2014 always `require_secret`/`get_secret`, keeping them as `Output` so they never touch plaintext state.\n- Prefer `Output.concat` / `Output.format` for string composition; reach for `.apply()` only when you must transform a value, and remember `.apply()` **returns** an `Output` \u2014 don't treat its result as a plain `str`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ou9q8_4c/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ou9q8_4c/Pulumi.<stack>.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ou9q8_4c/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-ou9q8_4c/generated_2.py"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.6666666666666666
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/pulumi-python/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.6666666666666666,
+      "attempted_stages": 3,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.6666666666666666
+    },
+    "corrected_composite_no_idiom": 0.75,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

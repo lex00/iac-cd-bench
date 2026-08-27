@@ -1,0 +1,90 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `pulumi`\n --> app.py:1:10\n  |\n1 | config = pulumi.Config()\n  |          ^^^^^^\n2 | min_replicas = config.get_int(\"hpa.minReplicas\") or 2\n3 | max_replicas = config.get_int(\"hpa.maxReplicas\") or {\"dev\": 4, \"prod\": 10}[stack]\n  |\n\nF821 Undefined name `stack`\n --> app.py:3:76\n  |\n1 | config = pulumi.Config()\n2 | min_replicas = config.get_int(\"hpa.minReplicas\") or 2\n3 | max_replicas = config.get_int(\"hpa.maxReplicas\") or {\"dev\": 4, \"prod\": 10}[stack]\n  |                           "
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 628,
+    "output": 1062
+  },
+  "content": "# Adding Auto-Scaling Without Resource Replacement\n\n## Key Principle\n\nPulumi uses **desired-state reconciliation**: adding a *new* resource only creates it. Replacements are triggered only when you change **immutable properties** of *existing* resources. So the safe approach is:\n\n1. **Add** a new scaling policy/HPA resource \u2014 do not touch inputs of the cluster, node group, or instance profile.\n2. Reference existing resources by their outputs (existing URN references stay intact).\n\n## 1. Kubernetes HPA for the web app (both dev & prod)\n\nAdd a new file `scaling.py` (or append to `app.py`). This creates only new objects:\n\n```python\nimport pulumi\nimport pulumi_kubernetes as k8s\nfrom pulumi_kubernetes.autoscaling.v2 import HorizontalPodAutoscaler\n\ndef add_hpa(provider, name: str, target_ref, min_replicas: int, max_replicas: int):\n    return HorizontalPodAutoscaler(\n        f\"{name}-hpa\",\n        metadata={\"name\": f\"{name}-hpa\"},\n        spec={\n            \"scaleTargetRef\": {\n                \"apiVersion\": \"apps/v1\",\n                \"kind\": \"Deployment\",\n                \"name\": target_ref,\n            },\n            \"minReplicas\": min_replicas,\n            \"maxReplicas\": max_replicas,\n            \"metrics\": [{\n                \"type\": \"Resource\",\n                \"resource\": {\n                    \"name\": \"cpu\",\n                    \"target\": {\"type\": \"Utilization\", \"averageUtilization\": 70},\n                },\n            }],\n        },\n        opts=pulumi.ResourceOptions(provider=provider),\n    )\n```\n\nWire it up per environment (dev/prod values from stack config):\n\n```python\nconfig = pulumi.Config()\nmin_replicas = config.get_int(\"hpa.minReplicas\") or 2\nmax_replicas = config.get_int(\"hpa.maxReplicas\") or {\"dev\": 4, \"prod\": 10}[stack]\n\nhpa = add_hpa(k8s_provider, \"webapp\", \"webapp\", min_replicas, max_replicas)\npulumi.export(\"hpa_name\", hpa.metadata.name)\n```\n\n## 2. Node group auto-scaling (target tracking on the node ASG)\n\nEKS managed node groups don't expose their ASG directly, so create the policy attached to the node group's autoscaling group *output* \u2014 again, only a new resource:\n\n```python\nimport pulumi_aws as aws\n\ndef add_nodegroup_scaling(ng):\n    ng_asg_names = ng.node_group.autoscaling_groups.apply(lambda groups: [g.name for g in groups])\n    return ng_asg_names.apply(lambda names: [\n        aws.autoscaling.Policy(\n            f\"ng-scale-policy-{i}\",\n            autoscaling_group_name=name,\n            policy_type=\"TargetTrackingScaling\",\n            target_tracking_configuration={\n                \"predefined_metric_specification\": {\n                    \"predefined_metric_type\": \"ASGAverageCPUUtilization\",\n                },\n                \"target_value\": 60,\n            },\n            # Cap scaling so prod's 4 x t3.large baseline is respected\n            min_size=2,\n            max_size=10,\n        )\n        for i, name in enumerate(names)\n    ])\n```\n\n> Alternatively (and more idiomatically for managed node groups), set `scaling_config.min_size`/`max_size`/`desired_size` on the node group \u2014 these are **mutable** for AWS managed node groups and won't replace the resource.\n\n## 3. Verify no replacement before deploying\n\n```bash\npulumi preview --stack prod --diff --show-preview-rights\n```\n\nCheck the preview output:\n- \u2705 New resources flagged `+create` (HPA, Policy)\n- \u274c No `~replace` or `replaces` on the cluster, node group, RDS, bucket, or IAM\n\n```bash\npulumi up --stack prod\n```\n\n## What *would* trigger replacement (avoid these)\n\n| Change | Replacement? |\n|---|---|\n| Adding an HPA / ASG Policy | No \u2014 new resource |\n| Changing node group `scaling_config` (min/max/desired) | No \u2014 mutable update |\n| Changing `instance_type` on node group | No \u2014 AWS updates in-place (may roll nodes) |\n| Changing node group `disk_size` or subnet/`node_role_arn` | **Yes** \u2014 replacement |\n| Changing cluster `version`, VPC/subnets | **Yes** |\n\n## Environment isolation preserved\n\nThe HPA bounds and target values come from `dev.yaml` / `prod.yaml` stack config (or the `stack` variable), so deploying to prod (`pulumi up --stack prod`) touches only prod state \u2014 dev's stack file and state remain untouched, satisfying criterion 7.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-u5p2ax_y/scaling.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-u5p2ax_y/app.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-u5p2ax_y/generated_2.py"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/pulumi-python/warm/T3-modify_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

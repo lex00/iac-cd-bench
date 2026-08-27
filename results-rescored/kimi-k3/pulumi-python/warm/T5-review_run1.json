@@ -1,0 +1,88 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 621,
+    "output": 1252
+  },
+  "content": "To review a Pulumi preview JSON for the specific security issues you mentioned\u2014**plaintext secrets, stateful resource replacement, and missing protect flags**\u2014you must analyze the `steps` and `diagnostics` sections of the JSON output.\n\nHere is a guide on how to perform this review, followed by a Python script that automates the detection of these vulnerabilities.\n\n---\n\n### 1. Secret in Plaintext Outputs\nIn Pulumi, secrets should be encrypted. In the JSON preview, a secure secret is represented as an object with a `ciphertext` key. If you see a `plaintext` key or a raw string value for a property that should be a secret (like a database connection string), it is a security failure.\n\n*   **What to look for:** In the `newState.inputs` or `newState.outputs` of any step, look for `\"plaintext\": \"...\"`.\n\n### 2. Replacement of Stateful Resource\nReplacing an RDS instance or an S3 bucket usually results in data loss. Pulumi indicates this in the `op` field of a step.\n*   **What to look for:** Look for `\"op\": \"replace\"` or `\"op\": \"delete-replace\"` on resources like `aws:rds/instance:Instance` or `aws:s3/bucket:Bucket`.\n\n### 3. Missing Protect Flag\nThe `protect` resource option prevents accidental deletion of critical infrastructure. \n*   **What to look for:** In the `newState` object of a step, check the `protect` field. If it is missing or `false` for stateful resources (RDS, S3), the resource is at risk.\n\n---\n\n### Automated Review Script (Python)\n\nYou can use the following Python script to parse a `pulumi preview --json` output file and flag these issues.\n\n```python\nimport json\nimport sys\n\ndef review_pulumi_preview(file_path):\n    with open(file_path, 'r') as f:\n        data = json.load(f)\n\n    steps = data.get('steps', [])\n    issues = []\n\n    # Define stateful resources based on the Scenario Specification\n    STATEFUL_TYPES = [\n        \"aws:rds/instance:Instance\",\n        \"aws:s3/bucket:Bucket\",\n        \"aws:eks/cluster:Cluster\"\n    ]\n\n    for step in steps:\n        op = step.get('op')\n        new_state = step.get('newState', {})\n        urn = new_state.get('urn', 'unknown')\n        res_type = new_state.get('type', 'unknown')\n        \n        # Check 1: Secret in Plaintext Outputs\n        # We look for 'plaintext' in inputs or outputs\n        for field in ['inputs', 'outputs']:\n            properties = new_state.get(field, {})\n            for key, value in properties.items():\n                if isinstance(value, dict) and 'plaintext' in value:\n                    issues.append({\n                        \"severity\": \"CRITICAL\",\n                        \"issue\": \"Plaintext Secret Detected\",\n                        \"resource\": urn,\n                        \"details\": f\"Property '{key}' contains a plaintext secret.\"\n                    })\n\n        # Check 2: Replacement of Stateful Resource\n        if op in [\"replace\", \"delete-replace\"] and res_type in STATEFUL_TYPES:\n            issues.append({\n                \"severity\": \"HIGH\",\n                \"issue\": \"Stateful Resource Replacement\",\n                \"resource\": urn,\n                \"details\": f\"Resource {urn} of type {res_type} is scheduled for replacement. Data loss may occur.\"\n            })\n\n        # Check 3: Missing Protect Flag\n        # We check if the resource is stateful and if 'protect' is not True\n        if res_type in STATEFUL_TYPES:\n            is_protected = new_state.get('protect', False)\n            if not is_protected:\n                issues.append({\n                    \"severity\": \"MEDIUM\",\n                    \"issue\": \"Missing Protect Flag\",\n                    \"resource\": urn,\n                    \"details\": f\"Stateful resource {urn} does not have 'protect: True' set.\"\n                })\n\n    return issues\n\nif __name__ == \"__main__\":\n    if len(sys.argv) < 2:\n        print(\"Usage: python review.py <preview.json>\")\n        sys.exit(1)\n    \n    results = review_pulumi_preview(sys.argv[1])\n    \n    if not results:\n        print(\"No security issues found in preview.\")\n    else:\n        print(f\"{'SEVERITY':<10} | {'ISSUE':<30} | {'RESOURCE'}\")\n        print(\"-\" * 80)\n        for r in results:\n            print(f\"{r['severity']:<10} | {r['issue']:<30} | {r['resource']}\")\n            print(f\"           > {r['details']}\")\n```\n\n### How to interpret the results for your Scenario:\n\n1.  **Secrets (Acceptance Criteria #3):** If the script flags a \"Plaintext Secret,\" it means your Pulumi code is likely using `pulumi.Config().require(\"db_password\")` instead of `pulumi.Config().require_secret(\"db_password\")`. \n    *   **Fix:** Ensure all sensitive outputs are wrapped in `pulumi.Output.secret()` or retrieved via `get_secret()`.\n\n2.  **Replacement (Acceptance Criteria #2 & #7):** If the `prod` RDS instance is being replaced because you changed the instance class from `db.t3.micro` to `db.t3.medium`, the script will flag it. \n    *   **Fix:** Review the `diff` in the preview. If the replacement is unintended, check for changes in `identifier` or `availability_zone` which often force replacements.\n\n3.  **Protect Flag (Acceptance Criteria #2):** The spec requires \"deletion protection on.\" In Pulumi, while `deletion_protection=True` is an AWS-level setting, `protect=True` is a Pulumi-level safety catch. \n    *   **Fix:** Add `opts=pulumi.ResourceOptions(protect=True)` to your RDS and S3 resources in the `prod` stack.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-wdqmekbz/generated_0.py"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-python/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

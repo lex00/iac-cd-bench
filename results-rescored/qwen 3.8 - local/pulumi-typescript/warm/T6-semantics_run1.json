@@ -1,0 +1,92 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "-typescript/T6-semantics/tests/test_task.py::test_q1_output_concat_footgun PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q2_protect_blocks_destroy PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q3_delete_before_replace_order_and_risk FAILED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q4_secret_export_masked PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q5_getnumber_default PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q6_rename_replaces_aliases_fix PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q7_arn_unknown_at_preview PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q3 risk should mention the availability window, got 'Temporary unavailability or dependency failure if creation fails after deletion'\n    assert False\n     +  where False = any(<generator object test_q3_delete_before_replace_order_and_risk.<locals>.<genexpr> at 0x10b2665e0>)\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py:72: AssertionError: q3 risk should mention the availability window, got 'Temporary unavailability or dependency failure if creation fails after deletion'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T6-semantics/tests/test_task.py::test_q3_delete_before_replace_order_and_risk\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1797,
+    "output": 176
+  },
+  "content": "```json\n{\n  \"q1\": {\n    \"contains\": \"output-repr\",\n    \"type\": \"Output<string>\"\n  },\n  \"q2\": {\n    \"completes\": false,\n    \"blocking_resource\": \"artifacts\"\n  },\n  \"q3\": {\n    \"order\": \"delete-then-create\",\n    \"risk\": \"Temporary unavailability or dependency failure if creation fails after deletion\"\n  },\n  \"q4\": \"masked\",\n  \"q5\": {\n    \"value\": 30,\n    \"error\": false\n  },\n  \"q6\": {\n    \"plan\": \"replace\",\n    \"fix_option\": \"aliases\"\n  },\n  \"q7\": \"unknown\"\n}\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wal13p56/generated_0.json"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.8571428571428571,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.746031746031746
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/pulumi-typescript/warm/T6-semantics_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6349206349206349
+    },
+    "published_composite_no_idiom": 0.7142857142857143,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.746031746031746
+    },
+    "corrected_composite_no_idiom": 0.8392857142857143,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

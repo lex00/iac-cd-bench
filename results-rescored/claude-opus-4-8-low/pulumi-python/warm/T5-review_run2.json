@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1058,
+    "output": 1443
+  },
+  "content": "It looks like the actual Pulumi preview JSON output wasn't included in your message. To perform the review, please paste the JSON (e.g., the output of `pulumi preview --json` or `pulumi stack export`).\n\nIn the meantime, here's exactly what I'll check against your acceptance criteria and the three focus areas \u2014 so you know what to look for (and can grep it yourself):\n\n## 1. Secrets in plaintext outputs\n- **Where to look:** `steps[].newState.outputs` and the top-level `outputs` object.\n- **Red flags:**\n  - DB connection string, password, or IAM access key appearing as a raw string rather than wrapped in Pulumi's secret sigil.\n  - Properly secreted values show as `{\"4dabf18193072939515e22adb298388d\":\"1b47061264138c4ac30d75fd1eb44270\",\"plaintext\":\"...\"}` in state, or better, are redacted as `[secret]` in preview.\n  - Any `outputs` key like `dbConnectionString`, `password`, `secretAccessKey`, `connString` with a visible plaintext value \u2192 **FAIL** (violates criterion 3).\n- **Fix:** use `pulumi.Output.secret(...)`, `config.require_secret(...)`, and mark stack outputs with `pulumi.export(\"x\", value)` where `value` is already a secret. Never `str()` or interpolate a secret into a plain output.\n\n## 2. Replacement of a stateful resource\n- **Where to look:** `steps[]` where `\"op\": \"replace\"` or `\"op\": \"create-replacement\"` / `\"delete-replaced\"`, and the `\"replaceReasons\"` / `\"diffReasons\"` / `\"detailedDiff\"` fields.\n- **Red flags for stateful resources:**\n  - `aws:rds/instance:Instance` being replaced (data loss unless snapshot!). Check `detailedDiff` for triggers like `engineVersion`, `dbName`, `availabilityZone`, `kmsKeyId`, `storageEncrypted`.\n  - `aws:s3/bucket:Bucket` replacement (e.g., `bucket` name change) \u2192 destroys/recreates object store.\n  - EKS cluster replacement.\n- **Why it matters:** violates criterion 7 (isolation/stability) and risks destroying prod data. Any replace on RDS/S3/EKS in **prod** should block the deploy.\n- **Fix:** identify the immutable property causing replacement; if unavoidable, protect the resource, use `ignoreChanges`, or plan a snapshot/migration.\n\n## 3. Missing `protect` flag\n- **Where to look:** `steps[].newState.protect` (boolean) on each resource.\n- **Red flags:**\n  - RDS instance, S3 bucket, EKS cluster with `\"protect\": false` or absent \u2192 stateful resource can be deleted without guard.\n  - Combined with #2 above: a replace on an unprotected RDS is a silent data-loss path.\n- **Fix:** set `opts=pulumi.ResourceOptions(protect=True)` on RDS, S3, EKS in prod. Pair with `deletion_protection=True` on the RDS resource itself (criterion 2).\n\n## Bonus checks I'll also flag from the JSON\n- **Bucket:** `versioning.enabled=true`, `serverSideEncryptionConfiguration` present (AES256/KMS), no public ACL / `blockPublicAcls=true`.\n- **RDS:** `deletionProtection=true`, `backupRetentionPeriod>=7`, `publiclyAccessible=false`, `storageEncrypted=true` (prod).\n- **IAM:** no `\"Action\": \"*\"` or `\"Resource\": \"*\"` in prod policies.\n- **HTTPS:** listener port 443 with a valid `certificateArn`.\n- **Env isolation:** confirm the preview is scoped to one stack (`dev` changes shouldn't touch `prod` URNs).\n\nPaste the JSON and I'll return a concrete findings table (severity, resource URN, issue, remediation).",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-python/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

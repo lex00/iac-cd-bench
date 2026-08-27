@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 757,
+    "output": 893
+  },
+  "content": "## Security review\n\n### Critical \u2014 plaintext database password in deployment manifest\n\n**Issue:**  \nA password is committed directly in a container `env` value. This exposes it through:\n\n- Git history and PR artifacts\n- Repository access and clones\n- Rendered manifests and deployment tooling logs\n- Kubernetes Deployment/Pod specifications\n\nIt also violates the requirement that secrets be SOPS-encrypted and never stored in plaintext in Git.\n\n**Required before merge:**\n\n- Remove the plaintext value.\n- Store the credential in a SOPS-encrypted Kubernetes `Secret`, scoped to the appropriate environment overlay.\n- Reference it using `valueFrom.secretKeyRef`, for example:\n\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: app-db\n        key: password\n```\n\n- Ensure the decrypted `Secret` is not committed or emitted into CI artifacts.\n- If the password is real or has ever been pushed to the remote repository, rotate it immediately. Removing it from the latest commit is not sufficient because it may remain in Git/PR history.\n\n---\n\n### Critical \u2014 S3 bucket grants public read access\n\n**Issue:**  \nThe new bucket policy permits unauthenticated/public object reads, commonly through a principal such as `\"Principal\": \"*\"` with `s3:GetObject`.\n\nThis violates the explicit requirement that the application-assets bucket have **no public access**. It can lead to unintended data disclosure and bypasses least-privilege access controls.\n\n**Required before merge:**\n\n- Remove the public-read policy statement.\n- Enable and retain all S3 Block Public Access settings:\n\n```yaml\nblockPublicAcls: true\nignorePublicAcls: true\nblockPublicPolicy: true\nrestrictPublicBuckets: true\n```\n\n- Grant access only to specific application IAM roles or, if CloudFront serves the assets, to a CloudFront Origin Access Control/Origin Access Identity.\n- Verify bucket encryption and versioning remain enabled.\n- Check both dev and prod rendered overlays; a base policy change must not accidentally expose both environments.\n\n---\n\n### Warning \u2014 containers have no resource limits\n\n**Issue:**  \nContainers without CPU and memory limits can consume excessive node resources, causing resource exhaustion, noisy-neighbor effects, pod eviction, or denial of service to other workloads.\n\nThis is primarily an availability and workload-isolation risk.\n\n**Required before merge:**\n\nAdd appropriate requests and limits based on expected usage, for example:\n\n```yaml\nresources:\n  requests:\n    cpu: 100m\n    memory: 128Mi\n  limits:\n    cpu: 500m\n    memory: 512Mi\n```\n\nValues should be tuned for the application rather than copied blindly. Apply them to all application containers and relevant sidecars/init containers.\n\n---\n\n### Info \u2014 RDS instance class change\n\nThe instance class change is not itself a security issue, assuming it matches the intended environment sizing.\n\nBefore merge, verify the rendered RDS resource still has:\n\n- `publiclyAccessible: false`\n- deletion protection enabled\n- backup retention of at least 7 days\n- encryption enabled in prod\n- multi-AZ enabled in prod\n- security-group/network access restricted to expected application sources\n\nAlso confirm the change is isolated to the intended overlay and does not alter the other environment.\n\n## Merge recommendation\n\n**Do not merge as-is.** The plaintext credential and public S3 access are blocking issues. Remove public access, move the password to a SOPS-encrypted secret and rotate it if genuine, then add container resource constraints. Re-render and review both dev and prod overlays before approval.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/knr-ops/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

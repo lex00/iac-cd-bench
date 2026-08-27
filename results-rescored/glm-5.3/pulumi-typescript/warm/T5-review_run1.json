@@ -1,0 +1,91 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 637,
+    "output": 719
+  },
+  "content": "# Pulumi Preview Security Review\n\n## Findings\n\n### \ud83d\udd34 Critical: Secret exposed in plaintext stack outputs\n\n```json\n\"outputs\": {\n  \"dbConnectionString\": {\n    \"secret\": false\n  }\n}\n```\n\nThe DB connection string is exported as a **non-secret output**. Anyone with read access to the Pulumi state/stack can view it in plaintext.\n\n**Fix:**\n```typescript\nconst connString = pulumi.all([db.endpoint, config.getSecret(\"dbPassword\"))\n  .apply(([endpoint, pw]) => `postgres://app:${pw}@${endpoint}/appdb`);\n\nexport const dbConnectionString = connString.apply(v => pulumi.secret(v));\n```\nAlso rotate the credential \u2014 it may already be persisted in a prior state snapshot.\n\n---\n\n### \ud83d\udd34 Critical: RDS instance scheduled for replacement (stateful resource)\n\n```json\n\"steps\": [\n  { \"op\": \"delete-replaced\", \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::appDb\" },\n  { \"op\": \"replace\", \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::appDb\", ... }\n]\n```\n\nA `replace` on the RDS instance means the database will be **destroyed and recreated**, destroying all data. The `delete-replaced` step confirms deletion happens before replacement \u2014 this is the default (`deleteBeforeReplace`), making it worse.\n\n**Fix:** Identify the forcing input (typically `engineVersion`, `instanceClass`, or storage changes), and either:\n- Avoid the forcing change, or\n- Take a snapshot first and set `deleteBeforeReplace: false` (default should be create-then-delete for RDS), with `finalSnapshotIdentifier` and `deletionProtection: true`:\n\n```typescript\nconst appDb = new aws.rds.Instance(\"appDb\", {\n  // ...\n  deletionProtection: true,\n  backupRetentionPeriod: 14,\n  publiclyAccessible: false,\n  finalSnapshotIdentifier: `appDb-final-${Date.now()}`,\n}, { protect: true, deleteBeforeReplace: false });\n```\n\n---\n\n### \ud83d\udfe0 High: Missing `protect` flag on stateful resources\n\nRDS instance and S3 bucket lack `{ protect: true }`. A future `pulumi destroy` or accidental removal would delete production data.\n\n**Fix:** Add `protect: true` to RDS, S3 bucket, and EBS/node group stateful resources.\n\n---\n\n### \ud83d\udfe0 Medium: S3 bucket also shows replace\n\nIf bucket replacement appears (`forceDestroy` false is good, but replace on bucket name/Acl), replication config to us-west-2 implies data loss on recreate. Verify the forcing property; buckets cannot be renamed in-place.\n\n---\n\n### \u2705 Passing checks\n- S3: versioning + encryption present, no public block changes\n- Dev/prod isolated \u2014 no dev URNs appear in this prod preview\n\n## Summary\n\n| # | Severity | Issue | Fix |\n|---|---|---|---|\n| 1 | Critical | DB secret in plaintext output | `pulumi.secret()`, rotate credential |\n| 2 | Critical | RDS replace = data loss | Remove forcing prop, snapshot, `deleteBeforeReplace: false` |\n| 3 | High | No `protect` on stateful resources | Add `protect: true` |\n\n**Recommend blocking this deployment until findings 1\u20132 are resolved.**",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-4t59pe1w/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-4t59pe1w/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-4t59pe1w/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-4t59pe1w/generated_1.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/pulumi-typescript/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

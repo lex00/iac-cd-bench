@@ -1,0 +1,93 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lbftnda9/generated_0.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lbftnda9/generated_0.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "rinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index FAILED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: Should not mix async functions with pulumi.output() wrapping\n    assert ('async function' not in 'import * as....endpoint;\\n'\n      \n      'async function' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n        // Defect 1: async function used without .apply() \u2014 crashes at preview time...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show or 'pulumi.output' not in 'import * as....endpoint;\\n'\n      \n      'pulumi.output' is contained here:\n        import * as pulumi from \"@pulumi/pulumi\";\n        import * as aws from \"@pulumi/aws\";\n        \n        // SEED REPO: Pulumi TypeScript with async misuse + wrong pulumi.output() wrapping\n      ?                                                           +++++++++++++...\n      \n      ...Full output truncated (44 lines hidden), use '-vv' to show)\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py:9: AssertionError: Should not mix async functions with pulumi.output() wrapping\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1795,
+    "output": 2220
+  },
+  "content": "## Analysis\n\nTwo defects crash preview:\n\n1. **Async misuse** \u2014 `getBucketUrl` uses `await arn` on a `pulumi.Output`. Awaiting an Output doesn't resolve it (during preview the value is unknown); the function returns a `Promise`, which then gets exported as if it were an Output. The idiomatic fix is `.apply()`.\n\n2. **Wrong `pulumi.output()` wrapping** \u2014 `pulumi.output(\"plain-text-password\")` wraps a plaintext string literal in an Output. This is both a security defect (secret in Git) and a type/semantics defect. The secret must come from `config.requireSecret()`.\n\nHere's the corrected file:\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") || \"dev\";\nconst region = config.get(\"region\") || \"us-east-1\";\nconst isProd = env === \"prod\";\n\n// S3 Bucket (versioning + encryption + block public access)\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: { enabled: true },\n    serverSideEncryptionConfiguration: {\n        rule: {\n            applyServerSideEncryptionByDefault: { sseAlgorithm: \"AES256\" },\n        },\n    },\n    tags: { Environment: env, Project: \"myapp\" },\n});\n\nnew aws.s3.BucketPublicAccessBlock(\"app-bucket-pab\", {\n    bucket: bucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n});\n\n// FIX 1: Use .apply() to transform an Output instead of async/await.\n// This keeps the value as pulumi.Output<string> and works during preview\n// (unknown values are handled correctly by the engine).\nconst bucketUrl: pulumi.Output<string> = bucket.arn.apply(\n    (arn) => `https://s3.${region}.amazonaws.com/${arn}`,\n);\n\n// FIX 2: Never wrap a plaintext secret with pulumi.output().\n// Pull it from stack config as a secret (encrypted at rest in the stack file).\n//   pulumi config set --secret dbPassword <value>\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\n// RDS Instance\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app-user\",\n    password: dbPassword,               // Output<string> \u2014 flows in correctly\n    multiAz: isProd,\n    storageEncrypted: isProd,\n    publiclyAccessible: false,\n    backupRetentionPeriod: 7,\n    deletionProtection: isProd,         // enforced on prod\n    skipFinalSnapshot: !isProd,\n    finalSnapshotIdentifier: isProd ? `app-db-final-${env}` : undefined,\n    tags: { Environment: env, Project: \"myapp\" },\n});\n\n// Exports are now real Outputs, not Promises.\nexport const bucketEndpoint = bucketUrl;\nexport const dbEndpoint = db.endpoint;\n```\n\n## What changed and why\n\n| Defect | Before | After |\n|---|---|---|\n| Async misuse | `async function` + `await arn` returning a `Promise` | `bucket.arn.apply(arn => ...)` returning `Output<string>` |\n| Wrong output wrapping | `pulumi.output(\"plain-text-password\")` | `config.requireSecret(\"dbPassword\")` |\n| Exported Promise | `export const bucketEndpoint = bucketUrl` (Promise) | same name, now backed by an `Output` |\n\n### Key reasoning on the async fix\n`await` on a `pulumi.Output` is a category error. Outputs are lifted values that may be **unknown** during preview (they only resolve after the resource is created during `up`). Awaiting one gives you the internal promise-like state, not the resolved value, and returning that from a top-level `async` call produces a floating `Promise` that Pulumi can't track in the resource graph \u2014 hence the preview crash. `.apply()` is the correct combinator: it defers the transformation and preserves dependency tracking and unknown-value semantics.\n\n### Key reasoning on the secret fix\n`pulumi.output(\"plain-text-password\")` does two bad things: it embeds a secret in source (violating \"never stored in plaintext in Git\"), and it produces a non-secret Output. `config.requireSecret()` returns an `Output<string>` marked secret, encrypted at rest in the stack config (`dev.yaml`/`prod.yaml`) via Pulumi's provider \u2014 satisfying the Secret acceptance criterion and feeding the RDS `password` field with a properly-tracked Output.\n\nI also folded in a few acceptance-criteria alignments (encryption + public-access block on the bucket, `deletionProtection`/`backupRetentionPeriod`/`publiclyAccessible`/`multiAz` on RDS keyed off `isProd`) since the seed had `deletionProtection: false` flagged as wrong for prod. If you want the crash-fix strictly isolated, the two `// FIX` blocks are the minimal change.\n\n## Environment isolation (Pulumi idiom)\nSizing/region come from stack config, one file per environment:\n\n```yaml\n# dev.yaml\nconfig:\n  myapp:env: dev\n  myapp:region: us-east-1\n  myapp:dbPassword:\n    secure: AAABA...   # encrypted\n```\n```yaml\n# prod.yaml\nconfig:\n  myapp:env: prod\n  myapp:region: us-east-1\n  myapp:dbPassword:\n    secure: AAABB...   # encrypted, separate stack state\n```\n\nSeparate stacks (`pulumi stack select dev|prod`) give independent state, so changing prod never mutates dev.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lbftnda9/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lbftnda9/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-lbftnda9/generated_0.ts"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.5,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.4444444444444444
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/pulumi-typescript/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 0.5,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.5,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.4444444444444444
+    },
+    "corrected_composite_no_idiom": 0.5,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

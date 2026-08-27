@@ -1,0 +1,89 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 642,
+    "output": 630
+  },
+  "content": "Based on the canonical scenario specification, here is the predicted Pulumi behavior:\n\n## 1. Replace Trigger: `instance_class`\n\nThe **RDS instance class** change triggers the replacement. \n\nIn the scenario, dev uses `db.t3.micro` while prod uses `db.t3.medium`. If you attempt to modify an existing stack (or if the stack config was changed from micro to medium), Pulumi detects the diff on the `instance_class` property. \n\nIn AWS RDS, changing the instance class requires a **replace** operation (not an in-place update) because it fundamentally changes the underlying compute infrastructure. Pulumi's preview will show:\n```\n~ aws:rds/instance:Instance: (replace)\n    [id=i-1234567890abcdef0]\n    [urn=urn:pulumi:prod::my-project::aws:rds/instance:Instance::db]\n    instance_class: \"db.t3.micro\" => \"db.t3.medium\"\n```\n\n*Note: While `multi_az` and `storage_encrypted` also differ between dev/prod in the spec, those are typically configured at creation and would trigger replacement if changed on an existing instance, but `instance_class` is the most common trigger when sizing differs between environments.*\n\n## 2. `pulumi up --target` Behavior\n\n`pulumi up --target <urn>` **skips the dependency graph traversal** for the targeted resource.\n\nSpecifically, it:\n- **Skips**: All resources that are not explicitly listed as targets, even if they are dependencies of the target or depend on the target\n- **Does not skip**: The targeted resource itself and its *required* inputs (Pulumi will error if required dependencies are missing from state)\n\n**Critical implication**: If you target only the RDS instance for update but the IAM role or security group it depends on has pending changes, Pulumi will **not** apply those dependency changes. This can leave your infrastructure in an inconsistent state where the RDS instance expects configurations (security groups, subnet groups, IAM roles) that haven't been updated yet.\n\n## 3. Secrets Handling in Outputs\n\nPulumi handles secrets with **stack-level encryption**:\n\n- **Encryption**: Secrets are encrypted using the stack's configured secrets provider (default: Pulumi Service passphrase, AWS KMS, Azure KeyVault, etc.)\n- **State Storage**: Secret values are stored as ciphertext in the state file (never plaintext)\n- **Output Display**: When printed to CLI or exported, secrets show as `[secret]` unless explicitly revealed with `--show-secrets`\n- **Programmatic Access**: Within the program, `Output.secret()` or `ConfigSecret` values remain encrypted in memory and are only decrypted when absolutely necessary for provider operations\n\n**Scenario-specific**: The DB connection string stored as a `ConfigSecret` (per the spec) will appear in stack outputs as:\n```\nOutputs:\n    db_connection_string: [secret]\n```\n\nThe value is encrypted with the stack's secrets key before being persisted to the Pulumi state file, ensuring it never appears in plaintext in version control or state backups.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gvee7ayg/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-gvee7ayg/generated_1.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-python/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

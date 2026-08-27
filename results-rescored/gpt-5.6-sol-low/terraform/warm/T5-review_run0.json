@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 646,
+    "output": 787
+  },
+  "content": "## Review result: **Reject / do not apply**\n\nTwo high-severity changes are present despite the plan being dominated by no-op entries.\n\n### 1. Critical: RDS instance replacement\n\nThe database has actions equivalent to:\n\n```json\n\"actions\": [\"delete\", \"create\"]\n```\n\nTerraform will destroy and recreate the RDS instance. This is not an in-place update and can cause:\n\n- Database downtime\n- Data loss if no restorable snapshot exists\n- Endpoint changes\n- Loss of automated backups depending on configuration\n\nThis conflicts with the required production safeguards, especially deletion protection.\n\nBefore approval:\n\n- Identify the resource\u2019s `replace_paths` and the exact force-replacement attribute.\n- Confirm `deletion_protection = true`.\n- Set an explicit final snapshot strategy; do not use `skip_final_snapshot = true`.\n- Verify backup retention is at least seven days.\n- Prefer an in-place change or a controlled snapshot/restore and cutover procedure.\n- Consider lifecycle protection:\n\n```hcl\nlifecycle {\n  prevent_destroy = true\n}\n```\n\nDo not apply this plan until the replacement is intentionally approved and a tested recovery/cutover plan exists.\n\n### 2. Critical: unrestricted security-group ingress\n\nThe plan adds ingress from:\n\n```text\n0.0.0.0/0\n```\n\nThis exposes the referenced port to the entire IPv4 internet. Reject unless the rule is deliberately attached to the public HTTPS entry point and restricted to TCP/443.\n\nIt must not expose:\n\n- PostgreSQL/5432\n- Kubernetes API access\n- SSH/22\n- Internal ALB ports\n- Application or node ports directly\n\nUse a specific source security group, approved corporate/VPN CIDRs, or CloudFront-origin controls as appropriate. HTTPS exposure must use a valid certificate on port 443.\n\n## Plan-review checks\n\nDo not rely on the human-readable summary alone. Check all action arrays:\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(.change.actions != [\"no-op\"])\n  | [\n      .address,\n      (.change.actions | join(\" -> \")),\n      ((.change.replace_paths // []) | tostring)\n    ]\n  | @tsv\n' tfplan.json\n```\n\nFail on destructive or replacement actions:\n\n```bash\njq -e '\n  any(\n    .resource_changes[];\n    (.change.actions | index(\"delete\")) != null\n  )\n' tfplan.json\n```\n\nFind newly added unrestricted IPv4 ingress:\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(\n      (.type == \"aws_security_group\" or\n       .type == \"aws_security_group_rule\" or\n       .type == \"aws_vpc_security_group_ingress_rule\")\n      and ((.change.after | tostring) | contains(\"0.0.0.0/0\"))\n      and ((.change.before | tostring) | contains(\"0.0.0.0/0\") | not)\n    )\n  | .address\n' tfplan.json\n```\n\nAlso review `resource_drift`, which can reveal destructive reconciliation not obvious from configuration changes.\n\n## Decision\n\n**Blocked.** The DB replacement and new `0.0.0.0/0` ingress require remediation or explicit, documented security and operational approval. The remaining acceptance criteria cannot be conclusively validated without the actual plan JSON and relevant configuration/state context.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-2qch2d7p/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/terraform/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

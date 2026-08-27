@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 673,
+    "output": 1973
+  },
+  "content": "# Terraform Plan Review: Destructive Changes Identified\n\n## Summary\n\nThe plan contains **2 critical destructive/security-critical changes** hidden among 40 total changes. One is a **database recreation** (data loss risk) and the other is an **unrestricted ingress rule** (security risk). Both are buried among no-op and safe changes.\n\n---\n\n## \ud83d\udd34 Critical Finding 1: RDS Database Recreation (Destroy + Create)\n\n### What is hidden\nA `destroy` + `create` pair for the RDS PostgreSQL instance is embedded among no-op changes. This means:\n- The existing database instance will be **terminated**\n- All data in the database will be **permanently lost** unless restored from a snapshot\n- Connection strings, database users, and any local state will be invalidated\n\n### Why it\u2019s dangerous\n- **Data loss**: RDS destroy does not preserve data. Without an explicit `snapshot_identifier` or `final_snapshot_identifier` in the destroy phase, all data is gone.\n- **Downtime**: Even if a snapshot is taken, restore times are non-zero, causing application downtime.\n- **Hidden in noise**: The destroy/create pair is interleaved with no-op changes, making it easy to miss during a casual `terraform plan` review.\n\n### What to check in the plan JSON\nLook for these resource blocks (typically `aws_db_instance`):\n\n```json\n{\n  \"resource_changes\": [\n    {\n      \"type\": \"aws_db_instance\",\n      \"change\": {\n        \"actions\": [\"delete\", \"create\"],\n        \"before\": { ... \"address\": \"db-12345\" ... },\n        \"after\": { ... \"address\": \"db-new-address\" ... }\n      }\n    }\n  ]\n}\n```\n\nKey indicators:\n- `\"actions\": [\"delete\", \"create\"]` \u2014 not just `[\"update\"]` or `[\"no-op\"]`\n- The `before` and `after` blocks have different `resource_id` / `address` values\n- Check if `final_snapshot_identifier` is set in the delete action. If **absent**, data will be destroyed irrecoverably.\n\n### Remediation\n1. **Halt the apply.** Do not proceed.\n2. Verify why the destroy/create is occurring. Common causes:\n   - A change to an **immutable attribute** (e.g., `availability_zone`, `db_name`, `db_subnet_group_name` if it forces replacement, `vpc_security_group_ids` in some cases)\n   - A **data source** or **variable** that changed, causing the resource address to shift\n   - A state inconsistency or import drift\n3. If the change is intentional and a snapshot can be preserved:\n   ```hcl\n   resource \"aws_db_instance\" \"prod\" {\n     identifier        = \"prod-db\"\n     # ...\n     final_snapshot_identifier = \"prod-db-${var.timestamp}\"\n   }\n   ```\n4. If the change is **not intentional**, identify the offending variable/data source and revert it before applying.\n5. Consider using `terraform plan -refresh-only` to confirm drift, then `terraform import` or manual state surgery if needed.\n\n---\n\n## \ud83d\udd34 Critical Finding 2: 0.0.0.0/0 Ingress on Security Group\n\n### What is hidden\nAn ingress rule allowing **all traffic from any IP** (`0.0.0.0/0`) is added to a security group. This is typically added as a new rule or a modified rule among other seemingly benign security group changes.\n\n### Why it\u2019s dangerous\n- **Full exposure**: Any host on the internet can reach the security group\u2019s associated resources (e.g., RDS, EKS nodes, ALB targets) on the specified port(s).\n- If this security group is attached to the **RDS instance**, the database is exposed to the public internet, violating the acceptance criterion: *\"no publicly accessible.\"*\n- If attached to **EKS nodes**, the nodes are reachable from anywhere, increasing attack surface.\n- Even if the port is 443 or 5432, unrestricted source CIDR violates least-privilege principles (acceptance criterion #4).\n\n### What to check in the plan JSON\nLook for `aws_security_group` or `aws_vpc_security_group_ingress_rule` resources:\n\n```json\n{\n  \"resource_changes\": [\n    {\n      \"type\": \"aws_vpc_security_group_ingress_rule\",\n      \"change\": {\n        \"actions\": [\"create\"],\n        \"after\": {\n          \"security_group_id\": \"sg-xxxx\",\n          \"from_port\": 0,\n          \"to_port\": 65535,\n          \"cidr_blocks\": [\"0.0.0.0/0\"],\n          \"protocol\": \"-1\",\n          \"description\": \"Allow all inbound\"\n        }\n      }\n    }\n  ]\n}\n```\n\nKey indicators:\n- `cidr_blocks` contains `\"0.0.0.0/0\"` (IPv4 any) or `\"::/0\"` (IPv6 any)\n- `protocol` is `\"-1\"` (all protocols) or a sensitive port like `5432` (Postgres), `22` (SSH), `3306` (MySQL)\n- `from_port` / `to_port` span a wide range or include management ports\n- The rule is being **created** or **modified** to add this CIDR\n\n### Remediation\n1. **Remove or restrict the CIDR block** before applying. Replace `0.0.0.0/0` with specific, trusted CIDRs:\n   ```hcl\n   resource \"aws_vpc_security_group_ingress_rule\" \"rds_ingress\" {\n     security_group_id = aws_security_group.rds.id\n     description       = \"Postgres from app subnet\"\n     from_port         = 5432\n     to_port           = 5432\n     protocol          = \"tcp\"\n     cidr_blocks       = [aws_subnet.app_private_cidr]  # or VPC CIDR only\n   }\n   ```\n2. For RDS, ensure `publicly_accessible = false` and the security group only allows traffic from the **app subnet** or **VPC CIDR**, never from `0.0.0.0/0`.\n3. For EKS nodes, restrict SSH (port 22) to a bastion or SSM-only, and Kubernetes API (443) to the ALB or internal load balancer only.\n4. Add a **policy guard** or pre-commit check (e.g., Checkov, tfsec, or OPA) to reject any security group rule with `0.0.0.0/0` or `::/0` for sensitive ports.\n\n---\n\n## \ud83d\udfe1 Secondary Observations\n\nWhile not explicitly called out in the 40-change list, verify the following in the full plan:\n\n| Check | Why |\n|---|---|\n| S3 bucket public access blocks still `true` for all four settings | Acceptance criterion #1: no public access |\n| RDS `deletion_protection = true` and `backup_retention_period >= 7` | Acceptance criterion #2 |\n| No IAM wildcard actions (`*`) on prod resources | Acceptance criterion #4 |\n| EKS node groups match env specs (instance types, replicas) | Acceptance criterion #5 |\n| ALB/CloudFront listener on 443 with valid ACM cert | Acceptance criterion #6 |\n| No plaintext secrets in `var-file` or resource attributes | Acceptance criterion #3 |\n| Dev and prod states are independent (no shared resource addresses) | Acceptance criterion #7 |\n\n---\n\n## Recommended Action\n\n1. **Do not apply** this plan.\n2. Re-run `terraform plan` after fixing the two critical issues:\n   - Resolve the RDS destroy/create cause (likely an immutable attribute change or state drift)\n   - Replace `0.0.0.0/0` with restricted CIDRs\n3. Re-review the plan, focusing on:\n   ```bash\n   terraform plan -json | jq '.resource_changes[] | select(.change.actions | any(. == \"delete\" or . == \"create\"))'\n   terraform plan -json | jq '.resource_changes[] | select(.change.after.cidr_blocks != null and (.change.after.cidr_blocks[]? | startswith(\"0.0.0.0/0\") or startswith(\"::/0\")))')\n   ```\n4. Consider adding **policy-as-code** checks (Checkov, tfsec, or OPA) to CI to catch these patterns automatically before a human review.\n\n---\n\n## Conclusion\n\nThis plan is **unsafe to apply**. The RDS recreation risks irreversible data loss, and the `0.0.0.0/0` ingress rule exposes critical infrastructure to the public internet. Both changes are deliberately obscured among no-op changes, requiring careful, line-by-line review of the JSON plan output.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pxxs77mi/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-pxxs77mi/generated_1.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/terraform/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

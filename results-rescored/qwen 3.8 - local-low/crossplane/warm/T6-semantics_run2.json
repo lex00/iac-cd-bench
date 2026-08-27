@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": " 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q1_claim_delete_cascades PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q2_orphan_bucket_survives PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q3_delete_policy_removes_role PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q4_manual_update_policy_pins_revision PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q5_claim_connection_secret_location FAILED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q6_parallel_convergence PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q7_claim_namespaced_xr_cluster_scoped PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q5 namespace: expected team-a, got 'crossplane-system'\n    assert 'crossplane-system' == 'team-a'\n      \n      - team-a\n      + crossplane-system\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py:80: AssertionError: q5 namespace: expected team-a, got 'crossplane-system'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q5_claim_connection_secret_location\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1967,
+    "output": 1482
+  },
+  "content": "\n\n```json\n{\n  \"q1\": \"deleted\",\n  \"q2\": \"exists\",\n  \"q3\": \"deleted\",\n  \"q4\": \"manual\",\n  \"q5\": {\"name\": \"storefront-conn\", \"namespace\": \"crossplane-system\"},\n  \"q6\": \"parallel-converge\",\n  \"q7\": {\"claim\": \"namespaced\", \"xr\": \"cluster-scoped\"}\n}\n```",
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.8571428571428571,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.746031746031746
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/crossplane/warm/T6-semantics_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.746031746031746
+    },
+    "published_composite_no_idiom": 0.8392857142857143,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.746031746031746
+    },
+    "corrected_composite_no_idiom": 0.8392857142857143,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

@@ -1,0 +1,96 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1517,
+    "output": 10822
+  },
+  "content": "# Terraform Plan Behavior When a Variable Flips\n\n## 0. The setup we're reasoning about\n\n```hcl\n# variables.tf\nvariable \"environment\"        { type = string }                    # \"dev\" | \"prod\"\nvariable \"region\"             { type = string }\nvariable \"db_instance_class\"  { type = string }                    # db.t3.micro | db.t3.medium\nvariable \"db_multi_az\"        { type = bool   default = false }\nvariable \"db_encrypted\"       { type = bool   default = false }\nvariable \"node_instance_type\" { type = string }                    # t3.medium | t3.large\nvariable \"node_desired_size\"  { type = number }                    # 2 | 4\nvariable \"enable_replication\" { type = bool   default = false }\n```\n\n```hcl\n# main.tf (excerpt)\nresource \"aws_db_instance\" \"main\" {\n  identifier          = \"app-${var.environment}\"      # \u2190 env embedded in name\n  instance_class      = var.db_instance_class\n  multi_az            = var.db_multi_az\n  storage_encrypted   = var.db_encrypted\n  deletion_protection = true\n  backup_retention_period = 7\n  apply_immediately   = false                          # default\n}\n\nresource \"aws_s3_bucket_replication_configuration\" \"assets\" {\n  count = var.enable_replication ? 1 : 0\n  ...\n}\n```\n\n**The single most important fact:** *input variables are not stored in state.* State holds resource attributes and outputs \u2014 never the values of `var.*`. Terraform therefore has no idea a variable \"flipped.\" It only sees that the rendered resource arguments no longer match the recorded attributes. A flip that produces identical arguments yields an empty plan; two flips that cancel out yield an empty plan. `-var-file=prod.tfvars` against a dev state is indistinguishable, to Terraform, from someone editing the `.tf` files.\n\n---\n\n## 1. What does the next plan show?\n\n`plan = diff( render(config, vars) , refresh(prior_state) )`. The output falls into five buckets:\n\n### a) No-op\nCosmetic vars (tags already matching, description strings feeding nothing) \u2192 `No changes. Your infrastructure matches the configuration.`\n\n### b) In-place update `~`\nAttributes the API can modify without recreating the resource:\n\n```\n  # aws_db_instance.main will be updated in-place\n  ~ resource \"aws_db_instance\" \"main\" {\n        id             = \"app-dev\"\n      ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n      ~ multi_az       = false -> true\n        # (48 unchanged attributes hidden)\n    }\n\n  # aws_eks_node_group.main will be updated in-place\n  ~ resource \"aws_eks_node_group\" \"main\" {\n      ~ scaling_config {\n          ~ desired_size = 2 -> 4\n        }\n    }\n\nPlan: 0 to add, 2 to change, 0 to destroy.\n```\n\n### c) Forced replacement `-/+`\nThe plan annotates the *specific* attribute with `# forces replacement`:\n\n```\n  # aws_db_instance.main must be replaced\n-/+ resource \"aws_db_instance\" \"main\" {\n      ~ storage_encrypted = false -> true # forces replacement\n      ~ id                = \"app-dev\" -> (known after apply)\n      ~ endpoint          = \"app-dev.abc.us-east-1.rds.amazonaws.com\" -> (known after apply)\n    }\n\n  # aws_eks_node_group.main must be replaced\n-/+ resource \"aws_eks_node_group\" \"main\" {\n      ~ instance_types = [\n          - \"t3.medium\",\n          + \"t3.large\",\n        ] # forces replacement\n    }\n\nPlan: 2 to add, 0 to change, 2 to destroy.\n```\n\n### d) Conditional resources appearing/disappearing\nFlipping `enable_replication = true`:\n\n```\n  # aws_s3_bucket_replication_configuration.assets[0] will be created\n  + resource \"aws_s3_bucket_replication_configuration\" \"assets\" { ... }\n```\nFlipping it back to `false` shows `will be destroyed`. If the gate feeds `count` over a *list*, removing an early element shifts every index \u2192 mass replacement. This is why the docs say **use `for_each` with stable keys**, so identity is `resource[\"us-west-2\"]` not `resource[0]`.\n\n### e) The catastrophic flip: `environment` or `region` in a shared state\n- `environment` is interpolated into names (`identifier`, `bucket`, cluster name). Names are `ForceNew` \u2192 the plan is *destroy everything and recreate it under the other name*. Terraform will happily show `Plan: 37 to add, 0 to change, 37 to destroy` and it looks perfectly legitimate.\n- `region` is worse. The provider now talks to `us-west-2`; refresh queries there, gets `NotFound` for every resource, **silently drops them from state**, and plans `Plan: 37 to add, 0 to change, 0 to destroy`. The real `us-east-1` infrastructure is orphaned \u2014 no error, no warning.\n\nThis is why acceptance criterion 7 (environment isolation) means *env must not be a flippable variable inside one state*. Bind it to the backend key or workspace and add a guard:\n\n```hcl\nresource \"null_resource\" \"env_guard\" {\n  lifecycle {\n    precondition {\n      condition     = var.environment == terraform.workspace\n      error_message = \"var-file (${var.environment}) does not match workspace (${terraform.workspace}).\"\n    }\n  }\n}\n```\n\n### Reading the plan safely\n- `(known after apply)` = value not resolvable until create; anything downstream is also unknown, which can hide cascading replacements.\n- Sensitive vars render as `(sensitive value)` \u2014 the DB connection string never appears in plan output, but it *is* in state.\n- Only `terraform plan -out=tfplan` + `terraform apply tfplan` is authoritative. A bare `apply` re-plans and can differ.\n- `terraform plan -refresh-only` separates \"reality drifted\" from \"config changed.\"\n\n---\n\n## 2. What happens if the state file is deleted?\n\n**Nothing happens to the infrastructure.** State deletion is a bookkeeping loss, not an outage \u2014 the EKS cluster keeps serving traffic. The damage is that Terraform has lost the address\u2192ID binding.\n\n**Next plan:** every resource is unknown, so everything is `+ create`:\n```\nPlan: 37 to add, 0 to change, 0 to destroy.\n```\n\n**Next apply:** a mix of loud failures and silent duplicates.\n\n| Resource | Result |\n|---|---|\n| `aws_s3_bucket` | `Error: BucketAlreadyOwnedByYou` |\n| `aws_db_instance` | `Error: DBInstanceAlreadyExists` |\n| `aws_iam_role` | `Error: EntityAlreadyExists: Role with name app-prod already exists` |\n| `aws_eks_cluster` | `Error: ResourceInUseException: Cluster already exists` |\n| `aws_iam_access_key` | **Silently creates a second key** \u2014 no name to collide on |\n| `random_password` | **Regenerates** \u2014 new DB secret, app breaks on next deploy |\n| `aws_acm_certificate` | **Issues a duplicate cert** + new validation records |\n| anything with `name_prefix` | **Silent duplicate**, billed twice |\n\nAlso: `terraform destroy` now does nothing, so the orphaned resources are permanent until removed by hand.\n\n**Recovery, in order of preference:**\n1. **Do not apply.** Stop the pipeline.\n2. **Restore from backend versioning.** Remote state on S3 with versioning enabled: `aws s3api list-object-versions --bucket tf-state --prefix env/prod/terraform.tfstate`, download the prior version, `terraform state push` it. This is the whole reason for remote state.\n3. **Rebuild with `import` blocks** (TF \u2265 1.5) if no backup exists:\n   ```hcl\n   import { to = aws_db_instance.main,  id = \"app-prod\" }\n   import { to = aws_s3_bucket.assets,  id = \"acme-assets-prod\" }\n   import { to = aws_eks_cluster.main,  id = \"app-prod\" }\n   ```\n   `terraform plan -generate-config-out=generated.tf` to scaffold, then apply. Caveats: S3 sub-resources (`aws_s3_bucket_versioning`, `_server_side_encryption_configuration`) import by bucket name individually; `aws_iam_access_key` **cannot** import its secret \u2014 that credential must be rotated.\n\n**Prevention:** remote backend with versioning + locking (S3 `use_lockfile = true` or DynamoDB), one state key per environment, `lifecycle { prevent_destroy = true }` on the RDS instance and assets bucket, and never local state in CI.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\n`instance_class` is `Optional + Computed`, **not `ForceNew`**. So `db.t3.micro \u2192 db.t3.medium` is an in-place update; the provider calls `ModifyDBInstance`. The nuance is *when*:\n\n**`apply_immediately = true`** \u2014 modification starts now. Instance enters `modifying`.\n- Single-AZ (dev): full outage for the resize, typically 2\u201310 minutes.\n- Multi-AZ (prod): AWS resizes the standby, fails over, resizes the old primary \u2192 ~60\u2013120s of connection interruption at failover, not a full outage. Terraform blocks until the instance returns to `available`.\n\n**`apply_immediately = false` (the default)** \u2014 AWS records the change in `PendingModifiedValues` and applies it at the next `maintenance_window`. `terraform apply` reports success in seconds. **Gotcha:** the next `terraform plan` refreshes and reads the *current* class, which is still `db.t3.micro`, so it shows the same diff again \u2014 a perpetual diff until the maintenance window passes. CI that gates on \"empty plan\" will be red for up to a week.\n\n**What *does* force replacement on `aws_db_instance`:** `identifier`, `engine`, `db_name`, `username`, `storage_encrypted`, `kms_key_id`, `availability_zone`, `snapshot_identifier`, `replicate_source_db`. Notably, the dev\u2192prod encryption difference (criterion: prod encrypted) is a **replace**, not an update \u2014 RDS cannot encrypt in place; it requires snapshot \u2192 copy-with-KMS \u2192 restore. `allocated_storage` increases in place; a decrease is rejected by the RDS API at apply time.\n\n**Deletion protection collides with replacement.** Because the spec mandates `deletion_protection = true`, any forced-replacement plan applies the *create* or fails on the *destroy*:\n```\nError: deleting DB Instance (app-prod): InvalidParameterCombination:\nCannot delete protected DB Instance, please disable deletion protection first.\n```\nThe apply fails **midway**, leaving state partially updated. A replacement therefore requires a deliberate two-apply sequence (disable protection \u2192 replace \u2192 re-enable), or `blue_green_update { enabled = true }` to let RDS orchestrate it. For low-risk resizes, prefer `apply_immediately = true` in dev and a scheduled maintenance window in prod.\n\n---\n\n## 4. What is the difference between state and configuration?\n\n| | Configuration (`*.tf`) | State (`*.tfstate`) |\n|---|---|---|\n| Meaning | **Desired** state | **Last-known** real state |\n| Author | Humans, in Git | Terraform, on apply/refresh |\n| Contains | variables, locals, expressions, modules | real resource IDs, all computed attributes, dependency edges, provider metadata, `serial`/`lineage` |\n| Does *not* contain | resource IDs, ARNs, endpoints | input variable values |\n| Secrets | must never be plaintext (SOPS / `-var-file`) | **plaintext** \u2014 hence encrypted backend + restricted IAM |\n| Reviewable | yes, PR-able | no, it's a machine artifact |\n\n**Plan is the three-way diff:** prior state \u2192 refreshed against the real API \u2192 compared to rendered configuration.\n\n- Config \u2260 state because you edited config \u2192 plan proposes changes.\n- Reality \u2260 state because someone clicked in the console \u2192 **drift**; refresh updates state and the plan proposes to revert it.\n- Config = state but addresses moved (renaming `aws_db_instance.db` \u2192 `aws_db_instance.main`) \u2192 Terraform sees a destroy + a create even though *nothing in reality changed*. Fix with a `moved` block, never with an apply.\n\n**The consequence for this scenario:** state is what makes environment isolation real. Two environments with identical configuration are two different *states*. `terraform workspace select prod` swaps the state key; the `.tf` files are unchanged. Changing prod cannot touch dev because prod's plan is computed against prod's state only. Conversely, if dev and prod share one state and differ only by a variable, criterion 7 is violated regardless of how clean the HCL looks \u2014 the flip becomes a full destroy/recreate, and that is exactly the failure mode described in \u00a71(e).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/-var-file=prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_3.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-zj6sg7ou/generated_3.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/terraform/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

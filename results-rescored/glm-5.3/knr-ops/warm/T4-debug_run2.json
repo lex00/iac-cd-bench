@@ -1,0 +1,86 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\n# SEED REPO: .sops.yaml with WRONG age key (defect)\n# The correct age key is in age-key.txt but this file references a different key\ncreation_rules:\n  - path: '*.yaml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n  - path: '*.yml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n---\n# overlays/dev/patch.yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-password-dev # was: db-password (old name)\n---\n# SEED REPO: knr-ops with SOPS age key defect\n# The defect: .sops.yaml references a differen\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-l81q72sb/.sops.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 3 resources found in 3 files - Valid: 2, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 930,
+    "output": 812
+  },
+  "content": "## Diagnosis\n\n**Symptom analysis:** `yaml: line 1: did not find expected key` from `failed to merge command output` means Flux's kustomize build is choking on output \u2014 typically because decryption failed and raw/invalid content (or a malformed patch) got merged. Two defects are seeded:\n\n1. `.sops.yaml` `creation_rules` point at an age public key that does **not** match the key in `age-key.txt`\n2. A kustomize patch targets a resource name that was renamed\n\n## Fix 1: Correct the age key reference\n\nThe correct public key (from `age-key.txt`... note that file contains the public recipient, `age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg`) must be in `.sops.yaml`:\n\n```yaml\n# .sops.yaml\ncreation_rules:\n  - path_regex: .*\\.yaml$\n    encrypted_regex: ^(data|stringData)$\n    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nIf the old secret was encrypted with the wrong key, it must be re-encrypted:\n\n```bash\nexport SOPS_AGE_KEY_FILE=./age-key.txt   # if age-key.txt holds the private key AGE-SECRET-KEY...\nsops --encrypt --in-place secret.yaml\n```\n\n> Note: an `age1...` value is a *public* recipient. If `age-key.txt` only contains the public key, you also need the matching private key in the Flux cluster's `sops-age` secret. Verify with:\n> `kubectl get secret sops-gpg -n flux-system` / the `sops-age` secret used by your Kustomization spec's `decryption` block:\n\n```yaml\nspec:\n  decryption:\n    provider: sops\n    secretRef:\n      name: sops-age\n```\n\n## Fix 2: Kustomize patch target\n\nThe patch in `overlays/dev/` (and `overlays/prod/`) targets a renamed resource. Update the patch target to the current name. If the Secret was renamed to `db-password-dev` (per `secret.yaml`), fix e.g.:\n\n```yaml\n# overlays/dev/patch.yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-password-dev   # was: db-password (old name)\n```\n\nOr if using `patches:` with a target selector:\n\n```yaml\npatches:\n  - path: patch.yaml\n    target:\n      kind: Secret\n      name: db-password-dev\n```\n\n## Verify\n\n```bash\nsops --decrypt secret.yaml > /dev/null && echo \"decrypt OK\"\n\n# Test each overlay locally with decryption (as Flux does)\nkustomize build --enable-alpha-plugins overlays/dev \\\n  | kubectl apply --dry-run=client -f -\nkustomize build overlays/prod | kubectl apply --dry-run=client -f -\n\n# Then in-cluster:\nflux reconcile kustomization myapp-dev --with-source\nflux get kustomizations\n```\n\nBoth `myapp-dev` and `myapp-prod` should report `True / Ready` once the correct key decrypts the Secret and the patch target resolves.\n\nIf you can share the actual `.sops.yaml`, `kustomization.yaml` files, and the encrypted secret, I can give the exact line-level diffs rather than the canonical fixes above.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-l81q72sb/secret.yaml"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/knr-ops/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

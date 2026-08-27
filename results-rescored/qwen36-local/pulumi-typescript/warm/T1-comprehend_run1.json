@@ -1,0 +1,89 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 683,
+    "output": 3546
+  },
+  "content": "\n\nHere are the precise answers based on Pulumi's TypeScript runtime and preview mechanics, contextualized to your canonical scenario:\n\n### 1. Which property triggered the replace on the DB?\nPulumi marks replacement-triggering property changes in the preview with `[` (or `~` with `(createReplace)` in verbose output). Given your spec differences between `dev` and `prod`, the most likely triggers are:\n\n| Property | Why it triggers replace |\n|---|---|\n| `multiAz: false => true` | AWS RDS does not support in-place AZ topology changes. Pulumi marks this as `(createReplace)`. |\n| `storageEncrypted: false => true` | Toggling encryption on an existing RDS instance requires a snapshot \u2192 restore cycle, which Pulumi implements as replace. |\n| `engineVersion` (major bump) | e.g., `14.x => 15.x`. Minor upgrades are in-place; major upgrades force replace. |\n| `storageType` | Changing `gp2` \u2192 `io1`/`io2` or crossing EBS tier boundaries forces replace. |\n| `instanceClass` (conditional) | Usually in-place, but if combined with `storageType`, `multiAz`, or `engineVersion` changes, Pulumi will batch it into a replace. |\n\n**How to verify:** In the preview output, look for the RDS resource URN. Properties that caused the replace will be prefixed with `[`:\n```\n~ aws:rds/instance:Instance mydb replace:\n    [ ] multiAz: false => true\n    [ ] storageEncrypted: false => true\n    ~ instanceClass: db.t3.micro => db.t3.medium\n```\nOnly properties marked with `[` are immutables in the AWS API that force replacement.\n\n---\n\n### 2. What does `pulumi up --target` skip?\n`pulumi up --target <urn>` limits the **apply phase** to only the specified resource. It explicitly skips:\n\n- \u2705 **All non-targeted resource operations** (creates, updates, deletes)\n- \u2705 **Dependency cascades** (unless `--target-dependents` is explicitly passed)\n- \u2705 **Output-only drift** (resources that only changed in outputs but not inputs)\n\n**It does NOT skip:**\n- \ud83d\udeab Program execution & provider initialization (the entire stack runs to compute state)\n- \ud83d\udeab State refresh (`--refresh` is implied unless `--skip-preview` is used)\n- \ud83d\udeab Dependency validation (Pulumi will error if the target depends on another resource that also has pending changes, unless `--target-dependents` is used)\n- \ud83d\udeab Plugin & policy evaluations (OPA, CrossGuard, etc. still run)\n\n**Typical usage in your scenario:**\n```bash\npulumi up --target urn:pulumi:dev::webapp::aws:rds/instance:Instance::mydb\n```\nIf you need to apply the DB replace plus its dependent security groups or subnet changes, use `--target-dependents`.\n\n---\n\n### 3. How does Pulumi handle secrets in outputs?\nPulumi implements a **native, type-safe secrets model** that works at the `Output<T>` level:\n\n| Aspect | Behavior |\n|---|---|\n| **Marking** | `pulumi.ConfigSecret` or `pulumi.secret()` wraps the value in an `Output<T>` tagged as a secret. |\n| **Storage** | Encrypted at rest in the state file using the configured `SecretProvider` (Pulumi Cloud KMS, AWS KMS, Azure Key Vault, GCP KMS, or passphrase). Never stored in Git. |\n| **Preview/CLI** | Masked as `[secret]` in `pulumi preview` and `pulumi stack output`. Prevents accidental leakage in CI logs. |\n| **Retrieval** | Decrypt on-demand: `pulumi stack output dbConnString --show-secrets` |\n| **Propagation** | If a secret is passed to any `Output`-consuming resource or export, downstream values inherit the `[secret]` tag automatically. |\n\n**Example in your stack:**\n```typescript\nconst config = new pulumi.Config();\nconst dbConn = config.requireSecret(\"dbConnection\"); // ConfigSecret\n\nexport const dbConnectionString = dbConn; // Automatically marked as [secret]\n```\nWhen you run `pulumi stack output dbConnectionString`, Pulumi returns `[secret]`. Only with `--show-secrets` does it call the secret provider to decrypt and print the plaintext. This aligns with your acceptance criterion: *\"never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"*.\n\nLet me know if you want the exact TypeScript snippets for the RDS replacement mitigation or secret provider configuration.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-xowawptt/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-xowawptt/generated_0.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

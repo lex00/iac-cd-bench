@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 713,
+    "output": 4468
+  },
+  "content": "\n\nHere is a precise, architecture-level trace of how Crossplane handles the `storageGB: 20 \u2192 50` change, aligned with your canonical scenario.\n\n---\n\n### 1. Trace: XRD \u2192 Composition \u2192 Managed Resources\n1. **Claim Update**: User applies `spec.parameters.storageGB: 50` to the `DatabaseClaim`.\n2. **Claim Controller**: Syncs the updated parameters into the underlying **Composite Resource (XR)** (`spec.parameters.storageGB: 50`). The XR `compositionRef` remains unchanged.\n3. **Compositer Controller**: Detects the XR spec change. Loads the **active Composition revision** (immutably stored in a `CompositionRevision` object).\n4. **Template Evaluation**: Iterates through each managed resource (MR) template in the Composition. For each, applies `patches`/`patchSets` that map XR/Claim fields to MR fields.\n5. **Patch Resolution**: The RDS template contains a patch like:\n   ```yaml\n   patches:\n   - fromFieldPath: spec.parameters.storageGB\n     toFieldPath: spec.forProvider.allocatedStorage\n     type: Patch\n   ```\n   The compositer injects `50` into the RDS MR template, generating a new desired state.\n6. **Diff & Reconciliation Trigger**: Compares the new desired MR spec against the existing RDS MR in etcd. Detects a diff on `allocatedStorage` \u2192 queues the RDS MR for reconciliation by the **AWS Provider Controller**.\n7. **Provider Controller Action**: Translates the Crossplane CRD diff into an AWS SDK call (`rds.ModifyDBInstance`) with `AllocatedStorage: 50`, `ApplyImmediately: true` (or default), and preserves existing tags/ARNs.\n8. **Cloud Response & Status Propagation**: AWS accepts the request, returns `DBInstanceIdentifier`, and enters `modifying` state. Provider controller polls until `Status: available`, updates MR `status.atProvider` and `status.conditions`. Status bubbles up: RDS MR \u2192 XR \u2192 Claim.\n\n---\n\n### 2. Is the RDS Instance Updated In-Place or Recreated?\n**Updated in-place.** \n- AWS RDS supports synchronous/asynchronous storage scaling **upwards** via `ModifyDBInstance`. It explicitly rejects downward scaling.\n- Crossplane's `upbound-provider-aws` marks `allocatedStorage` as an **updateable** field (not immutable). The provider uses the `Update` operation, not `DeleteAndCreate`.\n- The existing instance ID, endpoint, security groups, IAM roles, and backups are preserved. Only the underlying EBS volumes expand.\n- *Caveat*: If the Composition or XR explicitly set `spec.revisionHistoryLimit: 0` or a custom `policy` forcing recreation, or if the underlying cloud API marked the field as immutable (it doesn't for storage), recreation would occur. Under standard Crossplane+AWS behavior, it is strictly in-place.\n\n---\n\n### 3. What Happens to the S3 Bucket?\n**Nothing. The S3 bucket remains untouched.**\n- S3 buckets do not have a `storageGB` parameter; they scale infinitely and are not capacity-constrained.\n- The Composition template for the S3 bucket lacks any `patch` referencing `spec.parameters.storageGB`.\n- During compositer evaluation, the S3 MR template produces an identical desired state to what's already deployed.\n- Crossplane's diffing engine detects zero changes \u2192 skips reconciliation for the S3 MR \u2192 marks it `Ready: True`/`Synced: True` immediately without issuing any cloud API calls.\n\n---\n\n### 4. What Role Do `ReadinessChecks` Play?\n`ReadinessChecks` (defined in `spec.readinessChecks` of the Composition) control **when Crossplane considers the XR/Claim ready** after a change.\n\nIn this scenario:\n- After `ModifyDBInstance` is called, the RDS instance enters `modifying`. Cloud providers and Crossplane treat this as a temporary non-ready state.\n- A typical readiness check for the RDS MR looks like:\n  ```yaml\n  readinessChecks:\n  - type: Conditions\n    matchString: \"Ready=True\"\n  - type: Conditions\n    matchString: \"Synced=True\"\n  ```\n- Crossplane will **not** propagate `Ready: True` to the XR or Claim until:\n  1. The provider confirms the instance is back to `available`\n  2. All configured condition matches evaluate to `true`\n  3. Optional: `connectionDetails` are refreshed (e.g., new endpoint not applicable here, but relevant for credentials)\n- This prevents downstream resources (e.g., EKS node groups, application Deployments, or SecretStore syncs) from assuming the database is writable/readable before AWS completes volume expansion and instance reboot.\n\n---\n\n### 5. How Does Crossplane Handle the Reconciliation Loop?\nCrossplane uses a **controller-runtime-based, event-driven reconciliation loop** split across two planes:\n\n| Component | Responsibility |\n|-----------|----------------|\n| **Compositer Controller** | Watches Claims/XRs & Compositions. Computes desired MR states via patch resolution. Handles composition revision tracking, external name resolution, and connection details. |\n| **Provider Controllers** (e.g., `upbound-provider-aws`) | Watch MRs. Compare desired `spec.forProvider` vs actual `status.atProvider`. Issue cloud API calls. Handle retries, rate limits, and idempotency. |\n| **Reconcile Interval** | Default `--reconcile-interval=30s`. Controllers poll continuously. Changes trigger immediate reconciliation via Kubernetes informers. |\n| **Status Propagation** | Cloud \u2192 Provider Controller \u2192 MR `status.conditions` \u2192 XR `status` \u2192 Claim `status`. Conditions (`Synced`, `Ready`, `Available`) drive readiness and observability. |\n| **Diff Strategy** | Structural JSON/YAML comparison. Crossplane ignores cloud-side defaults not present in the Composition template unless `--enable-dry-run` or field-level diffs are explicitly configured. |\n| **Backpressure & Retries** | Configurable `--reconcile-timeout` and `--retry-period`. Transient API errors (429, 503) trigger exponential backoff. Permanent errors (validation, IAM) fail the MR and halt XR readiness propagation. |\n\n**Loop Flow for this change:**\n`Claim update` \u2192 `XR sync` \u2192 `Compositer evaluates Composition revision` \u2192 `Patches applied to RDS template` \u2192 `MR diff detected` \u2192 `Provider controller queues update` \u2192 `AWS ModifyDBInstance` \u2192 `Provider polls async completion` \u2192 `MR status updated` \u2192 `Status propagates to Claim` \u2192 `Loop continues at next interval`.\n\n---\n\n### Key Crossplane Idioms to Note\n- **Composition revisions are immutable**: Changing the Composition YAML creates a new revision. The XR continues using the old revision until you explicitly update `spec.compositionRef.revision` or let it auto-track.\n- **Claim vs XR separation**: Users only touch Claims. The XR is an internal projection. This enables multi-tenant composition reuse (dev/prod share the same Composition but have different Claims/XRs).\n- **Declarative & Idempotent**: Re-applying `storageGB: 50` when already at 50 results in zero API calls after diffing.\n- **Provider Config Binding**: The RDS MR uses `providerConfigRef` (e.g., `aws-prod`) which carries the AWS credentials/region. Dev and prod use different configs, but the reconciliation mechanics are identical.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/crossplane/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

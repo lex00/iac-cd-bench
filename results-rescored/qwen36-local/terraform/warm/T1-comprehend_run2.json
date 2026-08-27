@@ -1,0 +1,88 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 685,
+    "output": 2724
+  },
+  "content": "\n\nHere\u2019s how Terraform behaves in each scenario, grounded in its core mechanics and aligned with your canonical spec:\n\n### 1. What does the next plan show when a variable flips?\nWhen you switch variables (e.g., running `terraform plan -var-file=prod.tfvars` or switching workspaces), Terraform:\n- **Re-evaluates** the configuration with the new variable values.\n- **Compares** the updated desired state against the existing `.tfstate`.\n- **Outputs a diff** showing only the resources affected by the variable change:\n  - `~` for in-place updates (e.g., `instance_class`, `node_count`)\n  - `+` for new resources (e.g., prod-only ACM cert, cross-region replication config)\n  - `-` for removed resources (if any were conditionally disabled)\n- **Respects environment isolation**: Only the target workspace/variable set is evaluated. Dev and prod remain independent.\n- **Shows planned actions** per resource with attribute-level changes, e.g.:\n  ```\n  # aws_db_instance.main will be updated in-place\n  ~ resource \"aws_db_instance\" \"main\" {\n      ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n      ~ multi_az       = false         -> true\n        ...\n  }\n  ```\n\n### 2. What happens if the state file is deleted?\n- **`terraform plan`** sees an empty state and proposes to **create every resource** defined in configuration (`+` all).\n- **`terraform apply`** will likely **fail or create duplicates** because cloud providers enforce uniqueness/constraints:\n  - S3 buckets, RDS identifiers, IAM users, and ALBs are globally or regionally unique.\n  - AWS returns `ResourceAlreadyExists` or similar errors.\n- **Recovery path**: \n  1. **Do not apply blindly.** \n  2. Re-import existing resources into a fresh state using `terraform import aws_db_instance.main <arn-or-id>`, or\n  3. Manually delete the cloud resources (if acceptable) and let Terraform recreate them.\n- **Why it matters**: State isn\u2019t just a log; it\u2019s the **source of truth** that maps configuration to actual cloud resource IDs, tracks dependencies, and prevents drift.\n\n### 3. How does Terraform handle the RDS instance class change?\n- The `aws_db_instance` provider treats `instance_class` as an **in-place updatable attribute**.\n- **Plan output**: Shows `~ update in-place` with the old/new class.\n- **Apply behavior**:\n  - Terraform calls AWS `ModifyDBInstance` API.\n  - AWS typically triggers a **reboot** and respects backup/maintenance window settings.\n  - Terraform **waits** for the instance to return to `available` status, then updates the state with new attributes (endpoint, ARN, status, etc.).\n- **No replacement** occurs unless you explicitly add `lifecycle { replace_triggered_by = [...] }` or change an attribute that AWS doesn\u2019t support updating in-place (e.g., `engine_version` across major versions, or `storage_encrypted` on existing instances).\n- Your acceptance criteria (`backup_retention_period >= 7`, `deletion_protection = true`, `publicly_accessible = false`) remain enforced throughout.\n\n### 4. What is the difference between state and configuration?\n| Aspect | Configuration (`.tf` files) | State (`.tfstate`) |\n|--------|-----------------------------|---------------------|\n| **Purpose** | Declares *what should exist* (desired state) | Records *what actually exists* (real-world inventory) |\n| **Content** | Providers, variables, resources, modules, policies | Resource IDs, attributes, dependencies, metadata, sensitive value mappings |\n| **Version Control** | \u2705 Checked into Git (idempotent, human-readable) | \u274c Not checked in (usually stored remotely: S3, Terraform Cloud, etc.) |\n| **Role in Workflow** | Drives `plan` by computing diff against state | Drives `apply` by providing cloud resource IDs for update/delete/create |\n| **Mutation** | Changes trigger new plans | Updated automatically by `apply`; manually manipulated via `import`/`state rm` |\n\n**In short**: Configuration is your blueprint; state is the inventory + mapping layer that lets Terraform safely reconcile reality with your intent without re-creating or accidentally destroying existing infrastructure.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-_wynh9by/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

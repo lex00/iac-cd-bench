@@ -1,0 +1,88 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1620,
+    "output": 7300
+  },
+  "content": "## 0. First, two corrections to the notes you're working from\n\n- **`function-auto-prepare` doesn't exist.** You're probably thinking of **`function-auto-ready`** (`xpkg.crossplane.io/crossplane-contrib/function-auto-ready`), which derives the XR's `Ready` condition from composed resources. Default labels/annotations come from `function-patch-and-transform` patches or `function-go-templating`, not a \"prepare\" function.\n- **`function-environment-config`** is **`function-environment-configs`** (plural), and it injects `EnvironmentConfig` data into the pipeline context, not \"environment variables.\"\n- One more: \"Crossplane matches Claim to XRD via claimNames\" is only half the story. The XRD gives you the *API*; the *Composition* is selected separately via `spec.compositionRef`, `spec.compositionSelector` (label matching), or the XRD's `defaultCompositionRef`. Multiple Compositions can satisfy one XRD \u2014 that's how dev/prod sizing gets split.\n\n---\n\n## 1. The trace: `storageGB: 20 \u2192 50`\n\nAssume the canonical scenario's XRD/Composition:\n\n```yaml\n# XRD\nspec:\n  group: platform.example.org\n  names:\n    kind: XAppStack\n  claimNames:\n    kind: AppStack        # namespaced claim\n  versions:\n  - name: v1alpha1\n    schema:\n      openAPIV3Schema:\n        properties:\n          spec:\n            properties:\n              storageGB: { type: integer, minimum: 20 }\n              env: { type: string, enum: [dev, prod] }\n```\n\n### Step-by-step\n\n**(a) Claim mutation.** `kubectl apply` / Argo syncs `AppStack/web-prod` in namespace `apps`. The API server persists it. `resourceVersion` bumps.\n\n**(b) Claim controller \u2192 XR.** The claim reconciler (one per claim type) sees the watch event. It propagates the claim's `spec` **into the cluster-scoped XR** (`XAppStack/web-prod-8x2kf`), *excluding* the reserved fields: `resourceRef`, `compositionRef`/`compositionSelector`/`compositionRevisionRef` (managed separately), `writeConnectionSecretToRef`, `publishConnectionDetailsTo`. So `spec.storageGB: 50` lands on the XR.\n\n> Note: this is a **one-way spec push, two-way status pull**. The claim is a thin projection.\n\n**(c) XR controller \u2192 composition pipeline.** The composite reconciler wakes on the XR update. It resolves the `CompositionRevision` (see \u00a75), then runs the function pipeline:\n\n```yaml\nmode: Pipeline\npipeline:\n- step: patch-and-transform\n  functionRef: { name: function-patch-and-transform }\n  input:\n    apiVersion: pt.fn.crossplane.io/v1beta1\n    kind: Resources\n    resources:\n    - name: rds\n      base:\n        apiVersion: rds.aws.upbound.io/v1beta2\n        kind: Instance\n        spec:\n          forProvider:\n            engine: postgres\n            allocatedStorage: 20\n            deletionProtection: true\n            backupRetentionPeriod: 14\n            storageEncrypted: true\n            publiclyAccessible: false\n      patches:\n      - type: FromCompositeFieldPath\n        fromFieldPath: spec.storageGB\n        toFieldPath: spec.forProvider.allocatedStorage\n```\n\nThe function renders the **desired** composed resources. `allocatedStorage` is now `50`.\n\n**(d) XR controller \u2192 managed resource.** Crossplane looks up the existing composed resource via `status.resourceRefs` (matched by the `crossplane.io/composition-resource-name` annotation), then **server-side-applies** the desired state. Only the RDS `Instance` MR object changes; `spec.forProvider.allocatedStorage: 20 \u2192 50`.\n\n**(e) Provider controller \u2192 AWS.** The `provider-aws-rds` (upjet) `Instance` controller wakes on the MR update:\n- `Observe()` \u2192 `DescribeDBInstances` \u2192 external state says `AllocatedStorage: 20`\n- diff is non-empty and the field is **not `ForceNew`** \u2192 `ResourceUpToDate: false`\n- `Update()` \u2192 `ModifyDBInstance(AllocatedStorage=50)`\n- MR conditions: `Synced=True`, `Ready` flips to `False` while AWS reports `modifying`\n\n**(f) Status flows back.** MR `Ready=False` \u2192 XR `Ready=False` (via readiness checks, \u00a74) \u2192 claim `Ready=False`. When AWS finishes, everything flips back to `True`. Elapsed: minutes to hours depending on volume size.\n\n---\n\n## 2. In-place or recreated? **In-place.**\n\n`allocatedStorage` maps to `ModifyDBInstance`. No replacement.\n\n**The more important architectural point:** *Crossplane never deletes and recreates a managed resource because its spec changed.* There is no `-/+ replace` primitive like Terraform's. If you patch a genuinely immutable field:\n\n- **Native (non-upjet) AWS provider:** the update call fails, MR goes `Synced=False` with the AWS API error in `.status.conditions` and a Kubernetes Event. It retries with exponential backoff **forever**. The infrastructure keeps running with the old value.\n- **Upjet providers:** the Terraform-derived schema marks the field `ForceNew`. Upjet detects a diff it cannot apply and surfaces `cannot update instance: ... requires replacement` rather than destroying your database.\n\nThis is a deliberate safety property and a real divergence from Terraform. It's also a footgun: **a Composition change to an immutable field silently wedges the resource** in a permanent error loop, and your XR just sits at `Synced=False`. Nothing tells you \"this needs manual intervention\" except reading conditions.\n\n### RDS-specific gotchas for this exact change\n\n- **Storage only grows.** `50 \u2192 20` is rejected by AWS. The MR will error-loop indefinitely. Your XRD's `minimum: 20` doesn't help; add a validation webhook or just accept it.\n- **6-hour cooldown.** After a storage modification, AWS blocks further storage changes for ~6h (storage optimization). A second bump during that window error-loops until the window closes \u2014 which actually resolves itself, because Crossplane keeps retrying. This is one place where continuous reconciliation is strictly better than `terraform apply` failing in CI.\n- **`applyImmediately`.** If false (default), AWS defers to the next maintenance window. Crossplane will report `Synced=True` (the API call succeeded) while `Ready` stays inconsistent \u2014 a confusing state. Set `applyImmediately: true` for storage changes, or expect lag.\n\n---\n\n## 3. The S3 bucket: **nothing meaningful happens**\n\nTwo separate mechanisms are at play, and it's worth keeping them apart:\n\n**The XR reconcile re-renders *every* composed resource.** The pipeline runs whole-XR, not per-field. So the bucket's desired state is recomputed and SSA-applied on the same pass. But the rendered object is byte-identical to what's stored, so the API server's server-side apply is a no-op \u2014 no `resourceVersion` bump, no watch event, no provider work.\n\n**The bucket's own controller is completely independent.** `Bucket`, `BucketVersioning`, `BucketServerSideEncryptionConfiguration`, and `BucketPublicAccessBlock` MRs each have their own reconciler running on `--poll-interval` (default `1m`; most production installs set `10m` to reduce AWS API pressure). They keep calling `GetBucketVersioning` etc. and correcting drift on their own schedule, whether or not anyone touched the claim.\n\nSo: if someone had disabled versioning in the console last Tuesday, it was already fixed last Tuesday \u2014 not because of your storage change.\n\n**One real coupling to watch:** if your Composition uses `ToCompositeFieldPath` patches or `function-go-templating` to pass values *between* composed resources (e.g., RDS endpoint \u2192 a bucket policy, or a Secret), a change on one resource can cascade. In this scenario it doesn't \u2014 storage and bucket config are disjoint \u2014 but that's a property of *this* Composition, not a guarantee.\n\n---\n\n## 4. ReadinessChecks\n\nThey answer exactly one question: **\"is this composed resource ready?\"** \u2014 which aggregates upward into the XR's and claim's `Ready` condition.\n\n**Default:** `MatchCondition` on `Ready=True`. Every well-behaved MR sets `Ready` from its provider's notion of availability (for RDS: `DBInstanceStatus == \"available\"`).\n\n**Where they live:** on the `function-patch-and-transform` resource entry (or `function-auto-ready`, which just applies the default to everything):\n\n```yaml\n- name: rds\n  base: {...}\n  readinessChecks:\n  - type: MatchCondition\n    matchCondition:\n      type: Ready\n      status: \"True\"\n  - type: MatchString\n    fieldPath: status.atProvider.status\n    matchString: available\n```\n\n**Available types:** `MatchCondition`, `MatchString`, `MatchInteger`, `MatchTrue`, `MatchFalse`, `NonEmpty`, and `None` (always ready \u2014 useful for resources whose provider never sets `Ready`, or for `ProviderConfig`-ish objects).\n\n**Why they matter for your storage change specifically:**\n\n1. **They gate the claim's `Ready` condition.** During `ModifyDBInstance`, RDS goes `available \u2192 modifying \u2192 available`. The MR's `Ready` flips false, so the XR and claim go `Ready=False`. Anything waiting on the claim \u2014 `kubectl wait --for=condition=Ready`, an Argo sync wave, a Flux `dependsOn` \u2014 blocks correctly. Without readiness checks you'd get a green claim over a database that's mid-resize.\n\n2. **They gate connection secret publication timing.** Connection details are collected each reconcile, but consumers typically gate on `Ready` before mounting the secret.\n\n3. **They do *not* gate reconciliation.** A not-ready resource doesn't stop the pipeline or block other composed resources. The bucket stays `Ready=True` the whole time. Readiness is *reporting*, not *ordering*.\n\n**Sequencing is a separate concern.** If you need the RDS instance up before something else, use `function-sequencer` or `dependsOn`-style patterns \u2014 `readinessChecks` alone won't do it. Common mistake: setting `type: None` on everything to \"make the claim go green,\" which destroys your only ordering/health signal.\n\n---\n\n## 5. The reconciliation loop\n\nThree independent control loops, each with its own trigger and cadence:\n\n| Loop | Triggered by | Cadence |\n|---|---|---|\n| Claim \u2194 XR | Watch on claim + XR | Event-driven |\n| XR \u2192 composed resources | Watch on XR; **owner-ref watch on composed MRs**; CompositionRevision change | Event-driven + resync (`--sync-interval`, default 1h) |\n| MR \u2192 cloud API | Watch on MR | Event-driven + `--poll-interval` (default 1m) |\n\n### Key behaviours\n\n**Composed resources are owned by the XR.** Each MR carries an `ownerReference` to the XR with `blockOwnerDeletion`. The XR controller watches them, so any status change on the RDS instance immediately re-triggers the XR reconcile \u2014 that's how `Ready` propagates in seconds, not on the resync timer.\n\n**CompositionRevisions are the versioning layer.** Editing a Composition creates a new `CompositionRevision`, not an in-place mutation. XRs then follow:\n- `compositionUpdatePolicy: Automatic` (default) \u2014 adopt the latest revision on next reconcile. Convenient, and genuinely dangerous: a typo in a prod Composition propagates to every XR immediately.\n- `compositionUpdatePolicy: Manual` \u2014 pin to `compositionRevisionRef`. **Use this for prod.** You bump the ref deliberately, which is your change-control gate. This is the closest thing Crossplane has to `terraform plan`.\n\n**Drift correction is unconditional.** Every `--poll-interval`, each MR controller calls `Observe()`. Console changes are reverted. This is the real Crossplane/Terraform split: Terraform's state is a snapshot compared on demand; Crossplane's spec is a continuously-enforced target. It also means **`kubectl edit` on a composed MR is pointless** \u2014 the XR re-applies over it on the next pass. Change the claim or the Composition, never the MR.\n\n**Errors back off, they don't fail.** `Synced=False` with a rate-limited requeue (exponential, capped). No CI job goes red. You need `kube_customresource` metrics or a Prometheus alert on `Synced=False` lasting > N minutes, otherwise wedged resources are invisible.\n\n**Management/deletion policies change the contract:**\n- `spec.managementPolicies: [\"Observe\"]` \u2014 read-only, never writes to AWS. Good for importing existing infra.\n- `spec.deletionPolicy: Orphan` \u2014 deleting the claim leaves the RDS instance alive. **Set this on prod databases.** With `Delete` (the default), `kubectl delete appstack web-prod` cascades through owner refs to the MR to `DeleteDBInstance`. Deletion protection on the RDS instance will block the AWS call, so the MR hangs with a finalizer \u2014 messy, but at least the data survives.\n\n### Environment separation in this loop\n\nDev/prod isolation lands as: two Compositions selected by label (`crossplane.io/env: dev|prod`) \u2014 or one Composition plus `EnvironmentConfig` fed by `function-environment-configs` \u2014 plus distinct `ProviderConfig`s pointing at different accounts/regions via IRSA. Changing prod's Composition creates a new revision that dev's XRs, selecting a different Composition, never see. That satisfies acceptance criterion 7, but *only if* dev and prod use separate `ProviderConfig`s with separate credentials; a shared ProviderConfig means a Composition bug can reach across the boundary.\n\n---\n\n## Summary\n\n| Question | Answer |\n|---|---|\n| Update path | claim \u2192 XR (spec push) \u2192 pipeline render \u2192 SSA on MR \u2192 `ModifyDBInstance` |\n| RDS | **In-place.** Crossplane has no replace primitive; immutable-field changes error-loop instead |\n| S3 | Re-rendered as a no-op; its own controller polls independently on `--poll-interval` |\n| ReadinessChecks | Health *reporting*, aggregated XR\u2192claim. Not ordering, not gating |\n| Loop | Watch-driven + periodic poll; drift always corrected; errors retry with backoff, never \"fail\" |\n\n**If you're building this for real:** pin prod to `compositionUpdatePolicy: Manual`, set `deletionPolicy: Orphan` on the RDS MR, alert on `Synced=False`, and use `crossplane render composition.yaml xr.yaml functions.yaml` in CI to diff rendered output before merging \u2014 that's your missing `terraform plan`.\n\n**Worth knowing:** Crossplane v2 removes the claim/XR split entirely \u2014 XRs become namespaced and claims are deprecated. Step (b) above collapses to nothing. If you're starting fresh, check which major version you're targeting before building around claim semantics.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-g2yzz7mh/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/crossplane/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

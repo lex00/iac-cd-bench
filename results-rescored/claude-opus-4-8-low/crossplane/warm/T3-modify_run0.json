@@ -1,0 +1,88 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 4 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 4\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1029,
+    "output": 2476
+  },
+  "content": "## Adding us-west-2 to the Crossplane Composition\n\nThe key idiom in Crossplane: **add a second `ProviderConfig` for the new region, then reference it from the composed resources that need it** \u2014 all without touching existing XR claims. Claims stay pointed at their XRDs; only the Composition (and provider setup) change.\n\n### 1. Second ProviderConfig (new region)\n\nThe AWS provider is region-agnostic per credential; region is set per-managed-resource via `spec.forProvider.region`, but the `providerConfigRef` selects which credential/config to use. Create a distinct config for the west region.\n\n```yaml\n# providerconfig-uswest2.yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2        # existing one is e.g. \"aws-us-east-1\"\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds        # same creds; region differs at resource level\n      key: creds\n```\n\n> If you already have a single `default` ProviderConfig, keep it. This just adds a *named* target so composed resources can opt into west-region placement explicitly.\n\n### 2. Reference the region in the Composition (not the claim)\n\nBecause the requirement is **no claim changes**, all region logic lives in the `Composition`. Add the replication-target bucket + its config keyed to us-west-2. Below is a patch-style excerpt for the prod bucket composition adding cross-region replication.\n\n```yaml\n# composition-bucket.yaml (prod path)\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: xbucket-prod\nspec:\n  compositeTypeRef:\n    apiVersion: platform.example.org/v1alpha1\n    kind: XBucket\n  resources:\n\n    # --- primary bucket (unchanged, us-east-1) ---\n    - name: primary\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: Bucket\n        spec:\n          forProvider:\n            region: us-east-1\n          providerConfigRef:\n            name: aws-us-east-1\n      patches:\n        - fromFieldPath: spec.parameters.name\n          toFieldPath: metadata.annotations[crossplane.io/external-name]\n\n    # --- NEW: replica bucket in us-west-2 ---\n    - name: replica\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: Bucket\n        spec:\n          forProvider:\n            region: us-west-2\n          providerConfigRef:\n            name: aws-us-west-2          # <-- second region config\n      patches:\n        - fromFieldPath: spec.parameters.name\n          toFieldPath: metadata.annotations[crossplane.io/external-name]\n          transforms:\n            - type: string\n              string:\n                fmt: \"%s-replica-usw2\"\n\n    # --- versioning on replica (required for CRR) ---\n    - name: replica-versioning\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: BucketVersioning\n        spec:\n          forProvider:\n            region: us-west-2\n            versioningConfiguration:\n              - status: Enabled\n            bucketSelector:\n              matchControllerRef: true\n          providerConfigRef:\n            name: aws-us-west-2\n\n    # --- SSE on replica ---\n    - name: replica-encryption\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: BucketServerSideEncryptionConfiguration\n        spec:\n          forProvider:\n            region: us-west-2\n            rule:\n              - applyServerSideEncryptionByDefault:\n                  - sseAlgorithm: AES256\n            bucketSelector:\n              matchControllerRef: true\n          providerConfigRef:\n            name: aws-us-west-2\n\n    # --- replication config on the PRIMARY bucket ---\n    - name: primary-replication\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: BucketReplicationConfiguration\n        spec:\n          forProvider:\n            region: us-east-1\n            roleSelector:\n              matchControllerRef: true      # CRR IAM role composed elsewhere\n            bucketSelector:\n              matchControllerRef: true       # binds to primary bucket\n            rule:\n              - id: to-usw2\n                status: Enabled\n                filter:\n                  - {}\n                destination:\n                  - bucketSelector:\n                      matchControllerRef: true   # resolves replica bucket ARN\n                    storageClass: STANDARD\n          providerConfigRef:\n            name: aws-us-east-1\n```\n\n### 3. Why existing claims are untouched\n\n- The **claim/XR** (`XBucket`) API surface is unchanged \u2014 no new fields, no new required parameters.\n- Region selection is entirely internal to the Composition via `providerConfigRef.name` + `forProvider.region`.\n- Dev composition (`xbucket-dev`) simply omits the `replica*` resources \u2192 dev stays single-region. Prod composition adds them \u2192 CRR to us-west-2. This matches the spec table (CRR only on prod).\n\n### 4. Wiring by environment (Crossplane idiom)\n\nEnvironment isolation is done via **separate Compositions selected by a composition selector / revision**, not by editing claims:\n\n```yaml\n# dev claim (unchanged)\napiVersion: platform.example.org/v1alpha1\nkind: BucketClaim\nmetadata:\n  name: app-assets\n  namespace: dev\nspec:\n  parameters:\n    name: myapp-assets-dev\n  compositionSelector:\n    matchLabels: { env: dev }     # -> xbucket-dev (no replica)\n\n---\n# prod claim (unchanged)\napiVersion: platform.example.org/v1alpha1\nkind: BucketClaim\nmetadata:\n  name: app-assets\n  namespace: prod\nspec:\n  parameters:\n    name: myapp-assets-prod\n  compositionSelector:\n    matchLabels: { env: prod }    # -> xbucket-prod (with us-west-2 CRR)\n```\n\nLabel the two compositions accordingly (`env: dev` / `env: prod`).\n\n### Apply order\n\n```bash\nkubectl apply -f providerconfig-uswest2.yaml\nkubectl apply -f composition-bucket.yaml      # updates prod composition only\n# claims are re-reconciled automatically; dev claim produces no diff\n```\n\n**Result:** us-west-2 added purely through provider config + composition, prod gains cross-region replication, dev unaffected, and no claim manifests were modified \u2014 satisfying \"add a second region without changing existing claims\" and criteria #1 (versioning/SSE/no-public) and #7 (independent dev/prod).\n\nWant me to include the composed **IAM replication role** (least-privilege, criterion #4) or the `CompositionRevision` pinning so in-flight prod claims don't auto-adopt the change until you bump the revision?",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-q144l36q/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-q144l36q/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-q144l36q/generated_2.yaml"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7142857142857143
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/crossplane/warm/T3-modify_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7142857142857143
+    },
+    "corrected_composite_no_idiom": 0.8333333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

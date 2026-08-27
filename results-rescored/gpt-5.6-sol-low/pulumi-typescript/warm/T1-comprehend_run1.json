@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 827
+  },
+  "content": "1. **Property triggering the DB replacement:**  \n   The exact property is shown in the preview with a replacement marker such as:\n\n   ```text\n   ~ storageEncrypted: false => true\n   ```\n\n   or under `diffs`/`replace`. In this scenario, the likely trigger is **`storageEncrypted` changing from false to true**, because AWS RDS cannot enable encryption in place. Changes to `instanceClass` or `multiAz` are generally in-place modifications, while changing region/provider can also force replacement. Without the actual preview diff, the precise property cannot be confirmed.\n\n2. **What `pulumi up --target <URN>` skips:**  \n   It performs a targeted update rather than reconciling the entire stack. Unrelated resources\u2014and dependent resources unless included with `--target-dependents`\u2014are skipped. Required dependencies may still be processed. Consequently, the stack can temporarily differ from the full program\u2019s desired state; a later normal `pulumi up` will propose the skipped changes.\n\n3. **Secrets in outputs:**  \n   Values originating from `config.requireSecret(...)` are represented as secret `Output`s. Pulumi:\n   - propagates secret status through derived outputs,\n   - encrypts secret values in stack state using the configured secrets provider,\n   - redacts them as `[secret]` in previews and normal CLI output,\n   - reveals them only when explicitly requested, such as with `pulumi stack output --show-secrets`.\n\n   Exported stack outputs must retain the secret-marked `Output`; converting or otherwise exposing the plaintext outside Pulumi\u2019s output tracking can leak it.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/pulumi-typescript/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 2480
+  },
+  "content": "\n\nPlease provide the `pulumi preview --json` output. Once shared, I will run a targeted security review against your three specified concerns and map findings to your acceptance criteria.\n\nTo ensure precision, here is exactly how I will analyze the JSON once you provide it:\n\n### \ud83d\udd0d Analysis Framework (Pulumi Preview JSON Schema)\n\n| Security Check | JSON Path / Pattern | Red Flag Condition | Acceptance Criteria Mapping |\n|---|---|---|---|\n| **Secret in Plaintext Outputs** | `outputChanges.<key>.newValue` or `resourceChanges.<urn>.new.outputs.<key>` | `\"secret\": false` or missing `secret` flag **AND** value matches DB conn string, password, cert, or token pattern | Criteria 3: Secrets never stored in plaintext; encrypted at rest via `ConfigSecret`/provider |\n| **Replacement of Stateful Resource** | `resourceChanges.<urn>.changes` array | `\"replace\"` present on `aws:rds:instance`, `aws:s3/bucket:Bucket`, `aws:eks:cluster`, or `aws:secretsmanager:Secret` | Criteria 2 (RDS), 1 (S3), 5 (Cluster): Stateful resources must not be replaced without explicit backup/migration strategy |\n| **Missing `protect` Flag** | `resourceChanges.<urn>.new.inputs` or `resourceChanges.<urn>.old` | `\"protect\"` is `false` or absent on RDS, S3, EKS, Secrets, IAM roles critical to runtime | Criteria 2 (RDS deletion protection), 1 (S3), 5 (Cluster): `protect: true` required on all data-bearing & critical infra |\n\n### \ud83d\udcd0 How I'll Cross-Reference Your Canonical Scenario\n- **RDS**: Verify `protect: true`, no `\"replace\"`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false`\n- **S3**: Verify `versioning: true`, `serverSideEncryption: true`, no `website`/`publicAccess` blocks, `protect: true`\n- **Secrets**: Confirm DB connection string / credentials are marked `\"secret\": true` and not exposed in `outputs` or `diff`\n- **EKS**: Node group instance types & replicas match dev/prod spec; cluster itself not replaced\n- **IAM**: No `\"Action\": \"*\"` in policy documents within preview diffs\n\n### \ud83d\udd12 Safe Submission Guidelines\nIf you prefer not to paste raw sensitive values:\n1. Run: `pulumi preview --json > preview.json`\n2. Redact only literal values in `newValue`/`oldValue` (keep `\"secret\": true/false`, `\"replace\"`, `\"protect\"`, resource URNs, and types intact)\n3. Paste the full JSON or relevant `resourceChanges` / `outputChanges` blocks\n\n**Reply with the JSON output (or redacted excerpt), and I will return a structured security findings report with severity ratings, exact line/URN references, and remediation steps for TypeScript.**",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_correct_field_path PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks PASSED [100%]\n\n============================== 2 passed in 0.01s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1854,
+    "output": 1539
+  },
+  "content": "Here are the fixes for both defects.\n\n## composition.yaml (fixed)\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Pipeline\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n            # acceptance criteria: RDS hardening\n            deletionProtection: true\n            backupRetentionPeriod: 7\n            publiclyAccessible: false\n          providerConfigRef:\n            name: default\n      patches:\n        # FIX 1: reference the field that actually exists in the XRD (spec.instanceClass).\n        # The value already carries the full \"db.t3.medium\" form, so no Format transform.\n        - fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n        - fromFieldPath: spec.deletionProtection\n          toFieldPath: spec.forProvider.deletionProtection\n      # FIX 2: add ReadinessChecks so the Composition can report Ready.\n      readinessChecks:\n        - type: MatchString\n          fieldPath: status.atProvider.status\n          matchString: available\n```\n\n## Why these fixes\n\n### Defect 1 \u2014 wrong `fromFieldPath`\n- The seed patched `spec.parameters.storageClass`, which does **not** exist in the XRD. A `fromFieldPath` that resolves to nothing means `instanceClass` never gets set, so the RDS instance is created without a valid class (or fails validation).\n- The XRD defines the field at **`spec.instanceClass`** (not `spec.parameters.\u2026`), defaulting to `db.t3.medium`. The patch now reads that exact path.\n- I dropped the `Format: \"db.t3.%s\"` transform because the XRD value already includes the `db.t3.` prefix \u2014 keeping the transform would double-prefix into `db.t3.db.t3.medium`.\n\n**Alternative** (if you prefer the transform + short values like `medium`): change the XRD default to `medium` and keep:\n```yaml\n- fromFieldPath: spec.instanceClass\n  toFieldPath: spec.forProvider.instanceClass\n  transforms:\n    - type: String\n      string:\n        type: Format\n        format: \"db.t3.%s\"\n```\nPick one representation \u2014 don't mix full names with the format transform.\n\n### Defect 2 \u2014 missing `ReadinessChecks`\n- `readiness: {}` meant no criteria, so Crossplane could never mark the composed resource (and therefore the XR/claim) Ready.\n- The `MatchString` check on `status.atProvider.status == available` ties composition readiness to the RDS instance actually being available in AWS.\n\n## Note on the XRD `required` block\nSince `instanceClass` has a `default`, marking it `required` is redundant but harmless. If you want claims to always be able to omit it, you can drop it from `required`:\n\n```yaml\n              # required:\n              #   - instanceClass\n```\n\nWith both patches corrected and `readinessChecks` populated, the Composition will propagate the instance class correctly and transition to Ready once the RDS instance reports `available`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-9tntlyeg/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 2,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7777777777777778
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/crossplane/warm/T4-debug_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 2,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7777777777777778
+    },
+    "corrected_composite_no_idiom": 0.875,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 796
+  },
+  "content": "# Pulumi Preview Behavior \u2014 Answers\n\n## 1. Which property triggered the replace?\n\nIn this scenario, the replace on the RDS instance is triggered by a **force-new property** change \u2014 most likely one of:\n\n- **`instanceClass`** (`db.t3.micro` \u2192 `db.t3.medium`) \u2014 changing instance class forces replacement in the AWS provider\n- **`engineVersion`**, **`allocatedStorage`** downgrades, or **`storageType`** \u2014 also force-new\n- **`multiAz`** is *not* force-new (it triggers an in-place modification)\n- Non-force-new changes (e.g., `backupRetentionPeriod`) show as **update**, not replace\n\n**How to identify it:** the preview output prints:\n\n```\n~ azure:\u2026 / aws:rds/instance:Instance: (replace)\n    ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n```\n\nThe property marked with `~` directly under a `(replace)` resource is the trigger. You can also run `pulumi preview --diff --show-secrets` (with access), or inspect `OldInputs` vs `NewInputs` in the checkpoint state (`pulumi stack export`).\n\nIf the change came from **stack config** (`prod.yaml` vs `dev.yaml`), the chain is: `config.get(\"dbInstanceClass\")` \u2192 resource arg \u2192 force-new \u2192 `CreateReplacement` + `Replace` + `DeleteRetained` steps in the preview's step list.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target` runs an **targeted update**: only the resources you name (by URN, or via `--target-dependents`) are reconciled.\n\nIt skips:\n\n- **All other resources** \u2014 nothing outside the target list is created, updated, or deleted, **even if their inputs changed**\n- **Deletes of untargeted resources** \u2014 a targeted update will not remove resources that are no longer in the program\n- **Dependent resource changes** \u2014 unless `--target-dependents` is passed, resources that depend on the target are left untouched (dangerous: can leave state out of sync with the program)\n\nCaveat: targeted updates **replace the full resource list in state** for that URN's dependencies only if `--target-dependents` is used; otherwise Pulumi warns because the resulting state may diverge from the program. Notably, `--target` on the RDS instance in a replace scenario would create the new DB but might skip updating the secret/connection-string consumers unless they're included.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **Marking**: wrap values with `pulumi.secret(...)` or use `config.getSecret(...)` (the `ConfigSecret` per the spec). Secret-ness propagates through `apply`, interpolations, and outputs passed as resource inputs.\n- **In state**: secrets are stored **encrypted** in the state backend using the stack's passphrase or KMS/Cloud KMS key \u2014 never plaintext (satisfies acceptance criterion 3).\n- **In outputs**: a secret output renders as `[secret]` in CLI output, `pulumi stack output`, and the Pulumi Service UI. It's only revealed via `pulumi stack output --show-secrets` (requires decryption rights).\n- **In diffs**: preview shows `~ value: [secret]` \u2014 the old/new values are masked even though a diff is computed.\n- **Caveat**: if a secret is used in a `apply()` that constructs a non-secret string (e.g., concatenation into a plain output), the result must itself be wrapped in `pulumi.secret()` or it may leak \u2014 secret propagation follows the output type system, so manually built plain strings aren't automatically protected.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-til8b7ze/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/pulumi-typescript/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

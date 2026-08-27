@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 2243,
+    "output": 1467
+  },
+  "content": "# Predicted Delivery Behavior for PR #42\n\n## 1. What reconciles, and in what order?\n\nWhen PR #42 merges, the `GitRepository` source picks up the commit on its next interval, then the `Kustomization` controllers reconcile in **dependency order** (defined by `dependsOn`):\n\n```\nGitRepository (fetch commit)\n   \u2514\u2500> infra kustomizations (S3, RDS, IAM)   \u2190 ACK CRs applied\n         \u2514\u2500> app kustomization (overlays/prod)  \u2190 deployment patch\n```\n\nTypical order:\n1. **S3 bucket** (new manifest) \u2014 ACK creates the bucket.\n2. **RDS instance** (modified) \u2014 ACK patches the existing `Instance` CR.\n3. **App deployment (prod overlay)** \u2014 replicas patched to 4, *after* infra is ready if `dependsOn` links them.\n\nOnly the changed paths actually cause meaningful drift-correction; unchanged resources are re-applied as no-ops.\n\n## 2. Does the RDS instance get recreated?\n\n**No.** Flux does a `kubectl apply`, which is a *patch*, not delete-and-create. The ACK RDS controller sees the same `Instance` CR (same name/namespace) with a changed `instanceClass` and issues an **in-place ModifyDBInstance** call to AWS. RDS handles a `db.t3.micro \u2192 db.t3.medium` scale as a **modify** (a reboot/failover event on multi-AZ), not a destroy. \n\nIt would only be recreated if an **immutable field** changed (e.g., the CR name, or a field ACK maps to a replacement). `instanceClass` is mutable, so the underlying database and its storage are preserved.\n\n## 3. What happens to the S3 bucket if its manifest is deleted from Git?\n\nFlux **pruning** kicks in (`prune: true` on the Kustomization). When the manifest disappears from the built overlay, Flux garbage-collects the corresponding `Bucket` CR from the cluster. ACK then **deletes the actual S3 bucket** in AWS.\n\n\u26a0\ufe0f Caveats:\n- A non-empty bucket may fail to delete unless force/empty is configured \u2014 reconciliation errors and retries.\n- If the ACK CR has a `deletionPolicy: orphan` / `retain` annotation, the AWS bucket survives even though the CR is removed.\n- If `prune: false`, the CR is left dangling in the cluster.\n\n## 4. How does Flux handle the prod-only replica change?\n\nThe `replicas: 4` patch lives in `overlays/prod/`. Flux runs a **separate Kustomization per environment** (dev overlay vs prod overlay). `kustomize build overlays/prod` renders the patched deployment; `overlays/dev` is built independently and is unaffected.\n\nThis satisfies **environment isolation (AC #7)**: the prod reconciliation applies 4 replicas only to prod-namespaced/prod-cluster resources; dev keeps its own replica count. No shared state is mutated.\n\n## 5. Role of `dependsOn`\n\n`dependsOn` between Kustomizations enforces **ordered, gated reconciliation**:\n\n- The app Kustomization won't apply until the infra Kustomizations (S3/RDS/IAM) report **Ready**.\n- Prevents the app from starting before its DB/secret/bucket exist (avoids crash-loops).\n- On failure of a dependency, dependents are **held back** and retried on the next interval rather than applied against incomplete infra.\n\nNote: `dependsOn` gates *Flux applying the CRs*, but it does **not** wait for the underlying AWS resource to be fully provisioned unless health checks (`healthChecks`/`wait: true`) are configured on the ACK CRs. Without those, \"Ready\" means the CR was applied, not that RDS finished creating.\n\n---\n\n### Summary Table\n\n| Change | Reconcile action | Destructive? |\n|---|---|---|\n| RDS `instanceClass` | ACK ModifyDBInstance (in-place) | No (reboot only) |\n| New S3 bucket | ACK CreateBucket | No |\n| Prod `replicas: 4` | prod overlay only, rolling update | No; dev untouched |\n| (Deleting S3 manifest) | Flux prune \u2192 ACK delete | Yes, unless orphan/retain |",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/knr-ops/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

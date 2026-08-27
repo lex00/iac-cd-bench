@@ -1,0 +1,86 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1620,
+    "output": 1788
+  },
+  "content": "# Tracing `storageGB` change from 20 \u2192 50\n\n## 1. Trace through XRD \u2192 Composition \u2192 managed resources\n\n**Step-by-step:**\n\n1. **Claim update** \u2014 You `kubectl apply` (or a GitOps controller applies) the modified Claim. The Claim's `spec.storageGB` field flips from `20` to `50`.\n\n2. **XRD validation** \u2014 The claim is validated against the XRD's OpenAPI schema. `storageGB` must be a declared field in the XRD (e.g. under `spec.parameters` or top-level), otherwise the API server rejects the write. Assuming it's valid, the change is persisted.\n\n3. **Claim \u2192 Composite (XR) propagation** \u2014 Crossplane's claim reconciler syncs the Claim's spec into the bound composite resource (XR). The `storageGB: 50` value now lives on the XR.\n\n4. **Composition reconciliation** \u2014 The XR reconciler runs the Composition. With **function pipeline mode**, `function-patch-and-transform` maps the field into the managed resource specs:\n\n```yaml\n# Inside the composition pipeline\n- type: FromCompositeFieldPath\n  fromFieldPath: spec.storageGB\n  toFieldPath: spec.forProvider.allocatedStorage\n```\n\n   Only the **RDS managed resource** references `storageGB`. The S3 bucket, IAM, EKS resources have no patch reading that field, so their desired specs are unchanged.\n\n5. **Managed resource update** \u2014 The RDS MR's `spec.forProvider.allocatedStorage` is patched to `50`. The AWS provider controller detects drift between desired (`50`) and observed (`20`) state.\n\n6. **Provider \u2192 cloud** \u2014 The provider calls `ModifyDBInstance` on the AWS API.\n\n## 2. RDS: in-place or recreated?\n\n**Updated in-place.** `allocatedStorage` is a mutable RDS attribute \u2014 AWS supports online storage scaling via `ModifyDBInstance`. Crossplane's AWS provider issues an update call, **not** a delete+create.\n\nKey nuances:\n- Storage can only be **increased**, never decreased, on RDS. 20\u219250 is fine; 50\u219220 would fail at the AWS API.\n- Whether the change applies immediately or in a maintenance window depends on `applyImmediately` in the MR's `forProvider`.\n- Contrast: if you'd changed an *immutable* field (e.g. `engine`, `availabilityZone` in some cases), the provider would show it as un-reconcilable drift \u2014 Crossplane generally does **not** auto-recreate immutable managed resources; it surfaces an error rather than silently destroying stateful infra. (RDS storage is not this case.)\n\n## 3. What happens to the S3 bucket?\n\n**Nothing.** The bucket MR's desired spec is not derived from `storageGB`. Since desired == observed, the provider computes no diff and makes no API call. The reconciler still *visits* the bucket resource on its loop, confirms no drift, and moves on. No mutation, no recreation.\n\n## 4. Role of `ReadinessChecks`\n\n`ReadinessChecks` determine when a managed resource is considered **Ready**, which gates the overall XR/Claim readiness:\n\n- After the RDS `ModifyDBInstance` call, the instance transitions to `modifying` / `storage-optimization` status in AWS.\n- A readiness check like `MatchString` on `status.atProvider.dbInstanceStatus == \"available\"` will report the MR as **not Ready** during the resize.\n- This propagates up: the XR's `Ready` condition goes `False`, and the Claim's `Ready` condition goes `False` until the RDS resize completes.\n- Once AWS reports `available` again, the check passes and readiness flips back to `True`.\n\nSo `ReadinessChecks` give you accurate, honest status during a potentially long (minutes) storage operation \u2014 downstream consumers waiting on the Claim's readiness won't prematurely treat the DB as done.\n\n## 5. How Crossplane handles the reconciliation loop\n\nCrossplane is **continuous/level-triggered**, unlike Terraform's imperative plan/apply:\n\n- **Controllers per resource kind** \u2014 separate reconcilers for Claim, XR, and each managed resource, each running its own control loop.\n- **Watch + requeue** \u2014 changes trigger reconciliation immediately (edge), and resources are periodically requeued (level) so drift is corrected even without a spec change. If someone manually shrank the RDS storage in the AWS console, Crossplane would attempt to reconcile it back toward desired state on the next loop.\n- **Desired vs observed** \u2014 each loop the provider observes actual cloud state, diffs against the MR spec, and issues create/update/delete calls to converge.\n- **Idempotency** \u2014 because it's level-triggered, re-running the loop when already converged is a no-op (this is why the S3 bucket is untouched).\n- **No global plan** \u2014 there's no atomic \"apply everything\" step; each resource converges independently and asynchronously, with readiness conditions bubbling up to express aggregate state.\n\n**Net effect for this change:** one Claim edit \u2192 XR sync \u2192 composition re-render \u2192 single RDS MR patch \u2192 one AWS `ModifyDBInstance` call \u2192 readiness goes False then True \u2192 Claim reports Ready when the resize finishes. Everything else stays put.",
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/crossplane/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,97 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1091,
+    "output": 4679
+  },
+  "content": "## 1. Which property triggered the replace?\n\n**How to find it, not guess it.** The one-line preview (`~ db replace`) is not enough \u2014 run:\n\n```bash\npulumi preview --diff --show-replacement-steps\n```\n\nPulumi prints the diff and then an explicit line:\n\n```\n    ~ aws:rds/instance:Instance: (replace)\n        [id=app-db-a1b2c3d]\n        [urn=urn:pulumi:prod::app::aws:rds/instance:Instance::app-db]\n      ~ storageEncrypted: false => true\n    ...\n    --outputs:--\nResources:\n    +-1 to replace\n```\n\nOnly the properties listed under the `replace` step with a `~` are candidates; Pulumi computes replacement from the provider's diff response (`DiffResponse.replaces`), which for the AWS provider maps to the Terraform `ForceNew` flags.\n\n**For the RDS instance in this spec, the replace-triggering properties are:**\n\n| Property | Replaces? | Notes |\n|---|---|---|\n| `storageEncrypted` | **yes** | dev `false` \u2192 prod `true`. Cannot be toggled in place \u2014 this is the #1 culprit when promoting dev config into prod. |\n| `kmsKeyId` | **yes** | Changing/adding a CMK forces new. |\n| `dbName` | **yes** | Initial database name is create-time only. |\n| `username` | **yes** | Master username is create-time only (`password` is *not*). |\n| `engine` | **yes** | `postgres` \u2192 anything else. |\n| `dbSubnetGroupName` | **yes** | Moving VPCs/subnet groups. |\n| `availabilityZone` | **yes** | Pinning an AZ. Note `multiAz` alone is **update-in-place**. |\n| `identifier` / auto-naming | **yes** | Renaming the *Pulumi logical resource* (`new aws.rds.Instance(\"app-db\")` \u2192 `\"app-db-pg\"`) changes the auto-generated physical name and forces replace. Fix with `aliases: [{ name: \"app-db\" }]`, not a rename. |\n| `snapshotIdentifier` | **yes** | Restoring from a different snapshot. |\n| `instanceClass` (t3.micro\u2192t3.medium) | no | in-place modify, brief outage |\n| `multiAz`, `backupRetentionPeriod`, `deletionProtection`, `allocatedStorage` (increase) | no | in-place |\n\n**The trap in this scenario:** acceptance criterion #2 requires `deletionProtection: true`. A replace is a *create-then-delete* (or delete-then-create). The delete leg will fail at the API with `InvalidParameterCombination: Cannot delete protected DB Instance`. So a \"clean\" preview turns into a half-applied update. You must either (a) not change a ForceNew property, or (b) deliberately unset deletion protection in a prior `up`, then replace.\n\nRecommended hardening in the program:\n\n```ts\nconst db = new aws.rds.Instance(\"app-db\", {\n    storageEncrypted: isProd,          // <-- decide once, never flip\n    deletionProtection: true,\n    backupRetentionPeriod: isProd ? 14 : 7,\n    publiclyAccessible: false,\n    // ...\n}, {\n    protect: true,                                     // hard-stop on delete\n    ignoreChanges: [\"snapshotIdentifier\"],             // avoid drift-driven replace\n    additionalSecretOutputs: [\"password\", \"endpoint\"],\n});\n```\n\n`protect: true` converts an accidental replace from \"outage\" into \"preview error\", which is what you want on prod. To intentionally replace: `pulumi state unprotect <urn>` first.\n\nIf the property genuinely must change, force ordering so you don't hit the RDS identifier-uniqueness collision:\n\n```ts\n{ deleteBeforeReplace: true }   // accepts downtime, avoids \"identifier already exists\"\n```\n\n---\n\n## 2. What does `pulumi up --target` skip?\n\n`--target <urn>` is **not** \"run the program partially.\" The **entire TypeScript program still executes** \u2014 every `new Resource(...)` is registered, every `apply` runs, all provider config is loaded. What changes is the *step* Pulumi emits per resource.\n\n**Skipped:**\n\n- **Mutations to non-targeted resources.** Anything outside the target set is emitted as `same`, even if its inputs drifted. Your `--diff` will show nothing for them.\n- **Downstream dependents.** If you target the RDS instance, the `ConfigSecret`-derived connection string, the Kubernetes `Secret`, and the ALB/CloudFront wiring that consume `db.endpoint` are **not** updated. You get a running DB and stale consumers. Use `--target-dependents` to pull the transitive closure in.\n- **Creates for brand-new resources not in the target set.** Pulumi warns:\n  `warning: resource urn:...:Bucket is not targeted and will not be created`\n  A dependent that *needs* that resource will fail with an unresolved reference.\n- **Deletes.** Resources deleted from the program are **not** destroyed unless explicitly targeted. `--target` never garbage-collects.\n- **Refresh.** No implicit refresh; combine with `pulumi refresh --target` if you need it.\n\n**Not skipped:**\n\n- Program execution, including any side-effecting `apply` callbacks or dynamic providers.\n- **Stack outputs** \u2014 these are recomputed from the current run. If an output depends on a resource whose new value was skipped, you can persist an output inconsistent with the actual infra state. Pulumi will emit the \"not targeted\" warning but still write outputs.\n- Provider/`ComponentResource` registration (components are transparent; you must target the *concrete* child URNs, not the component, unless you use `--target-dependents`).\n\n**Practical rule for this spec:** `--target` is a break-glass tool for \"fix one broken resource.\" Environment isolation (criterion #7) comes from **separate stacks** (`dev.yaml` / `prod.yaml`), not from `--target`. Using `--target` as a routine deployment mechanism guarantees state that no single `pulumi up` can reproduce.\n\n```bash\n# break-glass: rotate just the DB and everything reading its endpoint\npulumi up --stack prod \\\n  --target 'urn:pulumi:prod::app::aws:rds/instance:Instance::app-db' \\\n  --target-dependents\n```\n\n---\n\n## 3. How does Pulumi handle secrets in outputs?\n\n**Three layers: config at rest, taint propagation at runtime, state at rest.**\n\n### Config at rest\n```bash\npulumi config set --secret --stack prod dbPassword 'S3cr3t!'\n```\nWrites ciphertext into `Pulumi.prod.yaml`:\n```yaml\nconfig:\n  app:dbPassword:\n    secure: v1:8Kx2...==\n```\nEncrypted by the stack's **secrets provider** \u2014 Pulumi Service default, or `--secrets-provider awskms://alias/pulumi-prod`, `passphrase`, `gcpkms://`, `hashivault://`. Per-stack key \u21d2 dev's ciphertext is undecryptable by prod's key. This satisfies \"never plaintext in Git.\" Read it back typed:\n\n```ts\nconst cfg = new pulumi.Config();\nconst dbPassword = cfg.requireSecret(\"dbPassword\");  // Output<string>, secret=true\n```\n\n### Taint propagation at runtime\nSecretness is a **bit on the `Output<T>`** and it is **contagious** through the dataflow graph:\n\n```ts\nconst connStr = pulumi.interpolate`postgres://${user}:${dbPassword}@${db.endpoint}/${dbName}`;\n// connStr.isSecret === true, because one input was secret\n```\n\nAnything produced by `.apply()`, `pulumi.all()`, or `interpolate` on a secret input is itself secret. `pulumi.secret(x)` marks manually; `pulumi.unsecret(x)` deliberately strips (requires you to mean it).\n\n**The leak that propagation does *not* stop:** `console.log(await connStr.promise())` or a `.apply(v => console.log(v))` prints plaintext to CI logs. Propagation guards *state and outputs*, not your own I/O.\n\n### State and outputs at rest\n- Any secret-tainted value is stored **encrypted inside the checkpoint** (`{\"4dabf18193072939515e22adb298388d\":\"1b47061264138c4ac30d75fd1eb44270\",\"ciphertext\":\"v1:...\"}`). The rest of the state is plaintext JSON.\n- Provider-known-sensitive fields (e.g. `aws.rds.Instance.password`) are auto-marked by the provider.\n- Belt and braces for fields the provider doesn't flag:\n  ```ts\n  { additionalSecretOutputs: [\"endpoint\", \"address\"] }\n  ```\n- Preview diffs render secrets as `[secret]` rather than the value.\n- Stack outputs:\n  ```ts\n  export const dbConnectionString = connStr;   // stays secret\n  ```\n  ```\n  $ pulumi stack output\n  dbConnectionString  [secret]\n  $ pulumi stack output dbConnectionString --show-secrets\n  postgres://app:S3cr3t!@app-db...\n  ```\n- **StackReference caveat:** a consuming stack must use `ref.getOutput(\"x\")` \u2014 the secret bit survives \u2014 but the consumer's own state now holds the ciphertext under *its* key. Cross-stack secret sharing widens the blast radius; prefer having each stack read the same KMS-backed source.\n\n### End-to-end for this spec\n```ts\nconst dbPassword = cfg.requireSecret(\"dbPassword\");\n\nconst db = new aws.rds.Instance(\"app-db\", {\n    password: dbPassword,                    // secret in \u2192 secret in state\n    storageEncrypted: isProd,\n    deletionProtection: true,\n    backupRetentionPeriod: isProd ? 14 : 7,\n    publiclyAccessible: false,\n}, { protect: true, additionalSecretOutputs: [\"endpoint\"] });\n\nconst connStr = pulumi.interpolate`postgres://${db.username}:${dbPassword}@${db.endpoint}:5432/${dbName}`;\n\nnew k8s.core.v1.Secret(\"db-conn\", {\n    metadata: { namespace: ns.metadata.name },\n    stringData: { DATABASE_URL: connStr },   // k8s provider marks stringData secret\n}, { provider: k8sProvider });\n\nexport const dbEndpoint = db.endpoint;       // [secret] via additionalSecretOutputs\n```\n\n**Two residual gaps to state plainly:** (1) the value lands **base64, not encrypted, in etcd** unless the cluster has encryption-at-rest or an external secrets operator configured \u2014 Pulumi's guarantees end at the Kubernetes API boundary; (2) whoever can run `pulumi stack output --show-secrets` against prod can read every secret, so the secrets-provider KMS key policy *is* your access control.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/generated_2.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/generated_3.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-wnuyq11l/generated_4.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/pulumi-typescript/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

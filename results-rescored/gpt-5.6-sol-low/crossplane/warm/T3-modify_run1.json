@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-hh_c2k_2/generated_2.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-hh_c2k_2/generated_1.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of t"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 625,
+    "output": 1809
+  },
+  "content": "With the Upbound AWS provider, `ProviderConfig` contains credentials, not a default AWS region. The composition must set both:\n\n- `spec.providerConfigRef.name: aws-us-west-2`\n- `spec.forProvider.region: us-west-2`\n\nCreate the additional provider configuration and reference it only from the new regional resources in the **prod composition**. Existing claim schemas and claim manifests remain unchanged.\n\n### `providerconfig-us-west-2.yaml`\n\n```yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-provider-credentials\n      key: creds\n```\n\nThe same credentials Secret may be used by both regional provider configurations, assuming the AWS principal has access to both regions.\n\n### Prod composition additions\n\nAdd the replica bucket resources to the existing prod `Composition`. Keep the existing primary resources pointed at the current provider configuration and region.\n\n```yaml\n# Add under spec.resources in the prod Composition.\n\n- name: assets-replica-bucket\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: Bucket\n    metadata:\n      annotations:\n        crossplane.io/external-name: placeholder-replaced-by-patch\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        forceDestroy: false\n        tags:\n          Environment: prod\n          Purpose: assets-replica\n  patches:\n    # Use the existing composite field that identifies the application.\n    # This does not require a claim change if the field already exists.\n    - type: FromCompositeFieldPath\n      fromFieldPath: spec.parameters.applicationName\n      toFieldPath: metadata.annotations[crossplane.io/external-name]\n      transforms:\n        - type: string\n          string:\n            type: Format\n            fmt: \"%s-prod-assets-us-west-2\"\n\n- name: assets-replica-versioning\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketVersioning\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        versioningConfiguration:\n          - status: Enabled\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            crossplane.io/composite: placeholder\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: metadata.uid\n      toFieldPath: spec.forProvider.bucketSelector.matchLabels[crossplane.io/composite]\n\n- name: assets-replica-encryption\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketServerSideEncryptionConfiguration\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        rule:\n          - applyServerSideEncryptionByDefault:\n              - sseAlgorithm: AES256\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            crossplane.io/composite: placeholder\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: metadata.uid\n      toFieldPath: spec.forProvider.bucketSelector.matchLabels[crossplane.io/composite]\n\n- name: assets-replica-public-access-block\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketPublicAccessBlock\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        blockPublicAcls: true\n        blockPublicPolicy: true\n        ignorePublicAcls: true\n        restrictPublicBuckets: true\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            crossplane.io/composite: placeholder\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: metadata.uid\n      toFieldPath: spec.forProvider.bucketSelector.matchLabels[crossplane.io/composite]\n```\n\nAlternatively, if the composition already applies a common label such as `app` or `environment` to composed resources, use that label in the selectors instead of adding the UID-based selector patches.\n\nThe replication configuration itself remains in the primary bucket\u2019s region and therefore continues using the existing provider configuration:\n\n```yaml\n- name: assets-cross-region-replication\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketReplicationConfiguration\n    spec:\n      providerConfigRef:\n        name: aws-primary\n      forProvider:\n        region: us-east-1\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            crossplane.io/composite: placeholder\n        roleSelector:\n          matchControllerRef: true\n          matchLabels:\n            role-purpose: s3-replication\n        rule:\n          - id: replicate-to-us-west-2\n            status: Enabled\n            destination:\n              - bucketSelector:\n                  matchControllerRef: true\n                  matchLabels:\n                    crossplane.io/composite: placeholder\n            filter:\n              - prefix: \"\"\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: metadata.uid\n      toFieldPath: spec.forProvider.bucketSelector.matchLabels[crossplane.io/composite]\n    - type: FromCompositeFieldPath\n      fromFieldPath: metadata.uid\n      toFieldPath: spec.forProvider.rule[0].destination[0].bucketSelector.matchLabels[crossplane.io/composite]\n```\n\nEnsure the replication IAM role is restricted to the source and replica bucket ARNs rather than wildcard resources. Apply the provider configuration and updated prod composition:\n\n```bash\nkubectl apply -f providerconfig-us-west-2.yaml\nkubectl apply -f composition-prod.yaml\n```\n\nNo claim changes are required. Dev remains on its existing composition/provider configuration, while only prod gains the `us-west-2` replica resources. Exact S3 selector fields can vary slightly by installed `provider-aws-s3` version, so the manifests should be matched to that provider\u2019s CRDs.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-hh_c2k_2/providerconfig-us-west-2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-hh_c2k_2/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-hh_c2k_2/generated_2.yaml"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/crossplane/warm/T3-modify_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

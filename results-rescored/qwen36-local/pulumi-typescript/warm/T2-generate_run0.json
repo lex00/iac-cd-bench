@@ -1,0 +1,86 @@
+{
+  "model": "qwen36-local",
+  "task": "T2-generate",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 684,
+    "output": 8192
+  },
+  "content": "\n\nHere is a complete, idiomatic Pulumi TypeScript implementation. It includes the `ComponentResource` definition, a stack-config-driven usage example, and explicit mappings to the acceptance criteria.\n\n### 1. `infrastructure.ts` (ComponentResource)\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nexport interface AppInfrastructureArgs {\n    environment: \"dev\" | \"prod\";\n    vpcId: pulumi.Input<string>;\n    subnetIds: pulumi.Input<string[]>;\n    securityGroupId: pulumi.Input<string>;\n    bucketName: pulumi.Input<string>;\n    dbUsername: pulumi.Input<string>;\n    dbPassword: pulumi.SecretInput;\n    // Optional: EKS OIDC provider ARN for prod trust policy\n    oidcProviderArn?: pulumi.Input<string>;\n}\n\nexport class AppInfrastructure extends pulumi.ComponentResource {\n    public readonly bucketArn: pulumi.Output<string>;\n    public readonly rdsEndpoint: pulumi.Output<string>;\n    public readonly iamRoleArn: pulumi.Output<string>;\n    public readonly dbSecret: pulumi.Output<string>;\n\n    constructor(name: string, args: AppInfrastructureArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"custom:infra:AppStack\", name, {}, opts);\n\n        const isProd = args.environment === \"prod\";\n\n        // -----------------------------------------------------------------------\n        // 1. S3 Bucket: Versioning, Encryption, No Public Access\n        // -----------------------------------------------------------------------\n        const bucket = new aws.s3.BucketV2(`${name}-assets`, {\n            bucket: args.bucketName,\n            versioning: { enabled: true },\n            tags: { Environment: args.environment, ManagedBy: \"pulumi\" }\n        }, { parent: this });\n\n        new aws.s3.BucketPublicAccessBlock(`${name}-bucket-block`, {\n            bucket: bucket.id,\n            blockPublicAcls: true,\n            blockPublicPolicy: true,\n            ignorePublicAcls: true,\n            restrictPublicBuckets: true,\n        }, { parent: this });\n\n        new aws.s3.BucketServerSideEncryptionConfiguration(`${name}-bucket-encrypt`, {\n            bucket: bucket.id,\n            rule: {\n                applyServerSideEncryptionConfiguration: {\n                    sseAlgorithm: isProd ? \"aws:kms\" : \"AES256\",\n                    kmsMasterKeyId: isProd ? \"alias/aws/s3\" : undefined,\n                }\n            }\n        }, { parent: this });\n\n        this.bucketArn = bucket.arn;\n\n        // -----------------------------------------------------------------------\n        // 2. RDS PostgreSQL: Deletion Protection, Backup, Network Isolation\n        // -----------------------------------------------------------------------\n        const dbSubnetGroup = new aws.rds.SubnetGroup(`${name}-db-subnet`, {\n            name: `${name}-db-subnet`,\n            subnetIds: args.subnetIds,\n            tags: { Environment: args.environment }\n        }, { parent: this });\n\n        const dbInstance = new aws.rds.Instance(`${name}-db`, {\n            engine: \"postgres\",\n            engineVersion: \"15.4\",\n            instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n            allocatedStorage: 20,\n            dbName: \"appdb\",\n            username: args.dbUsername,\n            password: args.dbPassword,\n            publiclyAccessible: false,                // Criterion 2\n            skipFinalSnapshot: true,\n            storageEncrypted: isProd,\n            multiAz: isProd,\n            deletionProtection: true,                 // Criterion 2\n            backupRetentionPeriod: 7,                 // Criterion 2\n            vpcSecurityGroupIds: [args.securityGroupId],\n            dbSubnetGroupName: dbSubnetGroup.name,\n            tags: { Environment: args.environment }\n        }, { parent: this });\n\n        this.rdsEndpoint = dbInstance.endpoint;\n\n        // -----------------------------------------------------------------------\n        // 3. IAM Role: Least Privilege, No Wildcards on Prod\n        // -----------------------------------------------------------------------\n        const trustPolicy = isProd\n            ? {\n                Version: \"2012-10-17\",\n                Statement: [{\n                    Effect: \"Allow\",\n                    Principal: { Federated: args.oidcProviderArn! },\n                    Action: \"sts:AssumeRoleWithWebIdentity\",\n                    Condition: {\n                        StringEquals: { \"token-issuer\": args.oidcProviderArn!.apply(arn => arn.split(\"/\").pop()) }\n                    }\n                }]\n            }\n            : {\n                Version: \"2012-10-17\",\n                Statement: [{ Effect: \"Allow\", Principal: { AWS: \"*\" }, Action: \"sts:AssumeRole\" }]\n            };\n\n        const role = new aws.iam.Role(`${name}-app-role`, {\n            name: `${name}-app-role`,\n            assumeRolePolicy: pulumi.jsonStringify(trustPolicy),\n            tags: { Environment: args.environment }\n        }, { parent: this });\n\n        this.iamRoleArn = role.arn;\n\n        // Least-privilege policy (strictly scoped, no action wildcards in prod)\n        const policyDoc = {\n            Version: \"2012-10-17\",\n            Statement: [\n                {\n                    Effect: \"Allow\",",
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T2-generate_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "no_extractable_output: the task's enabled stages act on files the model was to produce, and the completion contains no code block \u2014 lint and static would have nothing to check and would pass vacuously",
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

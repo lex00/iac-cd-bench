@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 683,
+    "output": 4183
+  },
+  "content": "\n\nBased on the canonical scenario and Pulumi's TypeScript/AWS behavior, here are the direct answers:\n\n### 1. Which property triggered the replace on the DB?\n**`storageEncrypted`** (or potentially `engine`/`engineVersion`/`dbName`).  \nIn your scenario, `dev` specifies an unencrypted RDS instance while `prod` explicitly requires encryption. AWS RDS **does not support enabling encryption on an existing unencrypted instance in-place**. Pulumi's `@pulumi/aws` provider correctly maps this AWS constraint to a `replace` operation in the preview. Other common RDS properties that force replacement include `dbName`, `engine`, major `engineVersion` bumps, `dbSubnetGroupName`, and `port`, but `storageEncrypted` is the most likely trigger given your environment spec.\n\n### 2. What does `pulumi up --target` skip?\n`pulumi up --target <URN>` is a surgical override that skips:\n- **All other resources** in the stack, even if they have pending changes.\n- **Normal dependency graph resolution** for non-targeted resources. Pulumi will not evaluate upstream/downstream dependencies for anything outside the target.\n- **Dependent resource updates** by default. If your DB is replaced, resources that depend on it (e.g., ECS tasks, Lambda functions, or security groups) will **not** be updated unless you pass `--target-dependents` alongside `--target`.\n\n\u26a0\ufe0f *Note:* Using `--target` can leave the stack in a temporarily inconsistent state if dependencies change without being targeted. It's primarily intended for debugging, emergency rollbacks, or isolating provider bugs.\n\n### 3. How does Pulumi handle secrets in outputs?\nPulumi treats secrets as a deterministic, first-class type with strict handling:\n- **Encryption at rest**: Values from `config.getSecret()` or `.secret()` are encrypted in `Pulumi.dev.yaml`/`Pulumi.prod.yaml` and in the stack state using your configured encryption provider (default: passphrase-based, or cloud KMS/Vault).\n- **Automatic propagation**: Any output that derives from a secret (string interpolation, passing to another resource, returning from a function) is automatically marked as secret via `pulumi.Output<T>.secret()`. You don't need to manually re-mark derived outputs.\n- **CLI & log masking**: Secrets are rendered as `[secret]` in preview/up output, masked in audit logs, and excluded from standard exports unless explicitly decrypted.\n- **In-memory decryption only**: Values are decrypted only at runtime when the provider or stack code needs them. They are never persisted as plaintext outside the encrypted state/config, and Pulumi's AWS provider integration passes them securely to cloud APIs without logging raw values.\n\nThis aligns with your acceptance criterion: *\"Secret: never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"* (fulfilled by `Pulumi.*.yaml` encryption + state encryption).",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

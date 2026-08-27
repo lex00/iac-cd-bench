@@ -1,0 +1,101 @@
+{
+  "model": "glm-5.3",
+  "task": "T2-generate",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../../infra/s3/logs\n  - ../../../infra/iam/logs-role\npatches:\n  - target:\n      group: s3.aws.upbound.io\n      kind: Bucket\n      name: myapp-logs\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/region\n        value: us-east-1\nreplacements:\n  - source:\n      kind: ConfigMap\n      name: cluster-oidc\n      fieldPath: data.providerArn\n    targets:\n      - select:\n          group: iam.aws.upbound.io\n \n[validate CRDs] kubeconform: exit=0\nSummary: 15 resources found in 13 files - Valid: 1, Invalid: 0, Errors: 0, Skipped: 14\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/overlays/dev/logs: exit=1\nERR: Error: invalid Kustomization: json: unknown field \"transforms\"\n\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/overlays/prod/logs: exit=1\nERR: Error: invalid Kustomization: json: unknown field \"stringData\"\n\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/iam/logs-role: exit=0\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/s3/logs: exit=0"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "oundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'flux/kustomizations.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'flux/kustomizations.yaml'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_manifest_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_encryption\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_public_access_blocked\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_flux_kustomization_added\n========================= 5 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 911,
+    "output": 2646
+  },
+  "content": "# Adding a Logs S3 Bucket + IRSA Role + Flux Kustomization\n\n## 1. Base manifests \u2014 `infra/s3/logs/`\n\n### `infra/s3/logs/bucket.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: Bucket\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    region: us-east-1\n    tags:\n      Environment: overridden-by-overlay\n      ManagedBy: flux\n      Service: myapp-logs\n```\n\n### `infra/s3/logs/bucket-versioning.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketVersioning\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucketSelector:\n      matchLabels:\n        s3.bucket/name: myapp-logs\n    versioningConfiguration:\n      - status: Enabled\n```\n\n### `infra/s3/logs/bucket-server-side-encryption.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketServerSideEncryptionConfiguration\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucketSelector:\n      matchLabels:\n        s3.bucket/name: myapp-logs\n    rule:\n      - applyServerSideEncryptionByDefault:\n          - sseAlgorithm: AES256\n```\n\n### `infra/s3/logs/bucket-public-access-block.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketPublicAccessBlock\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucketSelector:\n      matchLabels:\n        s3.bucket/name: myapp-logs\n    blockPublicAcls: true\n    blockPublicPolicy: true\n    ignorePublicAcls: true\n    restrictPublicBuckets: true\n```\n\n> Label selectors need the Bucket to carry them \u2014 add labels to the Bucket:\n\n```yaml\nmetadata:\n  name: myapp-logs\n  labels:\n    s3.bucket/name: myapp-logs\n```\n\n### `infra/s3/logs/bucket-policy.yaml`\n\n```yaml\napiVersion: s3.aws.upbound.io/v1beta1\nkind: BucketPolicy\nmetadata:\n  name: myapp-logs\nspec:\n  forProvider:\n    bucketSelector:\n      matchLabels:\n        s3.bucket/name: myapp-logs\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Sid\": \"DenyInsecureTransport\",\n            \"Effect\": \"Deny\",\n            \"Principal\": \"*\",\n            \"Action\": \"s3:*\",\n            \"Resource\": [\n              \"arn:aws:s3:::myapp-logs\",\n              \"arn:aws:s3:::myapp-logs/*\"\n            ],\n            \"Condition\": {\n              \"Bool\": { \"aws:SecureTransport\": \"false\" }\n            }\n          }\n        ]\n      }\n```\n\n### `infra/s3/logs/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bucket.yaml\n  - bucket-versioning.yaml\n  - bucket-server-side-encryption.yaml\n  - bucket-public-access-block.yaml\n  - bucket-policy.yaml\n```\n\n## 2. IRSA role \u2014 `infra/iam/logs-role/`\n\n### `infra/iam/logs-role/role.yaml`\n\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  forProvider:\n    assumeRolePolicy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Effect\": \"Allow\",\n            \"Principal\": {\n              \"Federated\": \"${oidcProviderArn}\"\n            },\n            \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n            \"Condition\": {\n              \"StringEquals\": {\n                \"${oidcProviderHost}:sub\": \"system:serviceaccount:myapp:logs-writer\",\n                \"${oidcProviderHost}:aud\": \"sts.amazonaws.com\"\n              }\n            }\n          }\n        ]\n      }\n    tags:\n      ManagedBy: flux\n      Service: myapp-logs\n```\n\n`${oidcProviderArn}` / `${oidcProviderHost}` are replaced per-overlay via `replacements` (values differ per cluster).\n\n### `infra/iam/logs-role/policy.yaml`\n\nLeast-privilege read/write on the logs bucket only \u2014 no wildcards on actions, resource-scoped:\n\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: Policy\nmetadata:\n  name: myapp-logs-rw\nspec:\n  forProvider:\n    policy: |\n      {\n        \"Version\": \"2012-10-17\",\n        \"Statement\": [\n          {\n            \"Sid\": \"ListBucket\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\"s3:ListBucket\", \"s3:GetBucketLocation\"],\n            \"Resource\": \"arn:aws:s3:::myapp-logs\"\n          },\n          {\n            \"Sid\": \"ReadWriteObjects\",\n            \"Effect\": \"Allow\",\n            \"Action\": [\n              \"s3:GetObject\", \"s3:PutObject\", \"s3:DeleteObject\",\n              \"s3:AbortMultipartUpload\", \"s3:ListMultipartUploadParts\"\n            ],\n            \"Resource\": \"arn:aws:s3:::myapp-logs/*\"\n          }\n        ]\n      }\n```\n\n### `infra/iam/logs-role/role-policy-attachment.yaml`\n\n```yaml\napiVersion: iam.aws.upbound.io/v1beta1\nkind: RolePolicyAttachment\nmetadata:\n  name: myapp-logs-rw\nspec:\n  forProvider:\n    policyArnSelector:\n      matchLabels:\n        iam.policy/name: myapp-logs-rw\n    roleSelector:\n      matchLabels:\n        iam.role/name: myapp-logs-irsa\n```\n\n(Add matching labels to the Role and Policy metadata.)\n\n### `infra/iam/logs-role/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - role.yaml\n  - policy.yaml\n  - role-policy-attachment.yaml\n```\n\n## 3. Overlays\n\n### `overlays/dev/logs/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../../infra/s3/logs\n  - ../../../infra/iam/logs-role\npatches:\n  - target:\n      group: s3.aws.upbound.io\n      kind: Bucket\n      name: myapp-logs\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/region\n        value: us-east-1\nreplacements:\n  - source:\n      kind: ConfigMap\n      name: cluster-oidc\n      fieldPath: data.providerArn\n    targets:\n      - select:\n          group: iam.aws.upbound.io\n          kind: Role\n          name: myapp-logs-irsa\n        fieldPaths:\n          - spec.forProvider.assumeRolePolicy\n        options:\n          delimiter: \"\\\"\"\ntransforms:\n  - |-\n    # append env suffix to bucket name + all label/ARN references\n```\n\nSimpler and more common in knr-ops: use name-suffix transforms plus a shared ConfigMap:\n\n```yaml\nconfigMapGenerator:\n  - name: cluster-oidc\n    literals:\n      - providerArn=arn:aws:iam::111111111111:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/DEVCLUSTERID\n      - providerHost=oidc.eks.us-east-1.amazonaws.com/id/DEVCLUSTERID\nnameSuffix: -dev\nnamespace: ack-system\n```\n\nWith `nameSuffix: -dev`, the reconciled bucket becomes `myapp-logs-dev` (ack controllers use `metadata.name` as bucket name by default), and the IAM policy ARN references are patched accordingly:\n\n```yaml\npatches:\n  - target:\n      kind: Policy\n      name: myapp-logs-rw\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/policy\n        value: |\n          {\n            \"Version\": \"2012-10-17\",\n            \"Statement\": [\n              {\"Sid\":\"ListBucket\",\"Effect\":\"Allow\",\n               \"Action\":[\"s3:ListBucket\",\"s3:GetBucketLocation\"],\n               \"Resource\":\"arn:aws:s3:::myapp-logs-dev\"},\n              {\"Sid\":\"ReadWriteObjects\",\"Effect\":\"Allow\",\n               \"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\",\n                         \"s3:AbortMultipartUpload\",\"s3:ListMultipartUploadParts\"],\n               \"Resource\":\"arn:aws:s3:::myapp-logs-dev/*\"}\n            ]\n          }\n```\n\n### `overlays/prod/logs/kustomization.yaml`\n\nIdentical structure with:\n\n```yaml\nnameSuffix: -prod\n# providerArn/providerHost point to the prod cluster's OIDC provider\n# region: us-east-1 (or prod region)\n# optional: cross-account OIDC ARNs if prod is in a separate account\n```\n\n## 4. SOPS for sensitive values\n\nOIDC provider details aren't secrets, but if you need to keep the prod AWS account ID or external-ID out of plaintext:\n\n`infra/iam/logs-role/secrets/oidc.sops.yaml` (encrypted):\n\n```yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: myapp-logs-oidc\ntype: Opaque\nstringData:\n  providerArn: ENC[AES256_GCM,data:...,tag:...]\n```\n\nFlux (with SOPS decryption configured in the cluster) decrypts this before kustomize builds; the overlay's `replacements` source then reads from the Secret instead of a ConfigMap.\n\n## 5. Flux kustomization \u2014 `flux/kustomizations-logs.yaml`\n\n```yaml\n---\napiVersion: source.toolkit.fluxcd.io/v1\nkind: GitRepository\nmetadata:\n  name: knr-ops\n  namespace: flux-system\nspec:\n  interval: 1m\n  ref:\n    branch: main\n  url: https://github.com/org/knr-ops\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: logs-dev\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./overlays/dev/logs\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: knr-ops\n  wait: true\n  timeout: 3m\n  decryption:\n    provider: sops\n    secretRef:\n      name: sops-age\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: logs-prod\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./overlays/prod/logs\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: knr-ops\n  wait: true\n  timeout: 3m\n  decryption:\n    provider: sops\n    secretRef:\n      name: sops-age\n```\n\n## Verification\n\n```bash\nkubectl kustomize overlays/dev/logs   # renders myapp-logs-dev resources\nkubectl kustomize overlays/prod/logs  # renders myapp-logs-prod resources\nflux reconcile kustomization logs-dev -n flux-system\nkubectl get bucket myapp-logs-dev -n ack-system\n```\n\n**Acceptance check:** \u2705 versioned, \u2705 AES256 SSE, \u2705 public access fully blocked (+ deny-insecure-transport policy), \u2705 IRSA trust restricted to a single service account, least-privilege read/write actions (no wildcards), \u2705 dev/prod independently reconciled via separate Flux Kustomizations so changing prod cannot touch dev state.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/s3/logs/bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/s3/logs/bucket-versioning.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/s3/logs/bucket-server-side-encryption.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/s3/logs/bucket-public-access-block.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/s3/logs/bucket-policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/s3/logs/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/iam/logs-role/role.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/iam/logs-role/policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/iam/logs-role/role-policy-attachment.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/iam/logs-role/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/overlays/dev/logs/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/overlays/prod/logs/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-_hf73i0_/infra/iam/logs-role/secrets/oidc.sops.yaml"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.16666666666666666,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.3703703703703704
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T2-generate_run1.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 0.16666666666666666,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.3703703703703704
+    },
+    "published_composite_no_idiom": 0.4166666666666667,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.16666666666666666,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.3703703703703704
+    },
+    "corrected_composite_no_idiom": 0.4166666666666667,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

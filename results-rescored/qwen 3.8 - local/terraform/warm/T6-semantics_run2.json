@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "presses_remote_drift PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place FAILED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q7_destroy_blocked_by_prevent_destroy PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q1: expected error, got 'replace'\n    assert 'error' in 'replace'\n     +  where 'replace' = _norm('replace')\n     +    where 'replace' = <built-in method get of dict object at 0x10b48a700>('q1', '')\n     +      where <built-in method get of dict object at 0x10b48a700> = {'q1': 'replace', 'q2': ['aws_subnet.private[2]'], 'q3': 'destroy-and-recreate-all', 'q4': 'no-change', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py:44: AssertionError: q1: expected error, got 'replace'\nE   AssertionError: q6: expected update-in-place, got 'replace'\n    assert 'update' in 'replace'\n     +  where 'replace' = _norm('replace')\n     +    where 'replace' = <built-in method get of dict object at 0x10b48a700>('q6', '')\n     +      where <built-in method get of dict object at 0x10b48a700> = {'q1': 'replace', 'q2': ['aws_subnet.private[2]'], 'q3': 'destroy-and-recreate-all', 'q4': 'no-change', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py:78: AssertionError: q6: expected update-in-place, got 'replace'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q1_prevent_destroy_errors\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place\n========================= 2 failed, 5 passed in 0.01s ==========================\n",
+      "passed_count": 5,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1767,
+    "output": 107
+  },
+  "content": "```json\n{\n  \"q1\": \"replace\",\n  \"q2\": [\"aws_subnet.private[2]\"],\n  \"q3\": \"destroy-and-recreate-all\",\n  \"q4\": \"no-change\",\n  \"q5\": \"no-change\",\n  \"q6\": \"replace\",\n  \"q7\": {\n    \"completes\": false,\n    \"blocking_resource\": \"aws_s3_bucket.artifacts\"\n  }\n}\n```",
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.7142857142857143,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7142857142857143
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/terraform/warm/T6-semantics_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 0.7142857142857143,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7142857142857143
+    },
+    "published_composite_no_idiom": 0.8035714285714286,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.7142857142857143,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7142857142857143
+    },
+    "corrected_composite_no_idiom": 0.8035714285714286,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

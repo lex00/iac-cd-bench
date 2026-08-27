@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 789,
+    "output": 3244
+  },
+  "content": "\n\nHere is a structured security review of the PR diff, aligned with your `knr-ops` stack and canonical acceptance criteria.\n\n### \ud83d\udd0d 1. Security Issues Identified & 2. Severity Ranking\n\n| # | Issue | Severity | Violated Acceptance Criteria |\n|---|---|---|---|\n| **1** | **S3 bucket policy grants public read access** | \ud83d\udd34 **Critical** | AC #1: `no public access` |\n| **2** | **Plaintext DB password in deployment `env` vars** | \ud83d\udd34 **Critical** | AC #3: `never stored in plaintext in Git` |\n| **3** | **Missing container resource limits (`cpu`/`memory`)** | \ud83d\udfe1 **Warning** | Implicit K8s security/reliability standard; affects AC #5 cluster stability |\n| **4** | **RDS instance class change** | \ud83d\udd35 **Info** | AC #2 (must verify sizing matches spec & protective configs aren't dropped) |\n\n---\n\n### \ud83d\udee1\ufe0f 3. Required Changes Before Merge\n\n#### \ud83d\udd34 Critical: S3 Public Read Policy\n- **Risk:** Exposes application assets to the open internet. Bypasses VPC boundaries, enables unauthorized data scraping, and fails compliance audits.\n- **Fix:** \n  - Remove the `Principal: \"*\"` or `Effect: \"Allow\"` block granting `s3:GetObject` to anonymous principals.\n  - Enforce `BlockPublicAcls`, `IgnorePublicAcls`, `BlockPublicPolicy`, and `RestrictPublicBuckets` in the bucket's public access settings.\n  - If external access is genuinely required (e.g., static assets), route through CloudFront with OAI/OAC authentication and keep the bucket `private` per AC #1.\n  - **knr-ops note:** Ensure Terraform/IaC state for the bucket passes `checkov` or `tfsec` before Flux syncs.\n\n#### \ud83d\udd34 Critical: Plaintext Secrets in Deployment\n- **Risk:** Credentials persist in Git history, CI logs, and runtime pod specs (`kubectl get pod -o yaml`). Easily harvested by compromised nodes or overprivileged RBAC roles.\n- **Fix:**\n  - Remove plaintext `env` entries immediately.\n  - Use the stack-native secret workflow: encrypt with `sops` (age/GPG keys) and reference via Kustomize `secretGenerator` or `ExternalSecret` operator.\n  - Example Kustomize pattern:\n    ```yaml\n    # kustomization.yaml\n    secretGenerator:\n    - name: app-db-secret\n      files:\n        - password=secrets/db-password.enc\n      options:\n        annotations:\n          knr.dev/vault: \"encrypted\"\n    ```\n  - **Immediate Action:** Rotate the exposed database password post-merge, as it is already committed to the repo history.\n\n#### \ud83d\udfe1 Warning: Missing Container Resource Limits\n- **Risk:** Unbounded containers can exhaust node resources, cause noisy-neighbor effects, or trigger uncontrolled OOMKills. In a `knr-ops` GitOps setup, this can cause flux sync failures or cluster instability.\n- **Fix:**\n  - Add explicit `resources.requests` and `resources.limits` for `cpu` and `memory` to all container specs.\n  - Align limits with node sizing: `dev` (t3.medium) vs `prod` (t3.large) to prevent right-sized pods from being evicted or throttled.\n  - Enable `HorizontalPodAutoscaler` or `KEDA` if workload scales dynamically.\n\n#### \ud83d\udd35 Info: RDS Instance Class Change\n- **Checklist before merge:**\n  - \u2705 Dev must remain `db.t3.micro`, Prod must be `db.t3.medium` per spec.\n  - \u2705 Verify `deletion_protection = true` is unchanged.\n  - \u2705 Confirm `backup_retention_period >= 7` and `publicly_accessible = false` are not accidentally dropped during the resize.\n  - \u2705 Multi-AZ must be enforced for `prod` overlay.\n\n---\n\n### \u2705 Pre-Merge Validation Checklist (`knr-ops` Idiomatic)\nBefore approving, ensure the PR passes these stack-native gates:\n1. **Secret Policy:** `sops --decrypt` validates without errors; no plaintext credentials remain in `git log`.\n2. **Infrastructure Policy:** `checkov --framework terraform` or `tfsec` blocks the public S3 policy.\n3. **Kustomize Validation:** `kustomize build overlays/dev` & `overlays/prod` renders cleanly with resource limits applied.\n4. **Flux Drift Check:** `flux check` and `flux get kustomizations` show no pending drift or sync warnings.\n5. **Environment Isolation:** Confirm overlays use proper `namespace` and `commonLabels` so `dev` changes never bleed into `prod`.\n\n**Recommendation:** \ud83d\udeab **Do not merge** until Critical #1 and #2 are remediated. Apply Warning #3 fixes concurrently to avoid follow-up PRs.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/knr-ops/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

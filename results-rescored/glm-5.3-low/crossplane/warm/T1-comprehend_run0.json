@@ -1,0 +1,85 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 945,
+    "output": 953
+  },
+  "content": "# Crossplane Reconciliation Trace: `storageGB` 20 \u2192 50\n\n## 1. The Trace: Claim \u2192 XRD \u2192 Composition \u2192 Managed Resources\n\n```\nClaim (kind: PostgreSQLInstance, namespace: app)\n        \u2502  spec.storageGB: 20 \u2192 50\n        \u25bc\nXRD (compositeinstances.example.org)\n        \u2502  Claim names match \u2192 maps to XR (XPostgreSQLInstance)\n        \u2502  Claim controller syncs spec into the composite resource\n        \u25bc\nXR (XPostgreSQLInstance) \u2014 cluster-scoped composite\n        \u2502  Composition revision selected (selector / labels: env=prod)\n        \u25bc\nComposition (pipeline mode)\n        \u2502  function-patch-and-transform:\n        \u2502    ToCompositeFieldPath / ToFieldPath patches\n        \u2502    spec.storageGB \u2500\u2500\u25ba rds spec.forProvider.allocatedStorage\n        \u2502  function-auto-prepare / environment-config run per stage\n        \u25bc\nManaged resources (provider-aws)\n        \u251c\u2500\u2500 DBInstance: spec.forProvider.allocatedStorage: 50\n        \u251c\u2500\u2500 S3 Bucket: no field references storageGB \u2192 unchanged\n        \u251c\u2500\u2500 IAM Role, Secret, etc. \u2192 unchanged\n```\n\n**Step by step:**\n\n1. User patches the Claim: `kubectl patch postgresqlinstance db --type merge -p '{\"spec\":{\"storageGB\":50}}'`.\n2. The **claim controller** copies the changed field to the XR (`spec.resourceRefs` already exist \u2014 same XR is reused, not recreated).\n3. The XR's composite controller picks the **Composition**, renders the pipeline, and diffs against the *existing* observed resources.\n4. Only the `DBInstance` managed resource's spec changes; its controller calls the RDS `ModifyDBInstance` API with `AllocatedStorage=50`.\n5. New observed state propagates back: MR status \u2192 XR `connectionDetails`/status \u2192 Claim status.\n\n## 2. RDS: updated in-place or recreated?\n\n**In-place.** `allocatedStorage` is a mutable field in the provider-aws schema \u2014 the RDS controller issues `ModifyDBInstance` (an AWS storage expansion, which itself is not reversible downward). Recomposition reuses the existing MR because `compositionRef`/`resourceRefs` maintain stable identity. Crossplane only deletes/recreates when an **immutable** field changes (e.g., `engine`, `storageType` in some cases, or if a patch forces replacement \u2014 then the MR would go through `Update/Deleting/Creating`).\n\n## 3. What happens to the S3 bucket?\n\n**Nothing.** The Composition re-renders all composed resources, but the patch pipeline maps `storageGB` only to the DBInstance. The rendered Bucket spec is byte-identical to the observed spec \u2192 **no diff \u2192 no API call**. The bucket stays `Synced: True`. (It would only churn if the patch logic accidentally wrote claim fields into its spec.)\n\n## 4. Role of `ReadinessChecks`\n\n`ReadinessChecks` (on the Composition or MR-level `MatchCondition`s) gate when a composed resource counts as ready:\n\n- **MR level**: provider sets `status.atProvider` \u2014 RDS is ready when `DBInstanceStatus = available` (storage modification can take minutes).\n- **Composition level**: `type: MatchCondition` / `None` / `NonEmpty` checks delay XR condition `Ready: True` until the DB reports available, so dependent consumers (Claim status, apps watching the connection secret) don't proceed early.\n- A storage change can briefly flip readiness to `False` while AWS applies the modification; the bucket's checks remain green \u2014 readiness is per composed resource.\n\n## 5. The reconciliation loop\n\nCrossplane is **level-based and continuous**, unlike Terraform's plan/apply:\n\n- Every controller (claim \u2192 composite \u2192 managed) runs a watch-driven reconcile loop: **observe \u2192 diff desired (spec.forProvider) vs actual (observed) \u2192 act only on divergence \u2192 report status**.\n- There is no \"apply\" event \u2014 the 20\u219250 change simply becomes the new desired state; convergence is idempotent and self-healing (manual AWS drift gets reverted too).\n- Backoff/retries apply if `ModifyDBInstance` fails (e.g., another pending modification); eventual consistency surfaces as `Synced: False` with events, then `Ready: True` once available.\n\n**Summary:** one field change, one API call to AWS, one resource touched \u2014 everything else is a no-op diff.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/crossplane/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,93 @@
+{
+  "model": "kimi-k3",
+  "task": "T3-modify",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_0.ts(2,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_0.ts(3,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 616,
+    "output": 3054
+  },
+  "content": "# Migrating Flat Pulumi Program to ComponentResource Without Replacement\n\n## Overview\n\nThis guide shows how to refactor a flat Pulumi TypeScript program into a `ComponentResource` structure using `aliases` to prevent resource replacement.\n\n## Before: Flat Program\n\n```typescript\n// index.ts - Flat structure\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\nimport * as eks from \"@pulumi/eks\";\n\nconst config = new pulumi.Config();\nconst env = config.require(\"environment\");\n\n// EKS Cluster\nconst cluster = new eks.Cluster(\"app-cluster\", {\n    instanceType: env === \"prod\" ? \"t3.large\" : \"t3.medium\",\n    desiredCapacity: env === \"prod\" ? 4 : 2,\n    minSize: env === \"prod\" ? 4 : 2,\n    maxSize: env === \"prod\" ? 8 : 4,\n});\n\n// S3 Bucket\nconst assetsBucket = new aws.s3.Bucket(\"app-assets\", {\n    versioning: {\n        enabled: true,\n    },\n    serverSideEncryptionConfiguration: {\n        rule: {\n            applyServerSideEncryptionByDefault: {\n                sseAlgorithm: \"AES256\",\n            },\n        },\n    },\n});\n\nconst bucketPublicAccessBlock = new aws.s3.BucketPublicAccessBlock(\"app-assets-pab\", {\n    bucket: assetsBucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n});\n\n// RDS Instance\nconst dbSubnetGroup = new aws.rds.SubnetGroup(\"app-db-subnet\", {\n    subnetIds: cluster.core.vpcId.apply(vpcId => \n        aws.ec2.getSubnetIds({ vpcId }).then(s => s.ids)\n    ),\n});\n\nconst db = new aws.rds.Instance(\"app-db\", {\n    engine: \"postgres\",\n    engineVersion: \"15.4\",\n    instanceClass: env === \"prod\" ? \"db.t3.medium\" : \"db.t3.micro\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: config.requireSecret(\"dbUsername\"),\n    password: config.requireSecret(\"dbPassword\"),\n    dbSubnetGroupName: dbSubnetGroup.name,\n    multiAz: env === \"prod\",\n    storageEncrypted: env === \"prod\",\n    deletionProtection: true,\n    backupRetentionPeriod: 7,\n    publiclyAccessible: false,\n    skipFinalSnapshot: env !== \"prod\",\n});\n\n// IAM User/Role\nconst appUser = new aws.iam.User(\"app-user\", {\n    path: \"/service/\",\n});\n\nconst appUserPolicy = new aws.iam.UserPolicy(\"app-user-policy\", {\n    user: appUser.name,\n    policy: assetsBucket.arn.apply(arn => JSON.stringify({\n        Version: \"2012-10-17\",\n        Statement: [{\n            Effect: \"Allow\",\n            Action: [\"s3:GetObject\", \"s3:PutObject\"],\n            Resource: [`${arn}/*`],\n        }],\n    })),\n});\n\n// Secret\nconst dbConnectionSecret = new aws.secretsmanager.Secret(\"db-connection\", {\n    name: `app-db-connection-${env}`,\n});\n\nconst dbConnectionSecretVersion = new aws.secretsmanager.SecretVersion(\"db-connection-version\", {\n    secretId: dbConnectionSecret.id,\n    secretString: pulumi.interpolate`postgresql://${config.requireSecret(\"dbUsername\")}:${config.requireSecret(\"dbPassword\")}@${db.endpoint}/appdb`,\n});\n\n// CloudFront (prod only)\nlet distribution: aws.cloudfront.Distribution | undefined;\nif (env === \"prod\") {\n    const cert = new aws.acm.Certificate(\"app-cert\", {\n        domainName: config.require(\"domainName\"),\n        validationMethod: \"DNS\",\n    });\n\n    distribution = new aws.cloudfront.Distribution(\"app-cdn\", {\n        enabled: true,\n        defaultCacheBehavior: {\n            allowedMethods: [\"GET\", \"HEAD\", \"OPTIONS\"],\n            cachedMethods: [\"GET\", \"HEAD\"],\n            targetOriginId: assetsBucket.id,\n            viewerProtocolPolicy: \"redirect-to-https\",\n            forwardedValues: {\n                queryString: false,\n                cookies: { forward: \"none\" },\n            },\n        },\n        origins: [{\n            domainName: assetsBucket.bucketRegionalDomainName,\n            originId: assetsBucket.id,\n            s3OriginConfig: {\n                originAccessIdentity: \"\",\n            },\n        }],\n        viewerCertificate: {\n            acmCertificateArn: cert.arn,\n            sslSupportMethod: \"sni-only\",\n        },\n        restrictions: {\n            geoRestriction: {\n                restrictionType: \"none\",\n            },\n        },\n    });\n}\n\nexport const clusterName = cluster.eksCluster.name;\nexport const bucketName = assetsBucket.id;\nexport const dbEndpoint = db.endpoint;\nexport const cdnDomain = distribution?.domainName;\n```\n\n## After: ComponentResource Structure\n\n```typescript\n// components/webApp.ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\nimport * as eks from \"@pulumi/eks\";\n\nexport interface WebAppArgs {\n    environment: string;\n    instanceType: string;\n    nodeCount: number;\n    dbInstanceClass: string;\n    multiAz: boolean;\n    dbUsername: pulumi.Input<string>;\n    dbPassword: pulumi.Input<string>;\n    domainName?: string;\n}\n\nexport class WebApp extends pulumi.ComponentResource {\n    public readonly cluster: eks.Cluster;\n    public readonly bucket: aws.s3.Bucket;\n    public readonly database: aws.rds.Instance;\n    public readonly user: aws.iam.User;\n    public readonly secret: aws.secretsmanager.Secret;\n    public readonly distribution?: aws.cloudfront.Distribution;\n\n    constructor(name: string, args: WebAppArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"custom:app:WebApp\", name, {}, opts);\n\n        const defaultOpts = { parent: this };\n\n        // EKS Cluster\n        this.cluster = new eks.Cluster(\"cluster\", {\n            instanceType: args.instanceType,\n            desiredCapacity: args.nodeCount,\n            minSize: args.nodeCount,\n            maxSize: args.nodeCount * 2,\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"app-cluster\", parent: pulumi.rootStackResource }],\n        });\n\n        // S3 Bucket\n        this.bucket = new aws.s3.Bucket(\"assets\", {\n            versioning: {\n                enabled: true,\n            },\n            serverSideEncryptionConfiguration: {\n                rule: {\n                    applyServerSideEncryptionByDefault: {\n                        sseAlgorithm: \"AES256\",\n                    },\n                },\n            },\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"app-assets\", parent: pulumi.rootStackResource }],\n        });\n\n        new aws.s3.BucketPublicAccessBlock(\"assets-pab\", {\n            bucket: this.bucket.id,\n            blockPublicAcls: true,\n            blockPublicPolicy: true,\n            ignorePublicAcls: true,\n            restrictPublicBuckets: true,\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"app-assets-pab\", parent: pulumi.rootStackResource }],\n        });\n\n        // RDS Instance\n        const dbSubnetGroup = new aws.rds.SubnetGroup(\"db-subnet\", {\n            subnetIds: this.cluster.core.vpcId.apply(vpcId => \n                aws.ec2.getSubnetIds({ vpcId }).then(s => s.ids)\n            ),\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"app-db-subnet\", parent: pulumi.rootStackResource }],\n        });\n\n        this.database = new aws.rds.Instance(\"db\", {\n            engine: \"postgres\",\n            engineVersion: \"15.4\",\n            instanceClass: args.dbInstanceClass,\n            allocatedStorage: 20,\n            dbName: \"appdb\",\n            username: args.dbUsername,\n            password: args.dbPassword,\n            dbSubnetGroupName: dbSubnetGroup.name,\n            multiAz: args.multiAz,\n            storageEncrypted: args.environment === \"prod\",\n            deletionProtection: true,\n            backupRetentionPeriod: 7,\n            publiclyAccessible: false,\n            skipFinalSnapshot: args.environment !== \"prod\",\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"app-db\", parent: pulumi.rootStackResource }],\n        });\n\n        // IAM User\n        this.user = new aws.iam.User(\"user\", {\n            path: \"/service/\",\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"app-user\", parent: pulumi.rootStackResource }],\n        });\n\n        new aws.iam.UserPolicy(\"user-policy\", {\n            user: this.user.name,\n            policy: this.bucket.arn.apply(arn => JSON.stringify({\n                Version: \"2012-10-17\",\n                Statement: [{\n                    Effect: \"Allow\",\n                    Action: [\"s3:GetObject\", \"s3:PutObject\"],\n                    Resource: [`${arn}/*`],\n                }],\n            })),\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"app-user-policy\", parent: pulumi.rootStackResource }],\n        });\n\n        // Secret\n        this.secret = new aws.secretsmanager.Secret(\"db-connection\", {\n            name: `app-db-connection-${args.environment}`,\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"db-connection\", parent: pulumi.rootStackResource }],\n        });\n\n        new aws.secretsmanager.SecretVersion(\"db-connection-version\", {\n            secretId: this.secret.id,\n            secretString: pulumi.interpolate`postgresql://${args.dbUsername}:${args.dbPassword}@${this.database.endpoint}/appdb`,\n        }, {\n            ...defaultOpts,\n            aliases: [{ name: \"db-connection-version\", parent: pulumi.rootStackResource }],\n        });\n\n        // CloudFront (prod only)\n        if (args.environment === \"prod\" && args.domainName) {\n            const cert = new aws.acm.Certificate(\"cert\", {\n                domainName: args.domainName,\n                validationMethod: \"DNS\",\n            }, {\n                ...defaultOpts,\n                aliases: [{ name: \"app-cert\", parent: pulumi.rootStackResource }],\n            });\n\n            this.distribution = new aws.cloudfront.Distribution(\"cdn\", {\n                enabled: true,\n                defaultCacheBehavior: {\n                    allowedMethods: [\"GET\", \"HEAD\", \"OPTIONS\"],\n                    cachedMethods: [\"GET\", \"HEAD\"],\n                    targetOriginId: this.bucket.id,\n                    viewerProtocolPolicy: \"redirect-to-https\",\n                    forwardedValues: {\n                        queryString: false,\n                        cookies: { forward: \"none\" },\n                    },\n                },\n                origins: [{\n                    domainName: this.bucket.bucketRegionalDomainName,\n                    originId: this.bucket.id,\n                    s3OriginConfig: {\n                        originAccessIdentity: \"\",\n                    },\n                }],\n                viewerCertificate: {\n                    acmCertificateArn: cert.arn,\n                    sslSupportMethod: \"sni-only\",\n                },\n                restrictions: {\n                    geoRestriction: {\n                        restrictionType: \"none\",\n                    },\n                },\n            }, {\n                ...defaultOpts,\n                aliases: [{ name: \"app-cdn\", parent: pulumi.rootStackResource }],\n            });\n        }\n\n        this.registerOutputs({\n            clusterName: this.cluster.eksCluster.name,\n            bucketName: this.bucket.id,\n            dbEndpoint: this.database.endpoint,\n            cdnDomain: this.distribution?.domainName,\n        });\n    }\n}\n```\n\n```typescript\n// index.ts - Using the component\nimport * as pulumi from \"@pulumi/pulumi\";\nimport { WebApp } from \"./components/webApp\";\n\nconst config = new pulumi.Config();\nconst env = config.require(\"environment\");\n\nconst app = new WebApp(\"app\", {\n    environment: env,\n    instanceType: env === \"prod\" ? \"t3.large\" : \"t3.medium\",\n    nodeCount: env === \"prod\" ? 4 : 2,\n    dbInstanceClass: env === \"prod\" ? \"db.t3.medium\" : \"db.t3.micro\",\n    multiAz: env === \"prod\",\n    dbUsername: config.requireSecret(\"dbUsername\"),\n    dbPassword: config.requireSecret(\"dbPassword\"),\n    domainName: env === \"prod\" ? config.require(\"domainName\") : undefined,\n});\n\nexport const clusterName = app.cluster.eksCluster.name;\nexport const bucketName = app.bucket.id;\nexport const dbEndpoint = app.database.endpoint;\nexport const cdnDomain = app.distribution?.domainName;\n```\n\n## Key Migration Points\n\n### 1. **Aliases Structure**\nEach resource gets an alias with:\n- `name`: The original resource name from the flat program\n- `parent: pulumi.rootStackResource`: Indicates the resource was previously at the root level\n\n### 2. **Parent Assignment**\nAll resources now have `parent: this` (the component), but aliases ensure Pulumi knows they existed at root before.\n\n### 3. **Name Changes**\nResource names can change within the component (e.g., `\"app-cluster\"` \u2192 `\"cluster\"`) because the alias preserves the original URN.\n\n### 4. **Verification**\nRun `pulumi preview` after migration. You should see:\n```\n~ pulumi:pulumi:Stack: (update)\n    [urn=urn:pulumi:dev::myproject::pulumi:pulumi:Stack::myproject-dev]\n    ~ custom:app:WebApp: (update)\n        [urn=urn:pulumi:dev::myproject::custom:app:WebApp::app]\n```\n\nNo resources should show as `replace` or `delete` + `create`.\n\n## Stack Configuration Files\n\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  myproject:environment: dev\n  myproject:dbUsername:\n    secure: AAABAI7...encrypted...\n  myproject:dbPassword:\n    secure: AAABAI7...encrypted...\n```\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  myproject:environment: prod\n  myproject:domainName: app.example.com\n  myproject:dbUsername:\n    secure: AAABAI7...encrypted...\n  myproject:dbPassword:\n    secure: AAABAI7...encrypted...\n```\n\n## Migration Steps\n\n1. **Backup state**: `pulumi stack export > backup.json`\n2. **Refactor code** into components with aliases\n3. **Preview**: `pulumi preview` (should show no replacements)\n4. **Apply**: `pulumi up` (should be a no-op or minimal update)\n5. **Verify**: Check that all resources remain unchanged\n\nThis approach ensures zero-downtime migration to a component-based architecture.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_2.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-3z8koz4q/generated_1.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-typescript/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

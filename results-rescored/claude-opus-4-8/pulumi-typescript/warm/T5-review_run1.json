@@ -1,0 +1,91 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 1005
+  },
+  "content": "I'll help you review a Pulumi preview JSON output for security issues. However, I don't see the actual JSON output in your message\u2014you've provided the scenario specification but not the preview JSON to review.\n\nPlease paste the Pulumi preview JSON (from `pulumi preview --json`) and I'll analyze it for the three issue categories you mentioned:\n\n1. **Secrets in plaintext outputs**\n2. **Replacement of stateful resources**\n3. **Missing `protect` flag**\n\n## What I'll Look For\n\nTo help you prepare, here's what my review will target based on your acceptance criteria:\n\n### 1. Secrets in plaintext outputs\n```json\n// RED FLAGS in the JSON:\n\"outputs\": {\n  \"dbConnectionString\": \"postgresql://user:pass@...\"  // plaintext!\n}\n// vs. properly secret-wrapped:\n\"dbConnectionString\": { \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\", ... }\n```\n- Check `steps[].newState.outputs` and top-level `outputs`\n- The signature `4dabf18193072939515e22adb298388d` marks a properly encrypted secret\n- Watch for RDS passwords, connection strings, IAM access keys leaking into non-secret outputs\n\n### 2. Replacement of stateful resources\n```json\n\"steps\": [\n  {\n    \"op\": \"replace\",              // or \"create-replacement\" / \"delete-replaced\"\n    \"urn\": \"...:aws:rds/instance:Instance...\",\n    \"detailedDiff\": { ... },\n    \"replaceReasons\": [ \"...\" ]   // which property forces replacement\n  }\n]\n```\n- **Critical for**: RDS instances, S3 buckets, EBS/persistent volumes\n- I'll flag any `op: \"replace\"` on `aws:rds/instance`, `aws:s3/bucket`, or stateful stores\n- I'll identify the triggering property (e.g., `engineVersion`, `availabilityZone`, `bucket` name change)\n\n### 3. Missing protect flag\n```json\n\"newState\": {\n  \"protect\": true    // should be present on stateful/prod resources\n}\n```\n- I'll cross-check RDS, S3, and prod resources for `protect: true`\n- This ties to your **AC #2** (RDS deletion protection) and **AC #7** (prod isolation)\n\n### Bonus checks tied to your spec\n- **AC #1/#2**: bucket versioning/encryption + RDS `deletionProtection`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false` in the diff\n- **AC #4**: IAM wildcard actions on prod\n- **AC #7**: whether the preview is scoped to a single stack (dev vs prod)\n\n---\n\n**Please paste the JSON** (redact any real secret values with `REDACTED` if needed\u2014though if they're already plaintext in the output, that itself is finding #1). If it's large, you can share the relevant `steps` array and `outputs` sections.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-t6y89xhr/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-t6y89xhr/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-t6y89xhr/generated_2.json"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/pulumi-typescript/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

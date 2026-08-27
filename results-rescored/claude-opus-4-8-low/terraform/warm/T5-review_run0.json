@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1066,
+    "output": 2686
+  },
+  "content": "# Reviewing Terraform Plans for Hidden Destructive Changes\n\nWhen a plan has 40 changes, dangerous mutations hide in the noise. Here's a systematic review using the **JSON plan output**, not the human-readable text.\n\n## Step 1: Generate machine-readable plan\n\n```bash\nterraform plan -out=tfplan.binary\nterraform show -json tfplan.binary > tfplan.json\n```\n\n## Step 2: Extract the two danger classes\n\n### A. Destroy/recreate (replacement) detection\n\nA resource is being **replaced** when its `change.actions` array is exactly `[\"delete\", \"create\"]` (or `[\"create\", \"delete\"]` for create-before-destroy).\n\n```bash\n# All replacements\njq -r '\n  .resource_changes[]\n  | select(.change.actions == [\"delete\",\"create\"]\n        or .change.actions == [\"create\",\"delete\"])\n  | \"\\(.address)  =>  \\(.change.actions | join(\",\"))\"\n' tfplan.json\n```\n\nFor the DB, you want to know **why** it's being recreated. `replace_paths` tells you the forcing attribute:\n\n```bash\njq -r '\n  .resource_changes[]\n  | select(.type == \"aws_db_instance\")\n  | select(.change.actions | index(\"delete\"))\n  | {\n      address,\n      actions: .change.actions,\n      forced_by: (.change.replace_paths // [] | map(join(\".\"))),\n      deletion_protection: .change.after.deletion_protection\n    }\n' tfplan.json\n```\n\nTypical culprits that force RDS recreation (data loss!):\n- `engine_version` major bump\n- `name` / `identifier` change\n- `availability_zone`, `db_subnet_group_name`\n- `storage_encrypted` toggled (can't be changed in place)\n\n### B. Open ingress (0.0.0.0/0) detection\n\nSecurity group rules can appear as `aws_security_group` inline blocks **or** `aws_security_group_rule` / `aws_vpc_security_group_ingress_rule` resources. Check all forms:\n\n```bash\n# Inline ingress with world-open CIDR\njq -r '\n  .resource_changes[]\n  | select(.type == \"aws_security_group\")\n  | select(.change.after.ingress != null)\n  | .address as $a\n  | .change.after.ingress[]\n  | select((.cidr_blocks // []) | index(\"0.0.0.0/0\"))\n  | \"\\($a): OPEN ingress \\(.from_port)-\\(.to_port)/\\(.protocol) from 0.0.0.0/0\"\n' tfplan.json\n\n# Standalone rule resources\njq -r '\n  .resource_changes[]\n  | select(.type == \"aws_vpc_security_group_ingress_rule\" or .type == \"aws_security_group_rule\")\n  | select(.change.after.cidr_ipv4 == \"0.0.0.0/0\"\n        or ((.change.after.cidr_blocks // []) | index(\"0.0.0.0/0\")))\n  | \"\\(.address): OPEN ingress \\(.change.after.from_port)-\\(.change.after.to_port)\"\n' tfplan.json\n```\n\n## Step 3: One-shot review gate (fail CI on findings)\n\n```bash\n#!/usr/bin/env bash\nset -euo pipefail\nPLAN=tfplan.json\n\necho \"=== Replacements (destroy + create) ===\"\nREPLACEMENTS=$(jq -r '\n  .resource_changes[]\n  | select(.change.actions == [\"delete\",\"create\"]\n        or .change.actions == [\"create\",\"delete\"])\n  | .address' \"$PLAN\")\necho \"${REPLACEMENTS:-none}\"\n\necho \"=== Stateful resource destruction (CRITICAL) ===\"\nSTATEFUL=$(jq -r '\n  .resource_changes[]\n  | select(.change.actions | index(\"delete\"))\n  | select(.type | test(\"aws_db_instance|aws_rds_cluster|aws_s3_bucket|aws_ebs_volume\"))\n  | .address' \"$PLAN\")\necho \"${STATEFUL:-none}\"\n\necho \"=== World-open ingress ===\"\nOPEN=$(jq -r '\n  .resource_changes[]\n  | (.change.after // {}) as $a\n  | select(($a.cidr_ipv4 == \"0.0.0.0/0\")\n        or (($a.cidr_blocks // []) | index(\"0.0.0.0/0\"))\n        or (($a.ingress // []) | any((.cidr_blocks // []) | index(\"0.0.0.0/0\"))))\n  | .address' \"$PLAN\")\necho \"${OPEN:-none}\"\n\n# Fail the pipeline if any critical finding\nif [[ -n \"$STATEFUL\" || -n \"$OPEN\" ]]; then\n  echo \"\u274c Blocking: destructive/insecure change detected. Requires manual approval.\"\n  exit 1\nfi\necho \"\u2705 No critical findings.\"\n```\n\n## Step 4: Findings from *this* plan (expected output)\n\n| # | Address | Finding | Severity | Why it's dangerous |\n|---|---|---|---|---|\n| 1 | `aws_db_instance.prod` (or module path) | `actions: [\"delete\",\"create\"]` | \ud83d\udd34 Critical | **Data loss** \u2014 RDS recreated. Check `replace_paths` for the forcing attribute. Violates AC #2 (deletion protection). |\n| 2 | `aws_security_group.*` ingress | `0.0.0.0/0` added | \ud83d\udd34 Critical | Public exposure. If it targets RDS/DB port (5432) it also violates AC #2 \"no publicly accessible\". |\n\nThe other ~38 changes are no-ops / in-place updates masking these two.\n\n## Step 5: Remediation before apply\n\n**RDS recreation:**\n1. Identify forcing attr: `jq '.resource_changes[] | select(.type==\"aws_db_instance\") | .change.replace_paths'`\n2. If it's `storage_encrypted` or `identifier`, do **not** apply \u2014 that destroys the prod database. Use a snapshot-restore migration path instead, or revert the config change.\n3. Confirm `deletion_protection = true` is set (AC #2) \u2014 with it on, the apply would actually *fail* on destroy, which is a safety net you want.\n\n**Open ingress:**\n1. Scope the CIDR to known ranges (office/VPC/ALB SG) instead of `0.0.0.0/0`.\n2. For the DB SG, ingress should come from the cluster/app SG only (`referenced_security_group_id`), never a CIDR.\n3. If public 443 is intended, that belongs on the ALB/CloudFront SG (AC #6), *not* the DB SG \u2014 verify the `.address` of the finding.\n\n## Guardrails to prevent recurrence\n\n- **Policy-as-code** (OPA/Conftest or Sentinel) on the JSON plan in CI:\n  ```rego\n  deny[msg] {\n    rc := input.resource_changes[_]\n    rc.type == \"aws_db_instance\"\n    rc.change.actions[_] == \"delete\"\n    msg := sprintf(\"RDS %v would be destroyed\", [rc.address])\n  }\n  deny[msg] {\n    rc := input.resource_changes[_]\n    rc.change.after.cidr_ipv4 == \"0.0.0.0/0\"\n    msg := sprintf(\"%v opens 0.0.0.0/0\", [rc.address])\n  }\n  ```\n- `lifecycle { prevent_destroy = true }` on prod RDS and S3.\n- Require manual approval gate whenever the replacement/stateful check above returns non-empty.\n\n**Bottom line:** never trust the summary line count. Diff on `change.actions` and `change.after` CIDRs programmatically \u2014 the two critical issues here (prod DB recreate, world-open ingress) are exactly the class of change that a human eye skims past in a 40-item plan.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/terraform/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,92 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.01s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1005,
+    "output": 1338
+  },
+  "content": "Two corrections are needed:\n\n- Read the password with `require_secret()`, which returns a secret `Output[str]`.\n- Keep derived resource values as Pulumi outputs. Contrary to the seed comment, `.apply()` does return an `Output`; it only becomes `Output[None]` when its callback returns `None`. `pulumi.Output.format()` is simpler here.\n\n### `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\n\nenv = config.require(\"env\")\nregion = config.get(\"region\") or \"us-east-1\"\n\nif env not in (\"dev\", \"prod\"):\n    raise ValueError(\"env must be either 'dev' or 'prod'\")\n\n# Returns a secret Output[str]. Do not use config.get() for credentials.\ndb_password = config.require_secret(\"dbPassword\")\n\ndb_instance_class = \"db.t3.micro\" if env == \"dev\" else \"db.t3.medium\"\n\n# S3 bucket\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(\n        enabled=True,\n    ),\n    server_side_encryption_configuration=(\n        aws.s3.BucketServerSideEncryptionConfigurationArgs(\n            rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n                apply_server_side_encryption_by_default=(\n                    aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                        sse_algorithm=\"AES256\",\n                    )\n                ),\n            ),\n        )\n    ),\n    tags={\n        \"Environment\": env,\n        \"Project\": \"myapp\",\n    },\n)\n\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-public-access-block\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    ignore_public_acls=True,\n    block_public_policy=True,\n    restrict_public_buckets=True,\n)\n\n# Output.format preserves Pulumi dependency tracking. This remains Output[str].\nbucket_url = pulumi.Output.format(\n    \"https://{0}\",\n    bucket.bucket_regional_domain_name,\n)\n\n# RDS PostgreSQL instance\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=db_instance_class,\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    # RDS master usernames cannot contain a hyphen.\n    username=\"app_user\",\n    password=db_password,\n    multi_az=env == \"prod\",\n    storage_encrypted=True,\n    publicly_accessible=False,\n    backup_retention_period=7,\n    deletion_protection=True,\n    skip_final_snapshot=False,\n    final_snapshot_identifier=f\"myapp-{env}-final-snapshot\",\n    tags={\n        \"Environment\": env,\n        \"Project\": \"myapp\",\n    },\n)\n\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n```\n\nSet stack configuration independently for each environment:\n\n```bash\npulumi stack select dev\npulumi config set env dev\npulumi config set region us-east-1\npulumi config set --secret dbPassword 'development-password'\n\npulumi stack select prod\npulumi config set env prod\npulumi config set region us-east-1\npulumi config set --secret dbPassword 'production-password'\n```\n\nThe resulting `Pulumi.dev.yaml` and `Pulumi.prod.yaml` files contain encrypted ciphertext for `dbPassword`, not plaintext. They may be committed only if the stack encryption provider and repository policy permit it.\n\nThe original expression:\n\n```python\nbucket.arn.apply(lambda arn: f\"...{arn}\")\n```\n\ndoes not inherently return `None`; it returns an `Output[str]` because the callback returns a string. It was nevertheless constructing an invalid S3 URL from an ARN. Using `bucket_regional_domain_name` fixes both the URL semantics and avoids unnecessary `.apply()` usage.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-oa968ds1/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-oa968ds1/Pulumi.dev.yaml"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7777777777777778
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/pulumi-python/warm/T4-debug_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 3,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7777777777777778
+    },
+    "corrected_composite_no_idiom": 0.875,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

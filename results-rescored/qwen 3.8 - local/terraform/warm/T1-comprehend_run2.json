@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 960,
+    "output": 1246
+  },
+  "content": "Based on the Terraform configuration principles and the provided documentation snippets, here is the analysis of the Terraform plan behavior for the specified scenario.\n\n### 1. What does the next plan show?\n\nWhen a variable flips (e.g., switching from `dev` values to `prod` values, or flipping a boolean flag like `enable_encryption`), the next `terraform plan` shows the **diff** between the current state (tracked in the state file) and the new desired state (defined in the configuration files and variables).\n\n*   **If the change is in-place:** The plan shows an update (`~`). Example: Changing `db.t3.micro` to `db.t3.medium` in RDS usually results in an in-place update (`~ rds_instance.prod`), showing the attribute change.\n*   **If the change forces replacement:** The plan shows a replacement (`-/+`). Example: Changing the RDS `multi_az` flag from `false` to `true` might force a replacement in some contexts, or changing the instance class to one that requires a new DB identifier or region would show `-/+`.\n*   **Specific to the scenario:** If the variable flip involves a change that Terraform cannot perform in-place (such as changing the RDS instance class in a way that requires a new identifier, or changing the region), the plan will show a **destroy and create** cycle (`-` followed by `+`).\n\n**Key Point:** The plan is a prediction. It shows what *would* change, not what *has* changed.\n\n### 2. What happens if the state file is deleted?\n\nIf the state file is deleted, Terraform loses track of the resources it manages.\n\n*   **Next `terraform plan`:** Terraform will attempt to plan the creation of **all** resources defined in the configuration, assuming they do not exist because it has no state to reference. It will show `+` (create) for every resource.\n*   **Next `terraform apply`:** If executed, Terraform will attempt to create new resources.\n    *   **Idempotency Issues:** If resources already exist in the cloud provider with the same names/identifiers, this may fail with \"resource already exists\" errors.\n    *   **Orphaned Resources:** If the resources are created with new IDs (or if naming conventions allow duplicates), the old resources become orphaned (no longer managed by Terraform), leading to drift and potential cost/security issues.\n*   **Recovery:** You must either restore the state file from backup or use `terraform import` to re-associate each existing resource with the state file.\n\n### 3. How does Terraform handle the RDS instance class change?\n\nTerraform handles RDS instance class changes based on whether the change is **in-place** or **requires replacement**.\n\n*   **In-Place Update (`~`):** Most instance class changes (e.g., `db.t3.micro` \u2192 `db.t3.medium`) are handled as an in-place update. The plan will show:\n    ```hcl\n    # aws_db_instance.prod will be updated in-place\n    ~ resource \"aws_db_instance\" \"prod\" {\n        ~ instance_class       = \"db.t3.micro\" -> \"db.t3.medium\"\n        ...\n    }\n    ```\n    Terraform sends an API call to modify the existing RDS instance. This typically causes a brief interruption (depending on the RDS version and configuration) but preserves the data and endpoint.\n\n*   **Replacement (`-/+`):** If the change involves a parameter that forces a new resource (e.g., changing `storage_type`, `engine`, or `engine_version` in certain ways, or if the specific instance class is incompatible with the current deployment type), Terraform will plan to destroy the old instance and create a new one. The plan will show:\n    ```hcl\n    # aws_db_instance.prod must be replaced\n    -/+ resource \"aws_db_instance\" \"prod\" {\n        - id                  = \"old-id\" -> null\n        + id                  = (known after apply)\n        ~ instance_class      = \"db.t3.micro\" -> \"db.t3.medium\"\n        ...\n    }\n    ```\n    **Warning:** This results in data loss unless the RDS instance is configured with a snapshot or if the application is designed to handle migration. The acceptance criteria specify `deletion protection on`, which would **prevent** Terraform from destroying the instance if a replacement is planned, causing the plan to fail or require manual intervention.\n\n### 4. What is the difference between state and configuration?\n\n*   **Configuration (`.tf` files):**\n    *   Represents the **desired state**.\n    *   Defined in code (HCL).\n    *   Version-controlled in Git.\n    *   Human-readable and declarative.\n    *   Example: `resource \"aws_db_instance\" \"prod\" { instance_class = \"db.t3.medium\" ... }`\n\n*   **State (`.terraform.tfstate`):**\n    *   Represents the **current deployed state**.\n    *   Stored in a file (or remote backend like S3/DynamoDB).\n    *   Tracks resource IDs, attributes, and dependencies.\n    *   Machine-readable (JSON).\n    *   Example: `{\"id\": \"rds-instance-xyz123\", \"instance_class\": \"db.t3.medium\", ...}`\n\n*   **Relationship:**\n    *   **Plan:** Compares **Configuration** (desired) vs. **State** (current) to produce a delta.\n    *   **Apply:** Updates the **State** to match the **Configuration** after making changes to the cloud.\n    *   **Drift:** Occurs when the **State** no longer matches the actual cloud resources (e.g., manual changes in the cloud console).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-v0o4wp9v/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-v0o4wp9v/generated_1.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

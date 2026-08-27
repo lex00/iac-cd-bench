@@ -1,0 +1,90 @@
+{
+  "model": "qwen36-local",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 6 resources found in 5 files - Valid: 1, Invalid: 0, Errors: 0, Skipped: 5\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 647,
+    "output": 4754
+  },
+  "content": "\n\nHere is the idiomatic Crossplane implementation to add a second AWS region via `ProviderConfig` while guaranteeing zero changes to existing claims.\n\n### \ud83d\udd11 Core Strategy\n1. **Deploy a new `ProviderConfig`** for `us-west-2`.\n2. **Extend the XRD** with a `region` parameter that has a **default value** matching your original region.\n3. **Patch `spec.providerConfigRef.name`** in the Composition using the parameter + a string transform.\n4. Existing claims omit `region` \u2192 inherit the default \u2192 continue routing to the original provider config. New claims can explicitly set `region: us-west-2`.\n\n---\n\n### 1. Create `us-west-2` ProviderConfig\n```yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: aws-creds-us-west-2\n  namespace: crossplane-system\ntype: Opaque\nstringData:\n  credentials: |\n    [default]\n    aws_access_key_id = <ACCESS_KEY>\n    aws_secret_access_key = <SECRET_KEY>\n---\napiVersion: aws.crossplane.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-config-us-west-2\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      name: aws-creds-us-west-2\n      namespace: crossplane-system\n      key: credentials\n  region: us-west-2\n  # Optional but recommended for prod: use IRSA/OIDC instead of static keys\n  # credentials:\n  #   source: IRSA\n```\n\n---\n\n### 2. Update XRD to Accept `region` Parameter\nAdd the parameter to your `WebAppClaim` XRD. The `default` ensures backward compatibility.\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: webapps.example.org\nspec:\n  group: example.org\n  names:\n    kind: WebAppClaim\n    plural: webapps\n  versions:\n    - name: v1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          properties:\n            spec:\n              properties:\n                parameters:\n                  type: object\n                  properties:\n                    environment:\n                      type: string\n                      enum: [dev, prod]\n                    region:\n                      type: string\n                      default: us-east-1  # <-- Existing claims inherit this\n                      enum: [us-east-1, us-west-2]\n                    nodeType:\n                      type: string\n                    # ... other params\n```\n\n---\n\n### 3. Update Composition to Route to Correct ProviderConfig\nApply this patch block to **every AWS managed resource** in your composition (EKS, S3, RDS, etc.).\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: webapp-composition\nspec:\n  compositeTypeRef:\n    apiVersion: example.org/v1\n    kind: WebAppClaim\n  resources:\n    - name: s3-bucket\n      base:\n        apiVersion: s3.aws.crossplane.io/v1beta1\n        kind: Bucket\n        metadata:\n          annotations:\n            crossplane.io/external-name: \"my-app-assets-${metadata.name}\"\n        spec:\n          forProvider:\n            # Bucket config here...\n      patches:\n        # Route to correct provider config based on region parameter\n        - type: Patch\n          fromFieldPath: spec.parameters.region\n          toFieldPath: spec.providerConfigRef.name\n          transforms:\n            - type: String\n              string:\n                fmt: \"aws-config-%s\"\n        \n        # Example: conditionally set cross-region replication for prod\n        - type: Patch\n          fromFieldPath: spec.parameters.environment\n          toFieldPath: spec.forProvider.versioning.status\n          transforms:\n            - type: String\n              string:\n                eq: prod\n                eq: \"Enabled\"\n                else: \"Suspended\"\n        # ... other patches for environment-specific sizing/encryption\n```\n\n**Note:** Repeat the `spec.providerConfigRef.name` patch on the EKS Cluster, RDS Instance, and IAM resources. Crossplane evaluates patches per-resource, so this safely isolates region routing.\n\n---\n\n### 4. Verification & Claim Compatibility\n\n\u2705 **Existing claims** (no `region` field):\n```yaml\napiVersion: example.org/v1\nkind: WebAppClaim\nmetadata:\n  name: dev-claim\nspec:\n  parameters:\n    environment: dev\n    # region omitted \u2192 defaults to us-east-1 \u2192 uses aws-config-us-east-1\n```\n\n\u2705 **New claims targeting us-west-2**:\n```yaml\napiVersion: example.org/v1\nkind: WebAppClaim\nmetadata:\n  name: prod-usw2-claim\nspec:\n  parameters:\n    environment: prod\n    region: us-west-2  # \u2192 routes to aws-config-us-west-2\n```\n\nExisting claims continue to reconcile unchanged. Zero drift. Zero manual intervention.\n\n---\n\n### \ud83d\udcd0 Alignment with Acceptance Criteria\n| Criteria | Crossplane Implementation |\n|---|---|\n| **Environment isolation** | `ProviderConfig` per region + parameter-driven routing guarantees independent state. Prod changes never touch dev. |\n| **Secrets** | `ProviderConfig` credentials use `Secret` or `IRSA`. SOPS/KMS handled upstream; Crossplane only references encrypted refs. |\n| **IAM least privilege** | Each `ProviderConfig` can use a dedicated role/STS assume-role or IRSA with scoped policies. No wildcards. |\n| **S3 cross-region replication** | Handle in Composition via `environment: prod` patch that sets `spec.forProvider.replicationConfiguration`. Target bucket deployed in `us-west-2` using the same provider config routing. |\n| **RDS/EKS specs** | Use `spec.parameters.environment` + `combine`/`map` patches to drive `instanceClass`, `size`, `replicas`. |\n\n### \ud83d\udd27 Pro Tips\n- **ProviderConfig Labels**: Tag provider configs (`metadata.labels: environment: prod, region: us-west-2`) for easier debugging with `kubectl get providerconfigusage`.\n- **Failover/GA Routing**: If you later need active-active, swap `spec.providerConfigRef` dynamically via composition `patches` using `apiVersion: v1` + `kind: ConfigMap` data sources.\n- **Crossplane Version**: Requires `v1.12+` for stable `providerConfigRef` patching in compositions.\n\nThis pattern scales cleanly to 3+ regions, supports per-region OIDC/IRSA auth, and keeps claims declarative and version-control friendly.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-6azaodos/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-6azaodos/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-6azaodos/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-6azaodos/generated_3.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-6azaodos/generated_4.yaml"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7142857142857143
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/crossplane/warm/T3-modify_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7142857142857143
+    },
+    "corrected_composite_no_idiom": 0.8333333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1620,
+    "output": 2086
+  },
+  "content": "# Tracing a `storageGB` Change (20 \u2192 50) Through Crossplane\n\n## 1. The Path: Claim \u2192 XRD \u2192 Composition \u2192 Managed Resources\n\nWhen you edit the claim:\n\n```yaml\napiVersion: platform.acme.io/v1alpha1\nkind: AppInfraClaim         # namespaced claim\nmetadata:\n  name: webapp-dev\nspec:\n  parameters:\n    storageGB: 50           # was 20\n```\n\nThe flow:\n\n1. **kubectl apply** updates the Claim object in etcd. The Claim's `resourceVersion` bumps, which triggers a watch event.\n2. **Claim \u2192 XR (Composite Resource):** The Claim is a thin, namespaced projection. Crossplane's claim controller propagates `spec.parameters` up to the cluster-scoped **XR** it's bound to (via `spec.resourceRef`). The XR now carries `storageGB: 50`.\n3. **XR \u2192 Composition:** The XR references a Composition (by `compositionRef` or a `compositionSelector` matching labels like `provider: aws, env: dev`). The composition reconciler re-runs the **function pipeline**.\n4. **function-patch-and-transform** evaluates its patches. The relevant patch maps:\n\n```yaml\n- type: FromCompositeFieldPath\n  fromFieldPath: spec.parameters.storageGB\n  toFieldPath: spec.forProvider.allocatedStorage\n```\n\n5. The **desired state** of the RDS managed resource (`Instance.rds.aws.upbound.io`) now has `allocatedStorage: 50`. The composition function returns the full desired MR set; Crossplane diffs desired vs. observed and writes the updated MR spec.\n6. The **AWS provider** controller (provider-aws-rds) observes its `Instance` MR changed, computes a diff against the real RDS instance, and issues an `ModifyDBInstance` API call.\n\n## 2. RDS: In-Place or Recreated?\n\n**In-place.** `allocatedStorage` is a mutable field for RDS. The provider maps this to `ModifyDBInstance`, not a destroy/create. AWS applies the storage increase online (with the usual caveats: storage can only grow, not shrink, and there's a ~6-hour cooldown between scaling operations).\n\nThe distinction is driven by the underlying provider's schema, which mirrors Terraform's AWS provider resource semantics. Fields marked as forcing replacement (e.g. changing `engine`, or in some cases `availabilityZone`) would cause the MR to be **deleted and recreated**. `allocatedStorage` is not one of those \u2014 so no recreation, no data loss.\n\n> Note: watch the MR's **DeletionPolicy** (`Orphan` vs `Delete`) and the composition's `managementPolicies` \u2014 these only matter if a field *did* force replacement.\n\n## 3. The S3 Bucket\n\n**Nothing happens to it.** `storageGB` only patches the RDS resource. The bucket MR's desired state is unchanged, so:\n\n- The diff between desired and observed is empty.\n- No API calls are made to S3.\n- Its versioning/encryption/public-access config stays intact.\n\nThis is the benefit of the declarative diff model \u2014 each managed resource reconciles independently, and only the resource whose desired spec actually changed gets touched.\n\n## 4. Role of `ReadinessChecks`\n\n`ReadinessChecks` determine **when a managed resource is considered `Ready`**, which gates the XR's (and therefore the Claim's) aggregate readiness.\n\nDuring the storage change:\n\n- The RDS `Instance` transitions to a modifying/`storage-optimization` state. AWS reports `dbInstanceStatus` accordingly.\n- A readiness check like:\n\n```yaml\nreadinessChecks:\n  - type: MatchString\n    fieldPath: status.atProvider.instanceStatus\n    matchString: available\n```\n\nmeans the MR is marked **not Ready** while status \u2260 `available`, and flips back to Ready once modification completes.\n\n- This propagates up: the XR's `Ready` condition (via the composition's readiness aggregation) reflects \"not ready\" during the change, and the Claim shows the same. Anything gating on the Claim being Ready (e.g. app rollout waiting on the connection secret / `crossplane.io/composite` readiness) will correctly wait.\n- Default readiness (`type: NonEmpty` / based on the provider's `Ready` condition) is used if you don't specify custom checks.\n\n## 5. The Reconciliation Loop\n\nCrossplane is **continuous and level-triggered**, unlike Terraform's imperative plan/apply:\n\n- **Claim controller** watches Claims \u2192 syncs spec down to XR, syncs status/connection secret back up.\n- **Composite (XR) controller** watches the XR \u2192 runs the composition function pipeline \u2192 produces desired MRs \u2192 patches them.\n- **Provider controllers** each run their own reconcile loop per MR: `Observe \u2192 (Create/Update/Delete) \u2192 report status`. On the storage change, `Observe` sees drift (20 vs 50), `Update` calls `ModifyDBInstance`, then subsequent observes poll until AWS reports `available`.\n- Every loop requeues on a **poll interval** (default ~1m, configurable via `--poll-interval`) *and* on watch events. So even without a change, Crossplane continuously corrects **drift** \u2014 if someone manually shrank storage in the AWS console, Crossplane would detect the divergence and re-apply 50.\n- The loop is **idempotent**: once observed == desired and readiness checks pass, reconciles become no-ops (status-only).\n\n### Summary Table\n\n| Question | Answer |\n|---|---|\n| RDS | Updated **in-place** via `ModifyDBInstance` |\n| S3 | **Untouched** (empty diff) |\n| ReadinessChecks | Gate MR/XR/Claim `Ready` during and after the modify |\n| Loop | Continuous, level-triggered, drift-correcting, idempotent |\n\nThe key mental model: you changed **desired state**; Crossplane's controllers converge **observed state** toward it, resource by resource, forever.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-kf5i3yrx/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/crossplane/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,91 @@
+{
+  "model": "kimi-k3",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] python3: exit=1\nE402 Module level import not at top of file\n   --> generated_1.py:103:1\n    |\n101 | # \u2500\u2500 Kubernetes Secret via Pulumi (ConfigSecret equivalent) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n102 | # Store the connection string as a Kubernetes Secret\n103 | import pulumi_kubernetes as k8s\n    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n104 |\n105 | k8s_provider = k8s.Provider(\n    |\nhelp: Move module level imports to top of file\n\nFound 1 error.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 622,
+    "output": 2438
+  },
+  "content": "# Pulumi Python: Fixing Secret Handling and Output Types\n\n## The Problem\n\nTwo common Pulumi Python mistakes cause this failure:\n\n1. **Secret read as plain string**: Using `config.get()` or `config.require()` for sensitive values returns a plain `str`, storing the secret in plaintext in the state file.\n2. **`.apply()` misuse**: Calling `.apply()` on an `Output` and using the result where an `Output` is expected, or extracting the raw value inside `.apply()` and passing it to a resource property that needs `Output[T]`.\n\n## Broken Code (Before)\n\n```python\n# __main__.py \u2014 BROKEN\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\n\n# BUG 1: Secret read as plain string \u2014 stored in plaintext in state\ndb_password = config.require(\"db_password\")  # Returns str, not Output[str]\n\n# BUG 2: .apply() result misused \u2014 extracting raw value from Output\ndb_instance = aws.rds.Instance(\n    \"app-db\",\n    engine=\"postgres\",\n    instance_class=\"db.t3.micro\",\n    allocated_storage=20,\n    password=db_password,  # Plain string \u2014 leaks into state\n    skip_final_snapshot=True,\n)\n\n# BUG 2 continued: Using .apply() to build a connection string,\n# then passing the *result of the callback* (a plain str) where\n# Pulumi expects an Output \u2014 breaks dependency tracking\nconnection_string = db_instance.endpoint.apply(\n    lambda ep: f\"postgresql://admin:{db_password}@{ep}/appdb\"\n)\n# connection_string is Output[str], but db_password inside is a plain str\n# that was already leaked. Worse, some developers then do:\n#   raw_value = connection_string.apply(lambda s: s)  # anti-pattern\n# and pass raw_value somewhere expecting a plain string.\n\n# BUG 3: Trying to use .apply() result in a resource argument directly\n# by \"unwrapping\" it \u2014 this doesn't work and breaks the graph\nbucket = aws.s3.Bucket(\"app-assets\")\n\nbad_policy = aws.s3.BucketPolicy(\n    \"bad-policy\",\n    bucket=bucket.id,\n    # BUG: .apply() returns Output[str], but policy= expects\n    # Union[str, Output[str]] \u2014 passing the *callback result* breaks\n    policy=bucket.arn.apply(lambda arn: f'{{\"Statement\":[{{\"Resource\":\"{arn}\"}}]}}'),\n    # Actually this specific case works because Pulumi accepts Output[str],\n    # but the real bug is when people do:\n    #   policy=json.dumps({...bucket.arn...})  # TypeError \u2014 arn is Output\n)\n```\n\n## Fixed Code (After)\n\n```python\n# __main__.py \u2014 FIXED\nimport json\nimport pulumi\nimport pulumi_aws as aws\n\n# \u2500\u2500 Stack config \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconfig = pulumi.Config()\nenv = pulumi.get_stack()  # \"dev\" or \"prod\"\n\n# FIX 1: Use require_secret / get_secret for sensitive values.\n# Returns Output[str] marked as secret \u2014 encrypted in state, never logged.\ndb_password = config.require_secret(\"db_password\")\n\n# \u2500\u2500 Environment-specific sizing \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nenv_config = {\n    \"dev\": {\n        \"node_count\": 2,\n        \"node_instance_type\": \"t3.medium\",\n        \"db_instance_class\": \"db.t3.micro\",\n        \"db_multi_az\": False,\n        \"db_encrypted\": True,\n        \"replication\": False,\n    },\n    \"prod\": {\n        \"node_count\": 4,\n        \"node_instance_type\": \"t3.large\",\n        \"db_instance_class\": \"db.t3.medium\",\n        \"db_multi_az\": True,\n        \"db_encrypted\": True,\n        \"replication\": True,\n    },\n}\ncfg = env_config[env]\n\n# \u2500\u2500 S3 Bucket \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nbucket = aws.s3.Bucket(\n    f\"app-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\n    server_side_encryption_configuration=aws.s3.BucketServerSideEncryptionConfigurationArgs(\n        rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n            apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                sse_algorithm=\"AES256\",\n            ),\n        ),\n    ),\n    # Block all public access\n    opts=pulumi.ResourceOptions(),\n)\n\naws.s3.BucketPublicAccessBlock(\n    f\"app-assets-pab-{env}\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    block_public_policy=True,\n    ignore_public_acls=True,\n    restrict_public_buckets=True,\n)\n\n# \u2500\u2500 RDS PostgreSQL \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\ndb_subnet_group = aws.rds.SubnetGroup(\n    f\"db-subnets-{env}\",\n    subnet_ids=[\"subnet-abc123\", \"subnet-def456\"],  # Replace with real VPC subnets\n)\n\ndb_instance = aws.rds.Instance(\n    f\"app-db-{env}\",\n    engine=\"postgres\",\n    engine_version=\"16\",\n    instance_class=cfg[\"db_instance_class\"],\n    allocated_storage=20,\n    multi_az=cfg[\"db_multi_az\"],\n    storage_encrypted=cfg[\"db_encrypted\"],\n    db_subnet_group_name=db_subnet_group.name,\n    # FIX 1 continued: db_password is Output[str] (secret).\n    # Pulumi resource args accept Output[str] directly \u2014 no .apply() needed.\n    username=\"appadmin\",\n    password=db_password,  # \u2705 Output[str] secret, encrypted in state\n    deletion_protection=True,\n    backup_retention_period=7,\n    publicly_accessible=False,\n    skip_final_snapshot=(env == \"dev\"),\n)\n\n# \u2500\u2500 FIX 2: Building connection strings with Output.all() \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# WRONG:  db_instance.endpoint.apply(lambda ep: f\"...{ep}...\")\n#         \u2014 works for single Output but gets messy with multiple,\n#           and people often misuse the callback result.\n#\n# RIGHT:  Use Output.all() + apply() to combine multiple Outputs.\n#         The result is Output[str] \u2014 pass it directly to resource args.\n\nconnection_string = pulumi.Output.all(\n    db_instance.endpoint,\n    db_password,\n).apply(\n    lambda args: f\"postgresql://appadmin:{args[1]}@{args[0]}/appdb\"\n)\n# connection_string is Output[str], marked secret because db_password is secret.\n# Pulumi automatically propagates secret-ness through .apply().\n\n# \u2500\u2500 Kubernetes Secret via Pulumi (ConfigSecret equivalent) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# Store the connection string as a Kubernetes Secret\nimport pulumi_kubernetes as k8s\n\nk8s_provider = k8s.Provider(\n    f\"k8s-{env}\",\n    kubeconfig=\"<kubeconfig-from-eks>\",  # Typically from eks cluster resource\n)\n\ndb_secret = k8s.core.v1.Secret(\n    f\"db-connection-{env}\",\n    metadata=k8s.meta.v1.ObjectMetaArgs(\n        name=\"db-connection\",\n        namespace=\"default\",\n    ),\n    # FIX: Pass Output[str] directly \u2014 Pulumi handles serialization.\n    # The secret value stays encrypted in Pulumi state.\n    string_data={\n        \"connection-string\": connection_string,  # \u2705 Output[str] secret\n    },\n    opts=pulumi.ResourceOptions(provider=k8s_provider),\n)\n\n# \u2500\u2500 EKS Cluster \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\neks_cluster = aws.eks.Cluster(\n    f\"app-cluster-{env}\",\n    role_arn=\"<eks-cluster-role-arn>\",\n    vpc_config=aws.eks.ClusterVpcConfigArgs(\n        subnet_ids=[\"subnet-abc123\", \"subnet-def456\"],\n    ),\n)\n\nnode_group = aws.eks.NodeGroup(\n    f\"app-nodes-{env}\",\n    cluster_name=eks_cluster.name,\n    node_role_arn=\"<eks-node-role-arn>\",\n    subnet_ids=[\"subnet-abc123\", \"subnet-def456\"],\n    instance_types=[cfg[\"node_instance_type\"]],\n    scaling_config=aws.eks.NodeGroupScalingConfigArgs(\n        desired_size=cfg[\"node_count\"],\n        min_size=cfg[\"node_count\"],\n        max_size=cfg[\"node_count\"] + 2,\n    ),\n)\n\n# \u2500\u2500 IAM (least privilege for prod) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nif env == \"prod\":\n    app_policy = aws.iam.Policy(\n        \"app-policy-prod\",\n        policy=bucket.arn.apply(\n            lambda arn: json.dumps({\n                \"Version\": \"2012-10-17\",\n                \"Statement\": [{\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\"s3:GetObject\", \"s3:PutObject\"],\n                    \"Resource\": f\"{arn}/*\",\n                }],\n            })\n        ),\n        # \u2705 .apply() returns Output[str] \u2014 valid for policy= arg\n    )\nelse:\n    app_policy = aws.iam.Policy(\n        \"app-policy-dev\",\n        policy=bucket.arn.apply(\n            lambda arn: json.dumps({\n                \"Version\": \"2012-10-17\",\n                \"Statement\": [{\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\"s3:*\"],\n                    \"Resource\": [f\"{arn}\", f\"{arn}/*\"],\n                }],\n            })\n        ),\n    )\n\n# \u2500\u2500 Exports \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\npulumi.export(\"bucket_name\", bucket.id)\npulumi.export(\"db_endpoint\", db_instance.endpoint)\n# FIX: Export secrets explicitly as secrets\npulumi.export(\"connection_string\", pulumi.Output.secret(connection_string))\n```\n\n## Stack Configuration Files\n\n```yaml\n# dev.yaml\nconfig:\n  aws:region: us-east-1\n  myapp:db_password:\n    secure: AAABAI...  # pulumi config set --secret db_password <value>\n```\n\n```yaml\n# prod.yaml\nconfig:\n  aws:region: us-east-1\n  myapp:db_password:\n    secure: AAABAI...  # pulumi config set --secret db_password <value>\n```\n\n## Key Fixes Summary\n\n| Bug | Before | After |\n|---|---|---|\n| Secret as plain string | `config.require(\"db_password\")` \u2192 `str` | `config.require_secret(\"db_password\")` \u2192 `Output[str]` (encrypted in state) |\n| `.apply()` on single Output | `endpoint.apply(lambda ep: f\"...{ep}...{password}...\")` \u2014 password is raw str inside | `Output.all(endpoint, password).apply(lambda args: ...)` \u2014 all inputs are Outputs |\n| Passing raw value to resource arg | Extracting value inside `.apply()` callback | Pass `Output[T]` directly to resource args \u2014 Pulumi resolves it |\n| Secret propagation | Secret-ness lost when mixing plain str | `Output.secret()` and secret propagation through `.apply()` preserve encryption |\n| Exporting secrets | `pulumi.export(\"conn\", connection_string)` may leak | `pulumi.export(\"conn\", pulumi.Output.secret(connection_string))` |\n\n## The Golden Rules\n\n1. **`require_secret()` / `get_secret()`** for anything sensitive \u2014 never `require()` / `get()`.\n2. **Never unwrap an `Output`** to get a raw value in program code. Pass `Output[T]` directly to resource arguments.\n3. **`Output.all()`** when combining multiple Outputs \u2014 not nested `.apply()` calls.\n4. **Secret-ness propagates**: if any input to `.apply()` is secret, the output is secret.\n5. **`pulumi.Output.secret()`** to explicitly mark an Output as secret when exporting.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-991x1gvw/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-991x1gvw/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-991x1gvw/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-991x1gvw/generated_1.yaml"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.42857142857142855
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-python/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.42857142857142855
+    },
+    "corrected_composite_no_idiom": 0.5,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

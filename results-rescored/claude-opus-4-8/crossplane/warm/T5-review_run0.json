@@ -1,0 +1,89 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1049,
+    "output": 1553
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Summary\n\n**Two blocking changes.** Both violate the acceptance criteria and one is a provider-wide blast radius on data-bearing resources. **Request changes.**\n\n---\n\n## Finding 1: `deletionPolicy: Delete` added provider-wide \ud83d\udd34 BLOCKER\n\n### The problem\n\nSetting `deletionPolicy: Delete` at the provider/composition-wide level means **every managed resource** \u2014 including S3 buckets and RDS instances \u2014 gets destroyed when the corresponding MR/claim is deleted.\n\n```yaml\n# What this likely looks like\nspec:\n  resources:\n    - base:\n        spec:\n          deletionPolicy: Delete   # \u2190 applied to buckets, RDS, everything\n```\n\n### Why this fails the spec\n\n- **AC #2 (RDS)**: \"deletion protection on.\" A wide `Delete` policy means deleting the claim (or a botched `kubectl delete`, or a composition re-render that orphans and recreates) will drop the database. Deletion protection at the AWS level may block the actual delete API call, but Crossplane will keep retrying and the resource will be in a broken state \u2014 and if deletion protection is *also* dropped anywhere, the DB is gone.\n- **Blast radius**: Provider-wide means dev *and* prod share this behavior. A prod accident is now one `delete` away from total data loss.\n\n### What I need\n\n`deletionPolicy` must be scoped by resource type and environment. Stateful resources should be `Orphan` (or `Delete` only in dev, explicitly):\n\n```yaml\n# Stateful \u2014 protect prod data\n- name: rds-instance\n  base:\n    spec:\n      deletionPolicy: Orphan          # prod\n      forProvider:\n        deletionProtection: true\n\n# Stateless \u2014 Delete is fine\n- name: cloudfront-distribution\n  base:\n    spec:\n      deletionPolicy: Delete\n```\n\nIf dev genuinely wants `Delete` for cheap teardown, drive it via a **composition parameter** patched from the claim's environment field \u2014 not a global default:\n\n```yaml\npatches:\n  - type: FromCompositeFieldPath\n    fromFieldPath: spec.parameters.deletionPolicy   # \"Orphan\" for prod, \"Delete\" for dev\n    toFieldPath: spec.deletionPolicy\n```\n\n**Do not merge a provider-wide `Delete`.**\n\n---\n\n## Finding 2: Bucket versioning dropped \ud83d\udd34 BLOCKER\n\n### The problem\n\nThe diff removes versioning configuration from the S3 bucket resource.\n\n### Why this fails the spec\n\n- **AC #1 (Bucket)**: \"versioning enabled\" \u2014 non-negotiable, both envs.\n- Combined with Finding 1, this is especially dangerous: no versioning + `deletionPolicy: Delete` = **unrecoverable data loss** on the application assets bucket. There's no object-version safety net *and* no resource-level orphan protection. Defense in depth is gone on both axes.\n- **Prod cross-region replication** (per spec) **requires versioning** on both source and destination buckets. Dropping versioning silently breaks the CRR requirement if it's configured elsewhere.\n\n### What I need\n\nRestore versioning on the bucket MR:\n\n```yaml\n- name: bucket-versioning\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketVersioning\n    spec:\n      forProvider:\n        versioningConfiguration:\n          - status: Enabled\n```\n\n---\n\n## Questions for the author\n\n1. **What motivated the provider-wide `Delete`?** If it's dev teardown convenience, that's a parameter, not a global \u2014 see Finding 1's patch approach.\n2. **Was the versioning removal intentional or a rebase/merge artifact?** If intentional, what's the justification against AC #1?\n3. **Does prod CRR still reference this bucket?** If so, versioning removal will break replication reconciliation \u2014 confirm the destination bucket state.\n\n## Checklist status\n\n| Criterion | Status |\n|---|---|\n| AC #1 Bucket versioning | \u274c Removed |\n| AC #1 Bucket encryption / no public access | \u26a0\ufe0f Confirm unchanged |\n| AC #2 RDS deletion protection | \u274c Undermined by wide `Delete` |\n| AC #7 Env isolation | \u26a0\ufe0f Provider-wide default couples dev/prod behavior |\n\n**Verdict: Request changes.** Revert both changes; re-introduce `deletionPolicy` as an environment-scoped composition parameter with `Orphan` for prod stateful resources.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-u6_0woxg/generated_0.yaml"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/crossplane/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

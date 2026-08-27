@@ -1,0 +1,89 @@
+{
+  "model": "glm-5.3",
+  "task": "T6-semantics",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q1_claim_delete_cascades PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q2_orphan_bucket_survives PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q3_delete_policy_removes_role PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q4_manual_update_policy_pins_revision PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q5_claim_connection_secret_location PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q6_parallel_convergence PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q7_claim_namespaced_xr_cluster_scoped PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1850,
+    "output": 475
+  },
+  "content": "```json\n{\n  \"q1\": \"deleted\",\n  \"q2\": \"exists\",\n  \"q3\": \"deleted\",\n  \"q4\": \"manual\",\n  \"q5\": {\"name\": \"storefront-conn\", \"namespace\": \"team-a\"},\n  \"q6\": \"parallel-converge\",\n  \"q7\": {\"claim\": \"namespaced\", \"xr\": \"cluster-scoped\"}\n}\n```\n\nBrief rationale:\n\n- **Q1**: Deleting the claim deletes the XR, which deletes all composed managed resources (Bucket, Role, RolePolicyAttachment) from the cluster. `deletionPolicy` only controls the *external* resource.\n- **Q2**: The Bucket has `deletionPolicy: Orphan` \u2014 the K8s object is removed but the AWS bucket `storefront-artifacts-prod` is left in place (and `forceDestroy: false` means it can't be force-deleted anyway).\n- **Q3**: The Role has `deletionPolicy: Delete` \u2014 the IAM role is deleted in AWS.\n- **Q4**: The claim sets `compositionUpdatePolicy: Manual`, so it pins its current CompositionRevision and only moves to a new one when explicitly updated.\n- **Q5**: The claim's `writeConnectionSecretToRef` (secret name `storefront-conn`) governs the secret the app team reads, and it is created in the claim's namespace (`team-a`). The Composition's `writeConnectionSecretsToNamespace` only affects where the XR's secret goes; the claim propagates connection details to its own ref.\n- **Q6**: Crossplane creates all composed resources and reconciles/converges; it does not support ordered sequential creation with readiness gating between resources.\n- **Q7**: Claims (`WebService`) are namespaced; composite resources (`XWebService`) are cluster-scoped.",
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7777777777777778
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/crossplane/warm/T6-semantics_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7777777777777778
+    },
+    "corrected_composite_no_idiom": 0.875,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

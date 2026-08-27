@@ -1,0 +1,83 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\n# SEED REPO: .sops.yaml with WRONG age key (defect)\n# The correct age key is in age-key.txt but this file references a different key\ncreation_rules:\n  - path: '*.yaml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n  - path: '*.yml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n---\n# SEED REPO: knr-ops with SOPS age key defect\n# The defect: .sops.yaml references a different age key than the one in age-key.txt\n# This causes Flux kustomizations to fail to decrypt\n\napiVersion: v1\nkind: Secret\nme\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-3bg4k8h2/.sops.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 2 resources found in 2 files - Valid: 1, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 921,
+    "output": 784
+  },
+  "content": "The supplied files establish the correct age **recipient** as:\n\n```text\nage1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nUpdate `.sops.yaml` to use that exact value:\n\n```yaml\ncreation_rules:\n  - path_regex: '(^|/)secret.*\\.ya?ml$'\n    encrypted_regex: '^(data|stringData)$'\n    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nThen update the kustomize patch target so its `name` matches the renamed resource. For the supplied Secret, that is:\n\n```yaml\npatches:\n  - path: <patch-file>.yaml\n    target:\n      version: v1\n      kind: Secret\n      name: db-password-dev\n      namespace: infra\n```\n\nFor a production overlay, use the actual production resource name, typically:\n\n```yaml\nname: db-password-prod\n```\n\nVerify both overlays:\n\n```bash\nkustomize build overlays/dev >/tmp/dev.yaml\nkustomize build overlays/prod >/tmp/prod.yaml\n```\n\nOr, when using SOPS-aware Kustomize generators/plugins:\n\n```bash\nSOPS_AGE_KEY_FILE=/path/to/age-private-key.txt \\\n  kustomize build --enable-alpha-plugins --enable-exec overlays/dev >/tmp/dev.yaml\n\nSOPS_AGE_KEY_FILE=/path/to/age-private-key.txt \\\n  kustomize build --enable-alpha-plugins --enable-exec overlays/prod >/tmp/prod.yaml\n```\n\nTwo important limitations in the provided workspace:\n\n1. `secret.yaml` is plaintext and has no `sops:` metadata, so it is **not currently SOPS-encrypted** and violates the stated acceptance criterion.\n2. `age-key.txt` contains an `age1...` public recipient, not an `AGE-SECRET-KEY-...` private identity. Encryption can use it, but decryption requires the corresponding private identity, which must be installed in Flux\u2019s SOPS decryption Secret.\n\nAfter obtaining the private key, encrypt the file before committing:\n\n```bash\nsops --encrypt --in-place secret.yaml\n```\n\nThe exact patch file and current target were not included, so a literal repository-wide patch and a claimed successful build cannot be produced from the supplied files alone.",
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.6-sol-low/knr-ops/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

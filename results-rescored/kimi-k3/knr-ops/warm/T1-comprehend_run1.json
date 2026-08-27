@@ -1,0 +1,90 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 938,
+    "output": 2875
+  },
+  "content": "\n\n# Predicting Delivery Behavior for PR #42\n\n## 1. What Reconciles and In What Order\n\nWhen PR #42 merges, Flux detects the new commit on the watched branch and begins reconciliation. The order is governed by the `dependsOn` graph defined in `flux/kustomizations.yaml`.\n\n```\nGit Source Poll (e.g., every 1m)\n        \u2502\n        \u25bc\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  flux-system    \u2502  Flux source-controller detects new revision\n\u2502  GitRepository  \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n         \u2502\n         \u25bc\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510     \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  infra-iam      \u2502     \u2502  infra-s3       \u2502   (parallel if no\n\u2502  Kustomization  \u2502     \u2502  Kustomization  \u2502    dependency)\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518     \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n         \u2502                       \u2502\n         \u25bc                       \u25bc\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510     \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  infra-rds      \u2502     \u2502  infra-app      \u2502\n\u2502  (dependsOn:    \u2502     \u2502  (dependsOn:    \u2502\n\u2502   infra-iam)    \u2502     \u2502   infra-rds,    \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518     \u2502   infra-s3)     \u2502\n                        \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n**Concrete sequence:**\n\n1. **Source reconciliation**: `source-controller` fetches the new Git revision. All `Kustomization` resources that reference this source are notified.\n\n2. **Dependency-ordered reconciliation**: Flux walks the `dependsOn` DAG. A typical setup for this repo:\n\n   ```yaml\n   # flux/kustomizations.yaml (representative)\n   apiVersion: kustomize.toolkit.fluxcd.io/v1\n   kind: Kustomization\n   metadata:\n     name: infra-iam\n     namespace: flux-system\n   spec:\n     path: ./infra/iam\n     sourceRef:\n       kind: GitRepository\n       name: knr-ops\n   ---\n   apiVersion: kustomize.toolkit.fluxcd.io/v1\n   kind: Kustomization\n   metadata:\n     name: infra-s3\n     namespace: flux-system\n   spec:\n     path: ./infra/s3\n     sourceRef:\n       kind: GitRepository\n       name: knr-ops\n   ---\n   apiVersion: kustomize.toolkit.fluxcd.io/v1\n   kind: Kustomization\n   metadata:\n     name: infra-rds\n     namespace: flux-system\n   spec:\n     dependsOn:\n       - name: infra-iam\n     path: ./infra/rds\n     sourceRef:\n       kind: GitRepository\n       name: knr-ops\n   ---\n   apiVersion: kustomize.toolkit.fluxcd.io/v1\n   kind: Kustomization\n   metadata:\n     name: apps-prod\n     namespace: flux-system\n   spec:\n     dependsOn:\n       - name: infra-rds\n       - name: infra-s3\n     path: ./overlays/prod\n     sourceRef:\n       kind: GitRepository\n       name: knr-ops\n   ```\n\n   **Actual order:**\n   - `infra-iam` and `infra-s3` reconcile **in parallel** (no interdependency)\n   - `infra-rds` reconciles **after** `infra-iam` reports ready\n   - `apps-prod` (the prod overlay) reconciles **after** both `infra-rds` and `infra-s3` report ready\n\n3. **Health checks**: Each kustomization waits for its resources to report `Ready` before downstream dependencies begin. For ACK resources, this means the ACK controller must report the resource as `ACK.ResourceSynced=True`.\n\n## 2. Does the RDS Instance Get Recreated?\n\n**No \u2014 it is modified in place.**\n\nThe change is `instanceClass: db.t3.micro` \u2192 `db.t3.medium`. Here's the full flow:\n\n```\nGit change detected\n       \u2502\n       \u25bc\nFlux kustomize-controller applies updated\nDBInstance manifest to the cluster\n       \u2502\n       \u25bc\nACK RDS controller sees spec drift\n(desired: db.t3.medium, actual: db.t3.micro)\n       \u2502\n       \u25bc\nACK calls AWS RDS ModifyDBInstance API\n       \u2502\n       \u25bc\nAWS performs in-place instance class modification\n(brief downtime during resize, ~5-10 min for t3.micro \u2192 t3.medium)\n```\n\n**Why not recreated:**\n- ACK controllers follow the **update-in-place** model for mutable fields. `instanceClass` is a mutable attribute on an RDS instance.\n- The `DBInstance` CR's `metadata.name` and `spec.dbInstanceIdentifier` haven't changed, so ACK maps it to the same AWS resource.\n- ACK only deletes and recreates when **immutable** fields change (e.g., `dbInstanceIdentifier`, `engine`, or `storageType` in some cases).\n\n**What actually happens on AWS:**\n- RDS issues a `ModifyDBInstance` call with `DBInstanceClass=db.t3.medium`\n- The instance enters `modifying` state\n- There is a **brief outage** (typically 2\u20138 minutes) while the instance is resized\n- The data volume, endpoint, and all data are preserved\n\n**Caveat**: If `applyImmediately` is not set (or is `false`) in the ACK `DBInstance` spec, the modification is queued for the next maintenance window rather than applied immediately. This is a critical operational detail:\n\n```yaml\n# infra/rds/instance.yaml \u2014 key field\nspec:\n  applyImmediately: true   # If absent/false, change waits for maintenance window\n```\n\n## 3. What Happens to the S3 Bucket If Its Manifest Is Deleted\n\n**It depends on the `prune` setting in the Flux Kustomization.**\n\n### With `prune: true` (recommended and typical):\n\n```yaml\nspec:\n  prune: true\n  # ...\n```\n\n```\nManifest deleted from Git\n       \u2502\n       \u25bc\nFlux detects the resource was previously\napplied but is no longer in the source\n       \u2502\n       \u25bc\nFlux issues DELETE for the Bucket CR\n       \u2502\n       \u25bc\nKubernetes deletes the ACK Bucket custom resource\n       \u2502\n       \u25bc\nACK S3 controller sees deletion timestamp\n       \u2502\n       \u25bc\nACK calls AWS S3 DeleteBucket API\n       \u2502\n       \u25bc\nAWS S3 bucket is deleted\n(fails if bucket is not empty)\n```\n\n**Important nuance**: If the bucket contains objects, the AWS `DeleteBucket` call will **fail** with `BucketNotEmpty`. The ACK controller will retry and report the error in the CR status. The bucket CR will be stuck in a `deleting` state until either:\n- The bucket is emptied (manually or via lifecycle policy)\n- The finalizer is manually removed\n\n### With `prune: false`:\n\nThe Kubernetes CR is orphaned (not deleted), and the AWS bucket persists. Flux simply stops managing it.\n\n### The typical knr-ops setup uses `prune: true`, so:\n\n> **The S3 bucket CR is deleted from the cluster, and ACK attempts to delete the actual AWS S3 bucket. If the bucket is non-empty, deletion stalls until the bucket is emptied.**\n\n## 4. How Flux Handles the Prod-Only Replica Change\n\nThis is where kustomize overlays provide environment isolation.\n\n```\noverlays/\n\u251c\u2500\u2500 dev/\n\u2502   \u251c\u2500\u2500 kustomization.yaml      # references ../../infra/app\n\u2502   \u2514\u2500\u2500 patch-replicas.yaml     # replicas: 2\n\u2514\u2500\u2500 prod/\n    \u251c\u2500\u2500 kustomization.yaml      # references ../../infra/app\n    \u2514\u2500\u2500 patch-replicas.yaml     # replicas: 4  \u2190 CHANGED in PR #42\n```\n\n**The `prod` overlay's `kustomization.yaml`:**\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../infra/app\npatches:\n  - target:\n      kind: Deployment\n      name: web-app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n```\n\n**What Flux does:**\n\n1. The `apps-prod` Flux Kustomization has `spec.path: ./overlays/prod`\n2. `kustomize-controller` runs `kustomize build` on `./overlays/prod`\n3. The build output includes the `Deployment` with `replicas: 4`\n4. Flux applies this to the cluster via server-side apply\n5. Kubernetes performs a rolling update to scale from the previous replica count to 4\n\n**The `dev` overlay is completely unaffected:**\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  apps-dev Kustomization                  \u2502\n\u2502  path: ./overlays/dev                    \u2502\n\u2502                                          \u2502\n\u2502  kustomize build ./overlays/dev          \u2502\n\u2502  \u2192 Deployment with replicas: 2           \u2502\n\u2502  \u2192 NO CHANGE (hash matches last applied) \u2502\n\u2502  \u2192 Flux reports \"no drift\"               \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  apps-prod Kustomization                 \u2502\n\u2502  path: ./overlays/prod                   \u2502\n\u2502                                          \u2502\n\u2502  kustomize build ./overlays/prod         \u2502\n\u2502  \u2192 Deployment with replicas: 4           \u2502\n\u2502  \u2192 DRIFT DETECTED (was 2 or 3)          \u2502\n\u2502  \u2192 Flux applies updated Deployment       \u2502\n\u2502  \u2192 Rolling update begins                 \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n**Key guarantee**: Because dev and prod are separate Flux Kustomizations with separate paths, changing the prod overlay **never** triggers a dev reconciliation. This satisfies the environment isolation acceptance criterion.\n\n## 5. The Role of `dependsOn` Between Kustomizations\n\n`dependsOn` creates a **directed acyclic graph (DAG)** that controls both **ordering** and **gating** of reconciliation.\n\n### Ordering\n\n```\nWithout dependsOn:                    With dependsOn:\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510 \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510            \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 infra-iam\u2502 \u2502 infra-rds\u2502  (race)    \u2502 infra-iam\u2502\u2500\u2500\u25b6\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502 (apply)  \u2502 \u2502 (apply)  \u2502            \u2502 (apply)  \u2502   \u2502 infra-rds\u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518 \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518            \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518   \u2502 (apply)  \u2502\n                                                     \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\nApp might deploy before DB exists     App deploys only after DB is ready\n```\n\n### Gating (the critical behavior)\n\n`dependsOn` doesn't just mean \"reconcile after\" \u2014 it means **\"reconcile only after the dependency reports healthy.\"**\n\n```\ninfra-rds Kustomization status:\n  conditions:\n    - type: Ready\n      status: \"True\"        \u2190 apps-prod CAN proceed\n\n    - type: Ready\n      status: \"False\"       \u2190 apps-prod is BLOCKED\n      reason: ReconciliationFailed\n```\n\n**Concrete scenario for PR #42:**\n\n```\nTimeline after merge:\n\nt=0    Flux detects new commit\nt=0    infra-iam reconciles (no changes, reports Ready immediately)\nt=0    infra-s3 reconciles (new Bucket CR created)\nt=5s   ACK S3 controller provisions bucket\nt=30s  Bucket reports ACK.ResourceSynced=True\nt=30s  infra-s3 Kustomization reports Ready \u2705\n\nt=0    infra-rds reconciles (dependsOn: infra-iam \u2705)\nt=5s   DBInstance CR updated with db.t3.medium\nt=5s   ACK RDS controller calls ModifyDBInstance\nt=5s   DBInstance status: modifying\nt=8m   DBInstance status: available, ACK.ResourceSynced=True\nt=8m   infra-rds Kustomization reports Ready \u2705\n\nt=8m   apps-prod reconciles (dependsOn: infra-rds \u2705, infra-s3 \u2705)\nt=8m   Deployment updated with replicas: 4\nt=9m   Rolling update completes\nt=9m   apps-prod Kustomization reports Ready \u2705\n```\n\n**If the RDS modification fails** (e.g., insufficient capacity in the AZ):\n\n```\nt=8m   DBInstance status: failed\nt=8m   infra-rds Kustomization reports Ready=False\nt=8m   apps-prod is BLOCKED \u2014 replicas stay at current count\n       Flux retries infra-rds with backoff\n       apps-prod will NOT reconcile until infra-rds is healthy\n```\n\nThis prevents the application from scaling up against a database that isn't ready \u2014 a critical safety property for production deployments.\n\n### Summary Table\n\n| Question | Answer |\n|---|---|\n| **Reconcile order** | `infra-iam` + `infra-s3` (parallel) \u2192 `infra-rds` \u2192 `apps-prod`, gated by `dependsOn` health checks |\n| **RDS recreated?** | No \u2014 `instanceClass` is mutable; ACK calls `ModifyDBInstance` in-place. Brief downtime, data preserved |\n| **S3 bucket deleted from Git?** | With `prune: true`, Flux deletes the CR \u2192 ACK deletes the AWS bucket. Stalls if bucket is non-empty |\n| **Prod-only replicas** | Only the `apps-prod` Kustomization detects drift. Dev is untouched. Kustomize overlay isolation guarantees this |\n| **`dependsOn` role** | Enforces ordering + gating. Downstream kustomizations wait for upstream `Ready=True` before reconciling |",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-9_q22l13/flux/kustomizations.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-9_q22l13/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-9_q22l13/generated_2.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/knr-ops/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

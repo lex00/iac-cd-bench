@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 654,
+    "output": 946
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Summary\n\nTwo changes introduced:\n1. `deletionPolicy: Delete` added provider-wide\n2. S3 bucket versioning removed\n\n## Findings\n\n### 1. `deletionPolicy: Delete` added provider-wide \u2014 **CRITICAL**\n\nThis is a **high-severity regression**. In Crossplane, setting `deletionPolicy: Delete` on a provider (or composition) means that when a managed resource is deleted from the cluster (e.g., the claim is removed, or the composition is revised), the **underlying cloud resource will be destroyed** (e.g., the EKS cluster, RDS instance, S3 bucket, etc.).\n\n**Impact against acceptance criteria:**\n\n- **Environment isolation (Criterion 7):** Dev and prod must be independently deployable. A provider-wide `deletionPolicy: Delete` means that any re-application of the composition in one environment could inadvertently tear down cloud resources if claims are removed or updated. This creates a destructive coupling that violates independent deployability.\n- **RDS (Criterion 2):** RDS instances have `deletionProtection: true` and `backupRetention >= 7 days`. If a managed RDS resource is deleted due to `deletionPolicy: Delete`, the cross-plane provider may attempt to delete the underlying RDS instance. While AWS will refuse if `DeletionProtection` is true, this creates a conflict and potential for failed reconciles or manual intervention. More critically, it signals an intent to destroy infrastructure that contradicts the non-destructive nature expected in a production environment.\n- **S3 (Criterion 1):** The bucket has versioning and encryption. Deleting the bucket outright (rather than just emptying or leaving it) is risky. If the bucket contains production data, a `Delete` policy could lead to data loss, even if versioning is enabled (versioning protects against accidental deletion of *objects*, not the bucket itself).\n- **Cluster (Criterion 5):** An EKS cluster with managed node groups being deleted outright is a catastrophic failure mode. This is not acceptable for a production environment.\n\n**Recommendation:** Remove `deletionPolicy: Delete` or scope it narrowly to non-critical, ephemeral resources if there is a legitimate reason. By default, Crossplane uses `Delete` for some resource kinds but `Orphan` for others. For long-lived infrastructure like EKS, RDS, and S3, the policy should be **`Orphan`** so that deleting a claim does not destroy the underlying cloud resource. If a provider-wide setting is used, ensure it is set to `Orphan` for critical resources.\n\n> **Verdict:** This change **violates** the safety and environment isolation requirements. It must be reverted or replaced with `deletionPolicy: Orphan` for critical resources.\n\n### 2. S3 bucket versioning removed \u2014 **HIGH**\n\nThe canonical specification and **Acceptance Criterion 1** explicitly require:\n> **Bucket**: versioning enabled, server-side encryption (AES-256 or KMS), no public access\n\nRemoving versioning is a direct violation of this criterion.\n\n**Impact:**\n- **Data protection:** Without versioning, accidental deletion or overwrite of application assets results in permanent data loss. This is a core safety requirement for a bucket holding application assets in both dev and prod.\n- **Prod specifically:** Production buckets are expected to have versioning as a standard operational safeguard.\n- **Consistency:** The spec states both dev and prod buckets are \"versioned, encryption.\" Removing versioning breaks parity.\n\n**Recommendation:** Restore versioning on the S3 bucket in both dev and prod compositions. Ensure the composition parameter or resource definition includes `versioning.enabled = true`.\n\n> **Verdict:** This change **violates** Acceptance Criterion 1. It must be reverted.\n\n## Overall Assessment\n\n| Change | Severity | Criterion Violated | Action Required |\n|---|---|---|---|\n| `deletionPolicy: Delete` provider-wide | **Critical** | #7 (Environment isolation), #2 (RDS), #1 (Bucket), #5 (Cluster) | Revert or set to `Orphan` for critical resources |\n| Bucket versioning dropped | **High** | #1 (Bucket versioning enabled) | Restore versioning in dev and prod |\n\n**Recommendation:** **Do not merge** this diff. Both changes are regressions against the canonical specification and acceptance criteria. Revert both changes and re-review.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/crossplane/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

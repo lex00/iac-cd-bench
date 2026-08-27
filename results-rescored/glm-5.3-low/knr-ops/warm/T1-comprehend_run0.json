@@ -1,0 +1,85 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1352,
+    "output": 888
+  },
+  "content": "## Answers\n\n### 1. What reconciles when PR #42 merges, and in what order?\n\nOn merge, Flux's `GitRepository` source picks up the new revision (on its poll interval or immediately if webhooks are configured), then reconciles the `Kustomization(s)` that reference it:\n\n1. **`GitRepository`** fetches the new commit SHA\n2. **Cluster/infra Kustomizations** (`clusters/eksa/`, `infra/s3`, `infra/rds`, `infra/iam`) reconcile \u2014 order governed by `dependsOn` (see Q5), typically cluster-then-infra\n3. **`overlays/prod` Kustomization** reconciles with the new replica patch; `overlays/dev` reconciles too but is a no-op (no diff vs. live state)\n4. Within each Kustomization, Flux does a server-side apply; ACK controllers then process the resulting `Instance`, `Bucket`, and `Deployment` changes asynchronously\n\n### 2. Does the RDS instance get recreated?\n\n**No.** Changing `instanceClass` from `db.t3.micro` \u2192 `db.t3.medium` is an **in-place modification** for RDS. The ACK RDS controller issues a `ModifyDBInstance` API call. The `Instance` CR's identity (name/identifier) is unchanged, so the controller updates rather than deletes/recreates. Expect:\n- A brief (or zero-downtime, if multi-AZ in prod) modification window\n- The CR status entering a non-ready/\"modifying\" state until AWS completes\n\nRecreation would only occur if the CR were deleted (and pruning removed it) or an immutable field (e.g., engine, storage type in some cases) changed \u2014 those would force replacement.\n\n### 3. What happens if the S3 bucket manifest is deleted from Git?\n\nFlux's **pruning** removes the `Bucket` CR from the cluster. Then behavior depends on the CR's deletion policy:\n\n- **If `deletionPolicy: Delete`** (or the ACK controller's default for S3): the controller calls `DeleteBucket` \u2014 it only succeeds if the bucket is **empty**; otherwise deletion fails/retries while objects remain.\n- **If `deletionPolicy: Retain` / orphan on delete**: the CR is removed but the AWS bucket persists.\n\nGiven the acceptance criteria (versioning + deletion protection mindset), best practice here is `Retain` (or `Orphan`) for prod so Git deletions can't destroy data.\n\n### 4. How does Flux handle the prod-only replica change?\n\nFlux applies overlays per-environment via separate `Kustomization` objects pointing at `overlays/dev` and `overlays/prod`. The patch (`replicas: 4`) lives only in `overlays/prod`, so:\n\n- Flux's `Kustomization` for prod builds the overlay, renders `Deployment` with `replicas: 4`, and server-side-applies it \u2014 the Deployment controller scales the ReplicaSet from current count \u2192 4.\n- The dev Kustomization's rendered output is unchanged, so dev state is untouched (criterion: environment isolation).\n- Caveat: any replica count managed outside Git (e.g., HPA or manual `kubectl scale`) will be reverted to 4 on the next reconciliation \u2014 Git is the source of truth.\n\n### 5. Role of `dependsOn`?\n\n`dependsOn` in Flux Kustomizations creates an explicit **reconciliation ordering graph**:\n\n- A Kustomization won't reconcile until its dependencies have successfully reconciled (healthy + current revision).\n- Typical chain: `cluster` (CAPI/CAPA) \u2192 `infra-iam`/`infra-s3`/`infra-rds` \u2192 `apps`/`overlays-*` \u2014 ensuring ACK CRDs/controllers and the IAM role exist before resources referencing them are applied.\n- If a dependency fails or is suspended, dependents are **skipped** (no half-applied sequences), and retries happen on the next interval.\n- Without it, Flux reconciles in arbitrary order, risking apply errors (e.g., app Deployment before the IAM role or DB secret it depends on exists).",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

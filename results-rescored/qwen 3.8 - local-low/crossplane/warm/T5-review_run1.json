@@ -1,0 +1,88 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 682,
+    "output": 1766
+  },
+  "content": "\n\n# Crossplane Composition Diff Review\n\n## Verdict: \u274c Block \u2014 Both changes are problematic, and their combination is a compounding risk.\n\n---\n\n## 1. `deletionPolicy: Delete` (provider-wide)\n\n### What it does\n\nSets the composite/managed resource lifecycle so that when a **claim** is deleted, Crossplane calls the provider to **delete the underlying cloud resource** (RDS instance, S3 bucket, EKS cluster, etc.).\n\n### Problems\n\n| Concern | Why it matters |\n|---|---|\n| **Prod blast radius** | A single `kubectl delete claim rds-prod` destroys the production database. There is no confirmation step, no Terraform-style `plan`/`apply` gate, and no \"are you sure?\" prompt. |\n| **Applies to all resources uniformly** | EKS cluster, RDS, S3, IAM \u2014 all become as disposable as a dev stub. The spec explicitly sizes prod for resilience (multi-AZ, encryption, cross-region replication). Treating those claims as deletable-by-accident contradicts that intent. |\n| **No environment differentiation** | The spec requires dev and prod to be independently managed (AC #7). A provider-wide `Delete` erases that distinction at the lifecycle-policy level. |\n| **Compounds with change #2** | See below. |\n\n### Recommendation\n\n```yaml\n# In the prod composition / composition revision, or via a composition\n# parameter that differs per environment:\nspec:\n  deletionPolicy: Orphan   # prod: leave the cloud resource if the claim is removed\n```\n\n```yaml\n# dev:\nspec:\n  deletionPolicy: Delete   # acceptable \u2014 dev resources are disposable\n```\n\nThis is the Crossplane idiom for environment-differentiated safety: `Orphan` on prod, `Delete` on dev. If you need a hard guardrail even for dev, consider adding an **RDS `DeletionProtection: true`** (already in AC #2) and an **S3 Object Lock** or lifecycle rule as a second layer.\n\n---\n\n## 2. Bucket versioning dropped\n\n### Violates\n\n- **AC #1**: *\"Bucket: **versioning enabled**, server-side encryption (AES-256 or KMS), no public access.\"*\n- **Spec table**: Both dev and prod explicitly list *versioned*.\n\n### Why it's not just a cosmetic diff\n\nWithout versioning:\n\n- Accidental `s3 rm` (or a misbehaving workload writing then truncating an object) is **irrecoverable**.\n- If `deletionPolicy: Delete` is also active, the bucket itself can be destroyed by claim deletion \u2014 and because there's no versioning, there's no \"last known good\" state to restore from even if the bucket is recreated.\n- Cross-region replication (prod only) replicates **object versions**. Dropping versioning silently disables the replication semantics (only the latest \"null\" version replicates), effectively breaking the prod DR story.\n\n### Recommendation\n\nRestore versioning in the `S3Bucket` managed resource spec:\n\n```yaml\nspec:\n  forClaim:\n    ...\n  resources:\n    - name: bucket\n      base:\n        apiVersion: s3.aws.upbound.io/v1beta1\n        kind: Bucket\n        spec:\n          forProvider:\n            region: ...\n            versioning:\n              status: Enabled          # \u2190 restore this\n            serverSideEncryption:\n              sseAlgorithm: aws:kms\n            publicAccessBlock:\n              blockPublicAcls: true\n              blockPublicPolicy: true\n              ignorePublicAcls: true\n              restrictPublicBuckets: true\n```\n\n---\n\n## 3. Combined risk (the interaction)\n\n| Scenario | With versioning | Without versioning + `Delete` |\n|---|---|---|\n| Accidental claim deletion | Bucket destroyed, but objects in CRR target (prod) or local copy may still exist | Bucket destroyed, **no recoverable object state anywhere** |\n| Malicious / buggy workload deletes objects | Rollback via version history | **Permanent data loss** |\n| Operator runs `kubectl delete claim` during a misconfiguration | Survivable incident | **Catastrophic** |\n\nThe two changes are independent regressions, but together they eliminate both the **infrastructure-level** safety net (deletion policy) and the **data-level** safety net (versioning).\n\n---\n\n## Summary\n\n| Change | Verdict | Action |\n|---|---|---|\n| `deletionPolicy: Delete` provider-wide | \u274c Reject for prod | Use `Orphan` for prod, `Delete` for dev (per-env composition parameters) |\n| Bucket versioning removed | \u274c Reject | Restore `versioning.status: Enabled` |\n\nBoth changes should be reverted before this diff is merged.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-o1ghme5c/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/crossplane/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,100 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 622,
+    "output": 2475
+  },
+  "content": "# Pulumi Preview JSON Security Review\n\nI'll analyze a Pulumi preview JSON output for the specified security issues. Let me walk through each concern systematically.\n\n## Sample Pulumi Preview JSON (Problematic)\n\n```json\n{\n  \"steps\": [\n    {\n      \"op\": \"create\",\n      \"urn\": \"urn:pulumi:prod::myproject::aws:s3/bucket:Bucket::app-assets\",\n      \"newState\": {\n        \"bucket\": \"app-assets-prod\",\n        \"versioning\": { \"enabled\": true },\n        \"serverSideEncryptionConfiguration\": {\n          \"rule\": {\n            \"applyServerSideEncryptionByDefault\": {\n              \"sseAlgorithm\": \"AES256\"\n            }\n          }\n        }\n      }\n    },\n    {\n      \"op\": \"replace\",\n      \"urn\": \"urn:pulumi:prod::myproject::aws:rds/instance:Instance::postgres\",\n      \"oldState\": {\n        \"identifier\": \"postgres-prod\",\n        \"engine\": \"postgres\",\n        \"instanceClass\": \"db.t3.medium\",\n        \"multiAz\": true,\n        \"storageEncrypted\": true,\n        \"deletionProtection\": false,\n        \"backupRetentionPeriod\": 3\n      },\n      \"newState\": {\n        \"identifier\": \"postgres-prod\",\n        \"engine\": \"postgres\",\n        \"instanceClass\": \"db.t3.large\",\n        \"multiAz\": true,\n        \"storageEncrypted\": true,\n        \"deletionProtection\": false,\n        \"backupRetentionPeriod\": 3\n      }\n    },\n    {\n      \"op\": \"create\",\n      \"urn\": \"urn:pulumi:prod::myproject::pulumi:pulumi:Stack::myproject-prod\",\n      \"newState\": {\n        \"outputs\": {\n          \"dbConnectionString\": \"postgresql://admin:SuperSecret123!@postgres-prod.abc123.us-east-1.rds.amazonaws.com:5432/mydb\",\n          \"apiKey\": \"sk-1234567890abcdef\",\n          \"bucketName\": \"app-assets-prod\"\n        }\n      }\n    },\n    {\n      \"op\": \"create\",\n      \"urn\": \"urn:pulumi:prod::myproject::aws:iam/user:User::service-account\",\n      \"newState\": {\n        \"name\": \"service-account-prod\",\n        \"inlinePolicies\": [\n          {\n            \"name\": \"app-policy\",\n            \"policy\": \"{\\\"Version\\\":\\\"2012-10-17\\\",\\\"Statement\\\":[{\\\"Effect\\\":\\\"Allow\\\",\\\"Action\\\":\\\"*\\\",\\\"Resource\\\":\\\"*\\\"}]}\"\n          }\n        ]\n      }\n    }\n  ]\n}\n```\n\n---\n\n## Security Issues Identified\n\n### \ud83d\udd34 **CRITICAL: Secret in Plaintext Outputs**\n\n**Location:** `steps[2].newState.outputs`\n\n```json\n\"outputs\": {\n  \"dbConnectionString\": \"postgresql://admin:SuperSecret123!@postgres-prod...\",\n  \"apiKey\": \"sk-1234567890abcdef\"\n}\n```\n\n**Issues:**\n- Database connection string with credentials exposed in plaintext\n- API key stored unencrypted\n- Both will be visible in `pulumi stack output` and state file\n\n**Remediation:**\n\n```typescript\n// \u274c BAD - Plaintext output\nexport const dbConnectionString = pulumi.interpolate`postgresql://${dbUser}:${dbPassword}@${db.endpoint}/mydb`;\n\n// \u2705 GOOD - Use ConfigSecret or mark as secret\nconst config = new pulumi.Config();\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\nexport const dbConnectionString = pulumi.secret(\n  pulumi.interpolate`postgresql://${dbUser}:${dbPassword}@${db.endpoint}/mydb`\n);\n\n// Or retrieve from AWS Secrets Manager\nconst dbSecret = aws.secretsmanager.getSecretVersion({\n  secretId: \"prod/db-credentials\"\n});\nexport const dbConnectionString = pulumi.secret(dbSecret.then(s => s.secretString));\n```\n\n**Stack Config (`prod.yaml`):**\n```yaml\nmyproject:dbPassword:\n  secure: AAABAH... # Encrypted with Pulumi secrets provider\n```\n\n---\n\n### \ud83d\udd34 **CRITICAL: Replacement of Stateful Resource (RDS)**\n\n**Location:** `steps[1]` - `\"op\": \"replace\"`\n\n**Issue:**\nRDS instance is being **replaced** (destroyed and recreated) due to `instanceClass` change from `db.t3.medium` \u2192 `db.t3.large`.\n\n**Consequences:**\n- **Data loss** if no final snapshot configured\n- **Downtime** during replacement\n- New endpoint DNS name\n- Loss of automated backups\n\n**Remediation:**\n\n```typescript\n// \u274c BAD - Forces replacement\nconst db = new aws.rds.Instance(\"postgres\", {\n  instanceClass: \"db.t3.large\", // Changed from db.t3.medium\n  // ...\n});\n\n// \u2705 GOOD - Use modify in-place\nconst db = new aws.rds.Instance(\"postgres\", {\n  instanceClass: \"db.t3.large\",\n  applyImmediately: false, // Apply during maintenance window\n  // ...\n}, {\n  protect: true, // Prevent accidental deletion\n  ignoreChanges: [\"instanceClass\"], // If you must prevent replacement\n});\n\n// For zero-downtime scaling, use Blue/Green deployments\nconst db = new aws.rds.Instance(\"postgres\", {\n  instanceClass: \"db.t3.large\",\n  backupRetentionPeriod: 7,\n  skipFinalSnapshot: false,\n  finalSnapshotIdentifier: `postgres-final-${Date.now()}`,\n  // ...\n});\n```\n\n**Pulumi Import Strategy:**\n```bash\n# If replacement is unavoidable, snapshot first\naws rds create-db-snapshot \\\n  --db-instance-identifier postgres-prod \\\n  --db-snapshot-identifier postgres-prod-pre-replace-$(date +%Y%m%d)\n\n# Then allow replacement, restore from snapshot\n```\n\n---\n\n### \ud83d\udfe0 **HIGH: Missing `protect` Flag**\n\n**Location:** RDS instance lacks `protect: true`\n\n**Issue:**\nNo deletion protection on production database.\n\n**Remediation:**\n\n```typescript\nconst db = new aws.rds.Instance(\"postgres\", {\n  identifier: \"postgres-prod\",\n  engine: \"postgres\",\n  instanceClass: \"db.t3.medium\",\n  multiAz: true,\n  storageEncrypted: true,\n  deletionProtection: true, // AWS-level protection\n  backupRetentionPeriod: 7,\n  skipFinalSnapshot: false,\n  // ...\n}, {\n  protect: true, // Pulumi-level protection (prevents pulumi destroy)\n});\n```\n\n**Additional Protection:**\n```typescript\n// Add explicit dependency chain\nconst dbSnapshot = new aws.rds.Snapshot(\"postgres-backup\", {\n  dbInstanceIdentifier: db.identifier,\n  dbSnapshotIdentifier: `postgres-backup-${new Date().toISOString()}`\n}, { \n  dependsOn: [db],\n  protect: true \n});\n```\n\n---\n\n### \ud83d\udfe0 **HIGH: Wildcard IAM Permissions**\n\n**Location:** `steps[3].newState.inlinePolicies[0].policy`\n\n**Issue:**\n```json\n{\"Effect\":\"Allow\",\"Action\":\"*\",\"Resource\":\"*\"}\n```\n\n**Remediation:**\n\n```typescript\n// \u274c BAD - Wildcard permissions\nconst policy = new aws.iam.Policy(\"app-policy\", {\n  policy: JSON.stringify({\n    Version: \"2012-10-17\",\n    Statement: [{\n      Effect: \"Allow\",\n      Action: \"*\",\n      Resource: \"*\"\n    }]\n  })\n});\n\n// \u2705 GOOD - Least privilege\nconst policy = new aws.iam.Policy(\"app-policy\", {\n  policy: JSON.stringify({\n    Version: \"2012-10-17\",\n    Statement: [\n      {\n        Effect: \"Allow\",\n        Action: [\n          \"s3:GetObject\",\n          \"s3:PutObject\"\n        ],\n        Resource: [\n          `${bucket.arn}/*`\n        ]\n      },\n      {\n        Effect: \"Allow\",\n        Action: [\n          \"secretsmanager:GetSecretValue\"\n        ],\n        Resource: [\n          dbSecret.arn\n        ]\n      }\n    ]\n  })\n});\n\n// Better: Use OIDC + IRSA (IAM Roles for Service Accounts)\nconst oidcProvider = new aws.iam.OpenIdConnectProvider(\"eks-oidc\", {\n  url: cluster.identities[0].oidcs[0].issuer,\n  clientIdLists: [\"sts.amazonaws.com\"],\n  thumbprintLists: [\"9e99a48a9960b14926bb7f3b02e22da2b0ab7280\"]\n});\n\nconst role = new aws.iam.Role(\"service-account-role\", {\n  assumeRolePolicy: pulumi.all([oidcProvider.url, oidcProvider.arn]).apply(([url, arn]) =>\n    JSON.stringify({\n      Version: \"2012-10-17\",\n      Statement: [{\n        Effect: \"Allow\",\n        Principal: { Federated: arn },\n        Action: \"sts:AssumeRoleWithWebIdentity\",\n        Condition: {\n          StringEquals: {\n            [`${url}:sub`]: \"system:serviceaccount:default:app-service-account\"\n          }\n        }\n      }]\n    })\n  )\n});\n```\n\n---\n\n## Additional Issues (Beyond Scope)\n\n### \ud83d\udfe1 **MEDIUM: Insufficient Backup Retention**\n\n```json\n\"backupRetentionPeriod\": 3\n```\n\n**Requirement:** \u2265 7 days\n\n**Fix:**\n```typescript\nbackupRetentionPeriod: 7,\nbackupWindow: \"03:00-04:00\",\nmaintenanceWindow: \"sun:04:00-sun:05:00\",\n```\n\n---\n\n## Secure Pulumi Configuration\n\n**`Pulumi.prod.yaml`:**\n```yaml\nconfig:\n  myproject:environment: prod\n  myproject:dbInstanceClass: db.t3.medium\n  myproject:dbPassword:\n    secure: AAABAJ8f... # Encrypted via `pulumi config set --secret`\n  aws:region: us-east-1\n```\n\n**TypeScript:**\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.require(\"environment\");\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\nconst db = new aws.rds.Instance(\"postgres\", {\n  identifier: `postgres-${env}`,\n  engine: \"postgres\",\n  instanceClass: config.get(\"dbInstanceClass\") || \"db.t3.micro\",\n  allocatedStorage: 20,\n  storageEncrypted: true,\n  multiAz: env === \"prod\",\n  deletionProtection: env === \"prod\",\n  backupRetentionPeriod: env === \"prod\" ? 7 : 1,\n  skipFinalSnapshot: env !== \"prod\",\n  finalSnapshotIdentifier: env === \"prod\" ? `postgres-final-${Date.now()}` : undefined,\n  username: \"admin\",\n  password: dbPassword,\n  publiclyAccessible: false,\n}, {\n  protect: env === \"prod\",\n});\n\nexport const dbEndpoint = db.endpoint;\nexport const dbConnectionString = pulumi.secret(\n  pulumi.interpolate`postgresql://admin:${dbPassword}@${db.endpoint}/mydb`\n);\n```\n\n---\n\n## Summary Checklist\n\n| Issue | Severity | Status | Fix |\n|-------|----------|--------|-----|\n| Plaintext secrets in outputs | \ud83d\udd34 Critical | \u274c | Use `pulumi.secret()` or `ConfigSecret` |\n| RDS replacement (data loss risk) | \ud83d\udd34 Critical | \u274c | Use `ignoreChanges` or Blue/Green |\n| Missing `protect` flag | \ud83d\udfe0 High | \u274c | Add `protect: true` to prod resources |\n| Wildcard IAM permissions | \ud83d\udfe0 High | \u274c | Implement least-privilege policies |\n| Backup retention < 7 days | \ud83d\udfe1 Medium | \u274c | Set `backupRetentionPeriod: 7` |\n\n**Recommendation:** Block deployment until critical issues are resolved. Use `pulumi preview --diff` to review changes before applying.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_2.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_3.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_4.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_3.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_5.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-got0v20s/generated_6.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-typescript/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1061,
+    "output": 16384
+  },
+  "content": "# Pulumi Preview Review \u2014 `webapp/prod`\n\n**Input status:** no `preview.json` was attached to this request, so I can't sign off on your actual plan. Below is the review as I would file it, worked against the canonical spec's prod stack, using the exact `pulumi preview --json` shapes the engine emits. Every finding is stated as a *checkable assertion* with the jq that proves or clears it \u2014 paste your real JSON (or the output of the gate script in \u00a75) and I'll convert this into a pass/fail sign-off.\n\n---\n\n## 1. Verdict\n\n| # | Finding | Resource | Severity | AC |\n|---|---|---|---|---|\n| F-1 | DB connection string emitted as a plaintext stack output (secretness bit lost) | `pulumi:pulumi:Stack` | **Block** | AC-3 |\n| F-2 | Prod RDS instance **replaced** (`storageEncrypted` false\u2192true) with `deletionProtection` flipped off and `skipFinalSnapshot: true` | `aws:rds/instance:Instance::app-db` | **Block** | AC-2 |\n| F-3 | No `protect: true` on any stateful resource (RDS, bucket, KMS key) | 5 resources | **High** | AC-2 |\n| F-4 | S3 assets bucket replaced on `bucket` (name) change | `aws:s3/bucketV2:BucketV2::app-assets` | **High** | AC-1 |\n| F-5 | Long-lived `aws:iam/accessKey:AccessKey` created in **prod** (spec: OIDC role only) | `aws:iam/accessKey:AccessKey::svc-key` | **High** | AC-4 |\n| F-6 | Wildcard action/resource in prod IAM policy | `aws:iam/policy:Policy::svc-policy` | **High** | AC-4 |\n| F-7 | Node group replacement with fixed `nodeGroupName` \u2192 capacity gap | `aws:eks/nodeGroup:NodeGroup::app-nodes` | Medium | AC-5 |\n\n**Recommendation: do not apply.** F-2 alone is an irrecoverable prod data-loss plan.\n\n---\n\n## 2. F-1 \u2014 Secret in plaintext outputs\n\nThe config is fine; the *code path* launders it. Note the `config` block shows the value is encrypted at rest in `Pulumi.prod.yaml` (AC-3 satisfied in Git), yet it reappears verbatim in the Stack step's outputs:\n\n```json\n{\n  \"config\": {\n    \"aws:region\": \"us-east-1\",\n    \"webapp:dbUser\": \"appuser\",\n    \"webapp:dbPassword\": \"[secret]\"\n  },\n  \"steps\": [\n    {\n      \"op\": \"update\",\n      \"urn\": \"urn:pulumi:prod::webapp::pulumi:pulumi:Stack::webapp-prod\",\n      \"newState\": {\n        \"type\": \"pulumi:pulumi:Stack\",\n        \"outputs\": {\n          \"bucketName\": \"webapp-prod-assets-3f9a1c\",\n          \"dbConnectionString\": \"postgresql://appuser:Pr0d-Db-P%40ss!2024@webapp-prod-db.cxyz.us-east-1.rds.amazonaws.com:5432/appdb?sslmode=require\",\n          \"kubeconfig\": \"apiVersion: v1\\nclusters:\\n- cluster:\\n    certificate-authority-data: LS0tLS1CRUdJTi...\\n\",\n          \"dbPassword\": {\n            \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\",\n            \"plaintext\": \"\\\"[secret]\\\"\"\n          }\n        }\n      }\n    }\n  ]\n}\n```\n\n**Why this is Block, not Medium.** The rendering difference between `dbPassword` and `dbConnectionString` is not cosmetic. `dbPassword` carries the secret signature key `4dabf18193072939515e22adb298388d`; `dbConnectionString` is a bare JSON string. That means the engine does **not** consider it secret, and therefore:\n\n1. It is written **unencrypted into the checkpoint** (Pulumi Cloud / your S3 state bucket). Only secret-marked values go through the stack's secrets provider.\n2. It is returned by `pulumi stack output dbConnectionString` **without** `--show-secrets`, and by any `StackReference` consumer.\n3. It is in your CI log and in `preview.json` if that file is kept as a build artifact \u2014 go rotate the credential before fixing the code; the fix does not un-leak it.\n\n**Root cause (near-certain):** `cfg.require(\"dbPassword\")` instead of `cfg.requireSecret(\"dbPassword\")`. `require()` hands back a decrypted `string`, which drops the taint, so `pulumi.interpolate` has nothing to propagate. `requireSecret()` returns `Output<string>` with the secret bit set, and interpolation propagates it to the connection string automatically.\n\n`kubeconfig` is the same class of bug \u2014 it embeds cluster CA data and (depending on your authenticator config) a bearer token. Mark it secret or, better, stop exporting it and have consumers call `aws eks update-kubeconfig`.\n\n---\n\n## 3. F-2 / F-3 \u2014 Replacement of a stateful resource, unprotected\n\n```json\n{\n  \"op\": \"replace\",\n  \"urn\": \"urn:pulumi:prod::webapp::aws:rds/instance:Instance::app-db\",\n  \"provider\": \"urn:pulumi:prod::webapp::pulumi:providers:aws::default_6_49_0::a1b2c3\",\n  \"oldState\": {\n    \"type\": \"aws:rds/instance:Instance\",\n    \"id\": \"webapp-prod-db\",\n    \"inputs\": {\n      \"identifier\": \"webapp-prod-db\",\n      \"instanceClass\": \"db.t3.medium\",\n      \"multiAz\": true,\n      \"storageEncrypted\": false,\n      \"backupRetentionPeriod\": 7,\n      \"deletionProtection\": true,\n      \"skipFinalSnapshot\": true,\n      \"publiclyAccessible\": false\n    }\n  },\n  \"newState\": {\n    \"type\": \"aws:rds/instance:Instance\",\n    \"inputs\": {\n      \"identifier\": \"webapp-prod-db\",\n      \"instanceClass\": \"db.t3.medium\",\n      \"multiAz\": true,\n      \"storageEncrypted\": true,\n      \"kmsKeyId\": \"arn:aws:kms:us-east-1:1234:key/8f2e-...\",\n      \"backupRetentionPeriod\": 7,\n      \"deletionProtection\": false,\n      \"skipFinalSnapshot\": true,\n      \"publiclyAccessible\": false\n    }\n  },\n  \"detailedDiff\": {\n    \"storageEncrypted\":   { \"kind\": \"update-repl",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-x3wmn3i2/preview.json"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/pulumi-typescript/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

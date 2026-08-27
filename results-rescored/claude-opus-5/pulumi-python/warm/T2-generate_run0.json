@@ -1,0 +1,91 @@
+{
+  "model": "claude-opus-5",
+  "task": "T2-generate",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] python3: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "   where PosixPath('components/bucket.py') = Path('components/bucket.py')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:14: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('components/rds.py').exists\n     +      where PosixPath('components/rds.py') = Path('components/rds.py')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:18: AssertionError: assert False\nE   FileNotFoundError: [Errno 2] No such file or directory: 'components/bucket.py'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:22: FileNotFoundError: [Errno 2] No such file or directory: 'components/bucket.py'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'components/rds.py'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:28: FileNotFoundError: [Errno 2] No such file or directory: 'components/rds.py'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_main_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_components_dir\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_bucket_component\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_rds_component\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_rds_deletion_protection\n============================== 6 failed in 0.01s ===============================\n",
+      "passed_count": 0,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1103,
+    "output": 16384
+  },
+  "content": "",
+  "regraded_semantic": true,
+  "score": {
+    "correctness": 0.6666666666666666,
+    "attempted_stages": 3,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.4444444444444444
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/pulumi-python/warm/T2-generate_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.6666666666666666,
+      "attempted_stages": 3,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.4444444444444444
+    },
+    "corrected_composite_no_idiom": 0.5,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "empty_completion: the provider returned no text at all",
+      "no_extractable_output: the task's enabled stages act on files the model was to produce, and the completion contains no code block \u2014 lint and static would have nothing to check and would pass vacuously",
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

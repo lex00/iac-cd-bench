@@ -1,0 +1,91 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF401 [*] `pulumi_kubernetes` imported but unused\n --> generated_0.py:4:29\n  |\n2 | import pulumi\n3 | import pulumi_aws as aws\n4 | import pulumi_kubernetes as kubernetes\n  |                             ^^^^^^^^^^\n5 |\n6 | # \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n  |\nhelp: Remove unused import: `pulumi_kubernetes`\n  |\n3 | import pulumi_aws as aws\n  - import pulumi_kubernetes as kubernetes\n4 |\n  |\n\nFound 1 error.\n[*] 1 fixable with the `--fix` option.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 679,
+    "output": 3025
+  },
+  "content": "\n\n# Adding an Auto-Scaling Policy to an Existing Pulumi Stack (No Replacement)\n\n## Core Principle\n\nIn Pulumi, **adding a new resource that *depends on* an existing one** creates a new node in the resource graph. It does not modify the existing resource's identity, so no replacement occurs. The anti-pattern is modifying the existing resource's arguments in a way that changes its `urn` or forces an in-place update that Pulumi interprets as a replacement.\n\n## Implementation\n\n```python\n# __main__.py\nimport pulumi\nimport pulumi_aws as aws\nimport pulumi_kubernetes as kubernetes\n\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# Load environment-specific config\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nconfig = pulumi.Config()\nenv = config.require(\"environment\")  # \"dev\" or \"prod\"\nregion = config.require(\"region\")\n\n# Per-environment sizing (from stack config files)\nnode_instance_type = config.require(\"node_instance_type\")\nnode_count = config.require_int(\"node_count\")\n\n# Auto-scaling parameters (new \u2014 safe to add)\nmin_nodes = config.require_int(\"min_nodes\")\nmax_nodes = config.require_int(\"max_nodes\")\ndesired_nodes = config.require_int(\"desired_nodes\")\n\naws_region = aws.Region(region)\n\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# EXISTING: EKS Cluster (unchanged)\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nvpc = aws.ec2.Vpc(\"vpc\",\n    enable_dns_support=True,\n    enable_dns_hostnames=True,\n)\n\ncluster_security_group = aws.ec2.SecurityGroup(\"cluster-sg\",\n    vpc_id=vpc.id,\n    description=\"EKS cluster security group\",\n)\n\neks_cluster = aws.eks.Cluster(\"eks-cluster\",\n    role_arn=aws.iam.get_policy_document(\n        statement=[\n            aws.iam.PolicyDocumentStatement(\n                effects=[\"Allow\"],\n                principals=[aws.iam.PolicyDocumentPrincipal(\n                    services=[\"eks.amazonaws.com\"],\n                )],\n                actions=[\"sts:AssumeRole\"],\n            ),\n        ],\n    ).apply(lambda d: aws.iam.Role(\n        \"eks-role\",\n        assume_role_policy=pulumi.Output.wrap(d.json()),\n    ).arn),\n    vpc_config=aws.eks.ClusterVpcConfigArgs(\n        subnet_ids=vpc.public_subnets,\n        security_group_ids=[cluster_security_group.id],\n    ),\n)\n\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# EXISTING: Managed Node Group (unchanged)\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\nnode_group = aws.eks.NodeGroup(\"node-group\",\n    cluster_name=eks_cluster.name,\n    instance_types=[node_instance_type],\n    scaling_config=aws.eks.NodeGroupScalingConfigArgs(\n        min_size=min_nodes,\n        max_size=max_nodes,\n        desired_size=desired_nodes,\n    ),\n    subnet_ids=vpc.private_subnets,\n    volume_size=100,\n    tags={\n        \"environment\": env,\n        \"managed-by\": \"pulumi\",\n    },\n)\n\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# NEW: Auto-Scaling Policy (additive \u2014 no replacement)\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n# Extract the ASG name from the node group's managed resources.\n# The NodeGroup resource exposes its underlying AWS resources\n# (ASG, launch template, etc.) via the `resources` output.\nasg_name = node_group.resources.apply(\n    lambda resources: next(\n        r.id for r in resources\n        if r.type == \"AWSElasticLoadBalancingV2:AutoScalingGroup\"\n    )\n)\n\n# Target tracking scaling policy: maintain 70% average CPU.\n# This is a NEW resource \u2014 Pulumi creates it without touching the ASG.\ncpu_scaling_policy = aws.ec2.ScalingPolicy(\"cpu-scaling-policy\",\n    as_group_name=asg_name,\n    policy_type=\"TargetTrackingScaling\",\n    adjustment_type=\"ChangeInCapacity\",\n    target_tracking_configuration=aws.ec2.ScalingPolicyTargetTrackingConfigurationArgs(\n        predefined_metric_specification=aws.ec2.ScalingPolicyPredefinedMetricSpecificationArgs(\n            predefined_metric_type=\"ASGAverageCPUUtilization\",\n        ),\n        target_value=70.0,\n        disable_scale_in=False,\n    ),\n    tags={\n        \"environment\": env,\n    },\n)\n\n# Optional: scale-down policy for cost optimization (dev only)\nif env == \"dev\":\n    scale_down_policy = aws.ec2.ScalingPolicy(\"scale-down-policy\",\n        as_group_name=asg_name,\n        policy_type=\"TargetTrackingScaling\",\n        adjustment_type=\"ChangeInCapacity\",\n        target_tracking_configuration=aws.ec2.ScalingPolicyTargetTrackingConfigurationArgs(\n            predefined_metric_specification=aws.ec2.ScalingPolicyPredefinedMetricSpecificationArgs(\n                predefined_metric_type=\"ASGAverageCPUUtilization\",\n            ),\n            target_value=40.0,\n            disable_scale_in=False,\n        ),\n        tags={\n            \"environment\": env,\n        },\n    )\n\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# Outputs\n# \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\npulumi.export(\"cluster_endpoint\", eks_cluster.endpoint)\npulumi.export(\"node_group_asg\", asg_name)\npulumi.export(\"scaling_policy_arn\", cpu_scaling_policy.arn)\n```\n\n## Stack Config Files\n\n**`Pulumi.dev.yaml`**\n```yaml\nconfig:\n  environment: dev\n  region: us-east-1\n  node_instance_type: t3.medium\n  node_count: 2\n  min_nodes: 2\n  max_nodes: 4\n  desired_nodes: 2\n```\n\n**`Pulumi.prod.yaml`**\n```yaml\nconfig:\n  environment: prod\n  region: us-east-1\n  node_instance_type: t3.large\n  node_count: 4\n  min_nodes: 4\n  max_nodes: 8\n  desired_nodes: 4\n```\n\n## Why This Does Not Trigger Replacement\n\n| Concern | Why it's safe |\n|---|---|\n| **New resource** | `ScalingPolicy` is a new node in the graph. Pulumi creates it; it has no effect on existing resources. |\n| **ASG identity unchanged** | The `aws.eks.NodeGroup` resource is not modified. Its `scaling_config` (min/max/desired) was already present. We only *read* from it (`.resources`). |\n| **No argument drift** | We did not add the policy as an argument to the node group. Pulumi's `aws.eks.NodeGroup` does not accept inline scaling policies \u2014 they are separate AWS resources. |\n| **Dependency direction** | `cpu_scaling_policy` \u2192 depends on \u2192 `node_group`. Pulumi processes this topologically: create policy *after* node group exists. No back-pressure on the node group. |\n| **Urn stability** | The policy's URN is deterministic (`urn:pulumi:dev::myapp::aws:ec2:ScalingPolicy::cpu-scaling-policy`). Removing and re-adding it with the same name preserves state. |\n\n## Deployment\n\n```bash\n# Deploy to dev \u2014 only the new policy is created\npulumi up --stack dev --config-file Pulumi.dev.yaml\n\n# Deploy to prod \u2014 independent, no impact on dev\npulumi up --stack prod --config-file Pulumi.prod.yaml\n```\n\n## Verification (No Replacement)\n\n```bash\n# Confirm the policy was *created*, not that the node group was *replaced*\npulumi up --stack dev  # dry-run (default preview)\n\n# Expected diff:\n#  +  aws:ec2:ScalingPolicy cpu-scaling-policy\n#  (no replacements, no modifications to node-group)\n```\n\n## Common Pitfall That *Would* Cause Replacement\n\n```python\n# \u274c ANTI-PATTERN: Don't do this\n# If you restructure code so the NodeGroup's URN changes\n# (e.g., rename \"node-group\" \u2192 \"node-group-v2\"), Pulumi will\n# destroy and recreate the entire node group (including the ASG).\n\n# \u274c Also avoid: embedding policy logic in a custom resource\n# that wraps the NodeGroup and changes its schema.\n```\n\nThe key invariant: **the existing `aws.eks.NodeGroup` resource's arguments are byte-identical before and after your change.** The policy is purely additive.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-2t3m5oii/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-2t3m5oii/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-2t3m5oii/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-2t3m5oii/generated_1.py"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-python/warm/T3-modify_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

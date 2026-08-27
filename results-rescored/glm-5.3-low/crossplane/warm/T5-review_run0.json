@@ -1,0 +1,85 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 649
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Findings\n\n### \ud83d\udd34 Critical: Bucket versioning dropped\n\nVersioning removal directly violates **Acceptance Criteria #1** (\"versioning enabled, SSE, no public access\"). This is the most common real-world S3 footgun: with versioning off, any accidental delete or overwrite (bad composition patch, `kubectl apply` with stale manifest, compromised CI) is unrecoverable. For prod especially \u2014 the bucket has cross-region replication, and CRR **requires** versioning on both source and replica. Dropping versioning will break replication and likely cause the S3 provider resource to error or silently degrade.\n\n**Action:** Reject. Restore versioning in the composition default and/or claim parameter. If versioning was intentionally disabled in dev only, gate it behind a composition patch policy (`FromFieldPath` with `CombineFromExpressions` or env-specific patch sets) rather than removing it from the base composition.\n\n### \ud83d\udfe0 High: `deletionPolicy: Delete` provider-wide\n\nThis flips managed resources from `Orphan` (Crossplane default) to `Delete`, meaning deleting a claim or composition change can **cascade-destroy real infrastructure** (RDS, EKS, S3 with data).\n\nSpecific risks against the spec:\n\n- **AC #2 requires RDS deletion protection on.** Even with deletion protection, applying `Delete` policy to RDS resources is a dangerous default \u2014 deletion protection must actually be set on every instance, or a claim deletion tears down prod databases. Verify `deletionProtection: true` is patched in both environments, not just prod.\n- **S3 data loss:** `Delete` on bucket resources with retained objects can wedge deletion (provider waits/fails) or destroy data.\n- **Composition churn:** if this was added to fix stuck deletions in dev, promote it to dev provider config only \u2014 not provider-wide.\n\n**Action:** Default should stay `Orphan` for stateful resources (RDS, S3); `Delete` is defensible for ephemeral resources (ALB, IAM role bindings). Use per-resource `deletionPolicy` patches, e.g.:\n\n```yaml\n- type: FromFieldPath\n  fromFieldPath: spec.deletionPolicy\n  toFieldPath: spec.deletionPolicy\n  policy:\n    default: Orphan\n```\n\nwith the claim explicitly setting `Delete` only where safe (dev stateless resources).\n\n## Environment isolation check\n\nConfirm the diff doesn't share a single composition with env-conditional patches in a way that the `deletionPolicy` change and versioning removal leak from dev into prod (AC #7). If one composition serves both, the versioning drop hits prod too \u2014 that alone is a blocker.\n\n## Summary\n\n| Item | Severity | Verdict |\n|---|---|---|\n| Versioning dropped | \ud83d\udd34 Blocker | Restore; breaks AC #1 and CRR |\n| `deletionPolicy: Delete` global | \ud83d\udfe0 High | Scope to stateless/dev resources; keep `Orphan` for RDS/S3 |\n\n**Overall: Request changes.** Neither change should merge as-is.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/crossplane/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

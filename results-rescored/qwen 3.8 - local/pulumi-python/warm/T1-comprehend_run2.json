@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1024,
+    "output": 969
+  },
+  "content": "Based on the provided Pulumi documentation and standard Pulumi behavior, here are the answers to your questions regarding the Pulumi preview behavior:\n\n### 1. Which property triggered the replace?\n**Pulumi does not indicate a specific \"property\" in the standard `preview` output that caused a replace; instead, it indicates that a replacement is required because a change to a **critical** (or non-updatable) property was requested.**\n\nIn the context of the RDS PostgreSQL instance in your scenario:\n*   If the preview shows `replace` for the RDS instance, it is typically because a change was made to a property that **cannot be updated in place**. For AWS RDS, common examples include:\n    *   Changing the `dbInstanceClass` (in some cases, though often updatable).\n    *   Changing the `allocatedStorage` to a value lower than the current size (shrinking storage is not allowed).\n    *   Changing the `multiAz` setting from `false` to `true` or vice versa.\n    *   Changing the `storageType` (e.g., from `gp2` to `io1` or `gp3`).\n    *   Changing the `availabilityZone` (in a way that requires migration).\n    *   Changing the `engine` or `engineVersion` (if not in-place upgradeable).\n    *   Changing the `masterUsername` or `masterPassword` (in certain configurations or if combined with other changes).\n*   The preview output will typically show `~ replaced` or indicate that the old resource will be destroyed and a new one created. It does not pinpoint a single \"triggering\" property in the summary line, but you can infer it from the diff of the changed arguments.\n\n### 2. What does `pulumi up --target` skip?\n**`pulumi up --target` skips the creation, deletion, or update of any resources that are **not explicitly listed** in the `--target` argument.**\n\n*   It **only** performs operations on the specific resources (and their dependent resources, if necessary to maintain consistency) specified in the `--target` list.\n*   It **skips**:\n    *   Unrelated resources in the stack.\n    *   Resources that are not targets and are not necessary to satisfy the dependencies of the targets.\n    *   In the context of your RDS replace: If you run `pulumi up --target rds-PostgresInstance`, Pulumi will replace only that RDS instance and any immediate dependent resources that *must* be updated to remain consistent (though usually, dependencies are updated in the same step if they depend on the replaced resource's outputs). Resources like the S3 bucket, IAM roles, or Kubernetes cluster would be skipped unless they are explicitly targeted or are direct dependencies that need to be updated due to the change in the RDS resource's outputs (e.g., if the connection string output changes).\n\n### 3. How does Pulumi handle secrets in outputs?\n**Pulumi stores secrets in the state file (or the configured backend) in an **encrypted** form, and when you export a secret as an output, it is also stored encrypted. The value is only decrypted locally in the Pulumi CLI when you access it explicitly (e.g., via `pulumi stack output --show-secrets` or by reading it programmatically within a Pulumi program using `config.require_secret()`).**\n\n*   **Storage**: Secrets are encrypted using the Pulumi state backend's encryption key (managed by Pulumi Cloud or a self-managed passphrase).\n*   **Outputs**: When you use `pulumi.export('key', secret_value)`, the output is marked as a secret. It appears as a secret in the state.\n*   **Retrieval**:\n    *   `pulumi stack output`: Will show `[secret]` instead of the value.\n    *   `pulumi stack output --show-secrets`: Will decrypt and display the value (requires appropriate permissions).\n    *   Programmatic access within a Pulumi program: Use `config.require_secret()` to read secrets from the stack config. Outputs of secrets can be accessed by other programs if they are referencing this stack's outputs, but they remain treated as secrets.\n*   **In the context of your scenario**: The DB connection string is a secret. If you export it as an output, it will be stored encrypted. Other resources (like the application deployment) should consume this output via Pulumi's `Output` model, treating it as a secret. It should never be printed in plaintext logs or stored in Git.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/pulumi-python/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

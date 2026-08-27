@@ -1,0 +1,85 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1234,
+    "output": 1386
+  },
+  "content": "# PR Security Review\n\n## Summary\nThis PR contains **2 critical** and **1 warning** security issues that must be resolved before merge. The RDS instance class change is benign.\n\n---\n\n## Issues by Severity\n\n### \ud83d\udd34 CRITICAL 1 \u2014 Public read access on S3 bucket policy\n\n**What:** The new bucket policy grants public read (`\"Principal\": \"*\"` with `s3:GetObject`, likely with `\"Effect\": \"Allow\"`).\n\n**Why it matters:**\n- Violates Acceptance Criteria #1: *\"no public access\"*.\n- Exposes application assets to the entire internet; risk of data leakage, unexpected egress costs, and potential hosting of unintended content.\n- Public bucket policies are a top cause of real-world data breaches.\n\n**Fix before merge:**\n- Remove the public statement entirely.\n- Serve assets via CloudFront + Origin Access Control (OAC/OAI) instead of direct public bucket access \u2014 this matches the spec's HTTPS/CloudFront exposure model.\n- Enable the account/bucket-level **S3 Block Public Access** settings so a public policy is rejected even if reintroduced.\n\n---\n\n### \ud83d\udd34 CRITICAL 2 \u2014 Plaintext password in deployment env vars\n\n**What:** The app Deployment sets the DB password (or connection string) directly in `env:` as plaintext.\n\n**Why it matters:**\n- Violates Acceptance Criteria #3: *\"Secret never stored in plaintext in Git.\"*\n- Anyone with repo read access (or Git history access) obtains prod DB credentials.\n- Plaintext env values are also visible via `kubectl describe pod` to anyone with namespace access.\n\n**Fix before merge:**\n- In knr-ops, the idiomatic mechanism is **SOPS-encrypted secrets**. Store the secret encrypted, decrypt via Flux's SOPS integration.\n- Reference the secret via `envFrom`/`secretKeyRef` pointing at a Kubernetes `Secret`, not a literal value.\n- Rotate the exposed credential \u2014 assume it is compromised the moment it lands in Git history.\n\n---\n\n### \ud83d\udfe1 WARNING \u2014 Missing resource limits on containers\n\n**What:** Containers have no `resources.requests` / `resources.limits`.\n\n**Why it matters:**\n- Not a direct data-exposure issue (hence warning, not critical), but a real availability/security concern.\n- A single pod can consume all node CPU/memory (noisy-neighbor / resource-exhaustion DoS), impacting co-located workloads.\n- Without requests, the scheduler cannot make sound placement decisions.\n\n**Fix before merge (recommended):**\n- Add `requests` and `limits` for CPU and memory.\n- Consider a `LimitRange` / `ResourceQuota` in the namespace as defense-in-depth.\n\n---\n\n### \u2139\ufe0f INFO \u2014 RDS instance class change\n\n**What:** Instance class change only (e.g., `db.t3.micro` \u2192 `db.t3.medium`).\n\n**Assessment:** No security impact. Verify it matches the env sizing spec (dev=`db.t3.micro`, prod=`db.t3.medium`) and is applied in the correct overlay so **environment isolation** is preserved (changing prod must not modify dev).\n\n---\n\n## Merge Recommendation\n\n| Issue | Severity | Blocking? |\n|---|---|---|\n| S3 public read policy | Critical | \u2705 Yes |\n| Plaintext DB password | Critical | \u2705 Yes |\n| Missing resource limits | Warning | \u26a0\ufe0f Strongly advised |\n| RDS class change | Info | No |\n\n**Verdict: \ud83d\udeab Do not merge.** Resolve both critical issues (and rotate the leaked credential) first. Address resource limits in the same PR if possible.\n\n### Additional checks worth confirming\n- Ensure these changes are in the correct kustomize overlay and don't leak prod config into dev.\n- Confirm S3 Block Public Access is enabled at the account level as a backstop.\n- Verify the SOPS-encrypted secret is actually encrypted (check for `sops:` metadata) before it merges.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8-low/knr-ops/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

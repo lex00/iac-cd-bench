@@ -1,0 +1,86 @@
+{
+  "model": "qwen36-local",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 660,
+    "output": 4228
+  },
+  "content": "\n\nHere\u2019s a targeted, production-ready fix for the Crossplane Composition that never reaches `Ready`.\n\n### \ud83d\udd0d Root Cause Summary\n| Defect | Impact on Composition |\n|--------|----------------------|\n| **Incorrect `fromFieldPath`** | Patch evaluation returns `nil` or fails silently. Required `forProvider` fields remain unset, causing the RDS `DBInstance` to stall in `Creating`/`Failed` state. Composition waits indefinitely for downstream readiness. |\n| **Missing `ReadinessChecks`** | Crossplane cannot reliably determine when the RDS instance is provisioned. Without an explicit readiness gate, the Composition's state machine hangs in `Progressing` because the managed resource never emits a valid `Ready=True` condition that the Composition can observe. |\n\n---\n\n### \u2705 Corrected Composition Snippet (RDS Resource)\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: databasecluster-composition\nspec:\n  compositeTypeRef:\n    apiVersion: infrastructure.example.com/v1alpha1\n    kind: DatabaseCluster\n  resources:\n    - name: postgres-instance\n      base:\n        apiVersion: database.aws.crossplane.io/v1alpha1\n        kind: DBInstance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"14\"\n            allocatedStorage: 20\n            publiclyAccessible: false\n            backupRetentionPeriod: 7\n            deletionProtection: true\n            masterUsername: dbadmin\n          deletionPolicy: Delete\n          managementPolicy: Observe\n      patches:\n        # \ud83d\udd27 FIX 1: Correct fromFieldPath to match XR spec.parameters schema\n        - type: Patch\n          fromFieldPath: spec.parameters.instanceClass\n          toFieldPath: spec.forProvider.dbInstanceClass\n        - type: Patch\n          fromFieldPath: spec.parameters.storageEncrypted\n          toFieldPath: spec.forProvider.storageEncrypted\n        - type: Patch\n          fromFieldPath: spec.parameters.multiAZ\n          toFieldPath: spec.forProvider.multiAZ\n        - type: Patch\n          fromFieldPath: spec.parameters.region\n          toFieldPath: spec.forProvider.region\n        # Secret reference patch (if using CompositionSecretRef)\n        - type: Patch\n          fromFieldPath: spec.secretRef.databasePassword.name\n          toFieldPath: spec.forProvider.masterUserSecretRef.name\n          policy:\n            fromFieldPath: Required\n      # \ud83d\udd27 FIX 2: Explicit ReadinessChecks to gate Composition progress\n      readinessChecks:\n        - type: StatusCondition\n          type: Ready\n          status: \"True\"\n```\n\n---\n\n### \ud83d\udee0 Fix Breakdown\n\n#### 1. `fromFieldPath` Correction\n- **Problem**: Paths like `spec.parameters.instanceType` or `spec.spec.instanceClass` don't exist in the XR schema. Crossplane silently skips the patch, leaving `dbInstanceClass` unset \u2192 RDS creation fails \u2192 Composition hangs.\n- **Fix**: Align `fromFieldPath` exactly with the XR's `spec.parameters` definition. Use `kubectl describe xr <name> -o yaml` to verify the exact path.\n- **Validation**: Add `policy: { fromFieldPath: Required }` to fail fast if the XR omits the parameter.\n\n#### 2. `ReadinessChecks` Addition\n- **Problem**: AWS RDS provisioning takes 5\u201315 minutes. Without `readinessChecks`, Crossplane may either:\n  - Assume readiness too early (causing connection timeouts downstream)\n  - Wait forever if the provider doesn't populate `status.conditions` as expected\n- **Fix**: Explicitly gate readiness on the `Ready` status condition. Crossplane will only mark this resource `Ready` when the AWS RDS API reports `Available` and the controller reconciles it to `Ready=True`.\n- **Alternative**: If your provider version uses controller-level readiness, you can use:\n  ```yaml\n  readinessChecks:\n    - type: MatchController\n      matchString: \"Available\"\n  ```\n\n---\n\n### \ud83d\udd0e Verification & Debugging\n\n1. **Apply & Watch Reconciliation**\n   ```bash\n   kubectl apply -f composition.yaml\n   watch kubectl get managedresource -o custom-columns=NAME:.metadata.name,STATE:.status.conditions[0].type,MESSAGE:.status.conditions[0].message\n   ```\n\n2. **Validate Patch Resolution**\n   ```bash\n   kubectl describe managedresource postgres-instance-<hash> -n crossplane-system\n   # Check \"Resolved Configuration\" section for patch evaluation results\n   ```\n\n3. **Confirm Composition State Machine**\n   ```bash\n   kubectl describe composition databasecluster-composition\n   # Look for: \"Resources: 1/1 Ready\" and Composition condition: Ready=True\n   ```\n\n---\n\n### \ud83d\udccb Acceptance Criteria Alignment\n| Criteria | How Fix Satisfies It |\n|----------|----------------------|\n| RDS deletion protection, backup \u22657d, non-public | Hardcoded in `base.spec.forProvider` |\n| Env isolation (dev vs prod sizing/encryption) | Patched via `spec.parameters.instanceClass`, `.storageEncrypted`, `.multiAZ` per XR instance |\n| Composition readiness | Explicit `readinessChecks` + corrected patches ensure deterministic state transitions |\n| No plaintext secrets | Secret ref patched via `spec.secretRef` \u2192 Crossplane's `ProviderSecret` or `ExternalSecret` handles KMS/SOPS decryption |\n\nApply the corrected `resources` block to your Composition. The state machine will progress through `Creating` \u2192 `Ready` without indefinite hangs. Let me know if you need the full XR + Composition scaffolding for dev/prod parameterization.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-88rzkpav/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/crossplane/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,87 @@
+{
+  "model": "claude-opus-5",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1029,
+    "output": 16384
+  },
+  "content": "# Add second region (us-west-2) via ProviderConfig \u2014 Crossplane\n\n## 1. The contract\n\n| Guarantee | Mechanism |\n|---|---|\n| Existing claims are **not edited** | New XRD fields are `default`ed; CRD structural-schema defaulting applies on read *and* write, so live claims/XRs surface `region: us-east-1` without a re-apply |\n| Existing managed resources are **not replaced** | `spec.forProvider.region` stays `us-east-1` for every pre-existing MR; verified by a byte-diff of `crossplane render` output |\n| dev cannot reach prod credentials | ProviderConfig name is `aws-<env>-<region>`; the `<env>` half is a **literal in each Composition**, not claim input |\n| Adding region #3 later | One new ProviderConfig file. Zero Composition changes. |\n\n## 2. Honest note on \"via provider config\"\n\nIn `provider-aws` (Upbound family), **the region is not part of the ProviderConfig** \u2014 it is a required field on every managed resource (`spec.forProvider.region`). A ProviderConfig carries credentials, `assumeRoleChain`, and endpoint config only.\n\nSo a per-region ProviderConfig is only meaningful if it is **doing something region-specific**. Here it is: each ProviderConfig assumes a distinct IAM role whose permission policy is fenced with `aws:RequestedRegion`. That turns the ProviderConfig from cosmetic naming into an actual blast-radius boundary \u2014 a composition bug that patches the wrong region gets denied by STS/IAM rather than silently building infrastructure in the wrong place.\n\nThe change is therefore two coupled halves:\n- **ProviderConfig** \u2192 *which credentials, fenced to which region*\n- **patchSet** \u2192 *which region the MR targets*, derived from the same field, so the two can never drift.\n\n## 3. File tree\n\n```\ncrossplane/\n\u251c\u2500\u2500 providers/\n\u2502   \u251c\u2500\u2500 provider-aws-s3.yaml                      (unchanged)\n\u2502   \u251c\u2500\u2500 provider-aws-rds.yaml                     (unchanged)\n\u2502   \u251c\u2500\u2500 provider-aws-eks.yaml                     (unchanged)\n\u2502   \u251c\u2500\u2500 provider-aws-iam.yaml                     (unchanged)\n\u2502   \u2514\u2500\u2500 functions.yaml                            (unchanged)\n\u251c\u2500\u2500 providerconfigs/\n\u2502   \u251c\u2500\u2500 aws-dev-us-east-1.yaml                    (unchanged)\n\u2502   \u251c\u2500\u2500 aws-dev-us-west-2.yaml                    \u2190 NEW\n\u2502   \u251c\u2500\u2500 aws-prod-us-east-1.yaml                   (unchanged)\n\u2502   \u2514\u2500\u2500 aws-prod-us-west-2.yaml                   \u2190 NEW\n\u251c\u2500\u2500 apis/platform/\n\u2502   \u251c\u2500\u2500 definition.yaml                           \u2190 CHANGED (+2 defaulted fields)\n\u2502   \u251c\u2500\u2500 composition-dev.yaml                      \u2190 CHANGED (+1 patchSet, +1 line \u00d7 14 MRs)\n\u2502   \u2514\u2500\u2500 composition-prod.yaml                     \u2190 CHANGED (+2 patchSets, +8 MRs)\n\u251c\u2500\u2500 claims/\n\u2502   \u251c\u2500\u2500 dev.yaml                                  \u2190 UNCHANGED\n\u2502   \u2514\u2500\u2500 prod.yaml                                 \u2190 UNCHANGED\n\u2514\u2500\u2500 test/\n    \u251c\u2500\u2500 xr-dev.yaml, xr-prod.yaml                 (golden render inputs)\n    \u2514\u2500\u2500 golden/                                   \u2190 NEW (committed render output)\n```\n\n## 4. New ProviderConfigs\n\n```yaml\n# providerconfigs/aws-prod-us-west-2.yaml                                  NEW\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-prod-us-west-2\n  labels:\n    platform.acme.io/env: prod\n    platform.acme.io/region: us-west-2\nspec:\n  credentials:\n    source: IRSA\n  # Role lives in the prod account. IAM roles are global; the *region fence*\n  # is in the role's permission policy (see \u00a74.1), not here.\n  assumeRoleChain:\n    - roleARN: arn:aws:iam::210987654321:role/crossplane-prod-usw2\n      sessionName: crossplane-prod-usw2\n  endpoint:\n    url:\n      type: Auto\n```\n\n```yaml\n# providerconfigs/aws-dev-us-west-2.yaml                                   NEW\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-dev-us-west-2\n  labels:\n    platform.acme.io/env: dev\n    platform.acme.io/region: us-west-2\nspec:\n  credentials:\n    source: IRSA\n  assumeRoleChain:\n    - roleARN: arn:aws:iam::123456789012:role/crossplane-dev-usw2\n      sessionName: crossplane-dev-usw2\n  endpoint:\n    url:\n      type: Auto\n```\n\n> dev gets a us-west-2 ProviderConfig for symmetry and so the flag is testable in dev, but the dev Composition provisions **no** replica bucket (cost). dev only reaches us-west-2 if a claim explicitly sets `spec.region: us-west-2`.\n\n### 4.1 AWS-side prerequisite (apply before the ProviderConfigs)\n\nThe region fence is the whole point. Permission policy on `crossplane-prod-usw2`:\n\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Sid\": \"RegionFencedRegionalServices\",\n      \"Effect\": \"Allow\",\n      \"Action\": [\"s3:*\", \"rds:*\", \"eks:*\", \"acm:*\"],\n      \"Resource\": \"*\",\n      \"Condition\": { \"StringEquals\": { \"aws:RequestedRegion\": \"us-west-2\" } }\n    }\n  ]\n}\n```\n\nTrust policy: the Crossplane provider pod's IRSA role in the management cluster. Note this is the *platform's* provisioning role, not a workload role \u2014 AC #4 (\"no wildcard actions on prod\") applies to the **composed** IAM resources, which stay wildcard-free (see \u00a77.3).\n\n## 5. XRD change\n\n```yaml\n# apis/platform/definition.yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xwebapps.platform.acme.io\nspec:\n  group: platform.acme.io\n  names: { kind: XWebApp, plural: xwebapps",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-052ic_09/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-052ic_09/generated_1.yaml"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7142857142857143
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/crossplane/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7142857142857143
+    },
+    "corrected_composite_no_idiom": 0.8333333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

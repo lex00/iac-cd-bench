@@ -1,0 +1,97 @@
+{
+  "model": "gpt-5.4",
+  "task": "T3-modify",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\ninvalid-syntax: Invalid annotated assignment target\n --> generated_1.py:1:1\n  |\n1 | \"resources\": {\n  | ^^^^^^^^^^^\n2 |     \"requests\": {\"cpu\": \"200m\", \"memory\": \"256Mi\"},\n3 |     \"limits\": {\"cpu\": \"500m\", \"memory\": \"512Mi\"},\n  |\n\nF821 Undefined name `cluster`\n  --> generated_2.py:12:18\n   |\n10 | node_group = aws.eks.NodeGroup(\n11 |     \"app-nodegroup\",\n12 |     cluster_name=cluster.name,\n   |                  ^^^^^^^\n13 |     node_role_arn=node_role.arn,\n14 |     subnet_ids=private_subnet_ids,\n "
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 626,
+    "output": 2457
+  },
+  "content": "The safest way to add auto-scaling in an existing Pulumi Python stack is:\n\n1. **Do not rename existing resources**\n2. **Add the scaling resource as a new resource**\n3. **Reference the existing workload/cluster**\n4. **Run `pulumi preview` first**\n\nFor your EKS-based stack, the least disruptive option is usually to add a **Kubernetes HorizontalPodAutoscaler (HPA)** for the web app, because that creates a new K8s object and does **not** replace the existing Deployment, EKS cluster, RDS, S3, etc.\n\n---\n\n## Recommended approach: add an HPA to the existing Deployment\n\nIf your app is already deployed as a Kubernetes `Deployment`, add this in Pulumi:\n\n```python\nimport pulumi\nimport pulumi_kubernetes as k8s\nfrom pulumi import Config\n\nconfig = Config()\nenv = pulumi.get_stack()\n\nreplicas_min = 2 if env == \"dev\" else 4\nreplicas_max = 4 if env == \"dev\" else 10\n\n# Assume you already have a k8s provider and namespace/deployment defined.\n# Reuse the existing provider and namespace values.\nk8s_provider = ...   # existing provider\nnamespace = \"web\"\n\napp_labels = {\"app\": \"web\"}\n\ndeployment = k8s.apps.v1.Deployment(\n    \"web-deployment\",\n    metadata={\"namespace\": namespace, \"labels\": app_labels},\n    spec={\n        \"replicas\": 2,\n        \"selector\": {\"matchLabels\": app_labels},\n        \"template\": {\n            \"metadata\": {\"labels\": app_labels},\n            \"spec\": {\n                \"containers\": [{\n                    \"name\": \"web\",\n                    \"image\": \"your-image:tag\",\n                    \"ports\": [{\"containerPort\": 8080}],\n                    \"resources\": {\n                        \"requests\": {\"cpu\": \"200m\", \"memory\": \"256Mi\"},\n                        \"limits\": {\"cpu\": \"500m\", \"memory\": \"512Mi\"},\n                    },\n                }]\n            },\n        },\n    },\n    opts=pulumi.ResourceOptions(provider=k8s_provider),\n)\n\nhpa = k8s.autoscaling.v2.HorizontalPodAutoscaler(\n    \"web-hpa\",\n    metadata={\n        \"namespace\": namespace,\n        \"name\": \"web-hpa\",\n    },\n    spec={\n        \"scaleTargetRef\": {\n            \"apiVersion\": \"apps/v1\",\n            \"kind\": \"Deployment\",\n            \"name\": deployment.metadata[\"name\"],\n        },\n        \"minReplicas\": replicas_min,\n        \"maxReplicas\": replicas_max,\n        \"metrics\": [\n            {\n                \"type\": \"Resource\",\n                \"resource\": {\n                    \"name\": \"cpu\",\n                    \"target\": {\n                        \"type\": \"Utilization\",\n                        \"averageUtilization\": 70,\n                    },\n                },\n            }\n        ],\n    },\n    opts=pulumi.ResourceOptions(provider=k8s_provider),\n)\n```\n\n### Why this avoids replacement\n- `HorizontalPodAutoscaler` is a **new** resource.\n- It references the existing Deployment by name.\n- The Deployment itself is not replaced just because an HPA is added.\n- Your EKS cluster and node groups are untouched.\n\n---\n\n## Important requirement: CPU/memory requests must exist\n\nHPA based on CPU utilization only works if your pod containers define resource requests, for example:\n\n```python\n\"resources\": {\n    \"requests\": {\"cpu\": \"200m\", \"memory\": \"256Mi\"},\n    \"limits\": {\"cpu\": \"500m\", \"memory\": \"512Mi\"},\n}\n```\n\nWithout requests, HPA won\u2019t behave correctly.\n\n---\n\n# If you meant EKS node-group auto-scaling instead\n\nIf you want the **cluster nodes** to scale, not just pods, then for **EKS managed node groups** you usually update the node group `scaling_config` in place.\n\nExample:\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nenv = pulumi.get_stack()\n\ndesired = 2 if env == \"dev\" else 4\nmin_size = 2 if env == \"dev\" else 4\nmax_size = 4 if env == \"dev\" else 8\n\nnode_group = aws.eks.NodeGroup(\n    \"app-nodegroup\",\n    cluster_name=cluster.name,\n    node_role_arn=node_role.arn,\n    subnet_ids=private_subnet_ids,\n    scaling_config={\n        \"desired_size\": desired,\n        \"min_size\": min_size,\n        \"max_size\": max_size,\n    },\n    instance_types=[\"t3.medium\"] if env == \"dev\" else [\"t3.large\"],\n)\n```\n\n### Does this replace the node group?\nUsually, **changing `scaling_config` does not require replacement**.  \nBut:\n- changing immutable properties like subnet IDs, node role, or certain launch template details may trigger replacement.\n- use `pulumi preview` to confirm.\n\n---\n\n# If the resources already exist outside Pulumi state\n\nIf the Deployment or node group exists but Pulumi does not manage it yet, use **import**, not recreation.\n\nExample pattern:\n\n```python\nexisting_hpa = k8s.autoscaling.v2.HorizontalPodAutoscaler(\n    \"web-hpa\",\n    metadata={\n        \"namespace\": \"web\",\n        \"name\": \"web-hpa\",\n    },\n    spec={ ... },\n    opts=pulumi.ResourceOptions(\n        provider=k8s_provider,\n        import_=\"web/web-hpa\",\n    ),\n)\n```\n\nOr for AWS resources, use the real AWS ID in `import_`.\n\nThis tells Pulumi:\n- \u201cadopt this existing resource\u201d\n- instead of \u201ccreate a new one\u201d\n\nThat is the key technique when the concern is avoiding replacement or duplication.\n\n---\n\n# Avoid the common causes of replacement\n\n## 1. Don\u2019t rename the Pulumi logical resource name\nThis:\n\n```python\ndeployment = k8s.apps.v1.Deployment(\"web-deployment\", ...)\n```\n\nmust stay `\"web-deployment\"` if you want Pulumi to treat it as the same resource.\n\nIf you rename it to `\"frontend-deployment\"`, Pulumi will see:\n- old resource deleted\n- new resource created\n\nThat can cause replacement.\n\n---\n\n## 2. Don\u2019t change immutable fields unless necessary\nFor Kubernetes Deployments, some fields can update in place, others can be disruptive.  \nFor AWS EKS node groups, some properties are force-new.\n\nAlways check:\n\n```bash\npulumi preview\n```\n\n---\n\n## 3. Use `aliases` if you already renamed something in code\nIf you must rename a Pulumi resource, preserve identity with an alias:\n\n```python\nhpa = k8s.autoscaling.v2.HorizontalPodAutoscaler(\n    \"web-hpa\",\n    metadata={\"namespace\": \"web\", \"name\": \"web-hpa\"},\n    spec={ ... },\n    opts=pulumi.ResourceOptions(\n        provider=k8s_provider,\n        aliases=[pulumi.Alias(name=\"old-web-hpa\")],\n    ),\n)\n```\n\n---\n\n## 4. Use stack config for dev/prod values\nSince your environments are split by Pulumi stack, keep scaling values in stack config.\n\n### `Pulumi.dev.yaml`\n```yaml\nconfig:\n  app:minReplicas: 2\n  app:maxReplicas: 4\n```\n\n### `Pulumi.prod.yaml`\n```yaml\nconfig:\n  app:minReplicas: 4\n  app:maxReplicas: 10\n```\n\n### Python\n```python\nconfig = pulumi.Config(\"app\")\nmin_replicas = config.get_int(\"minReplicas\") or 2\nmax_replicas = config.get_int(\"maxReplicas\") or 4\n```\n\nThis keeps **dev** and **prod** independently deployable and matches your environment isolation requirement.\n\n---\n\n# Minimal complete HPA example for your scenario\n\n```python\nimport pulumi\nimport pulumi_kubernetes as k8s\n\nstack = pulumi.get_stack()\nconfig = pulumi.Config(\"app\")\n\nmin_replicas = config.get_int(\"minReplicas\") or (2 if stack == \"dev\" else 4)\nmax_replicas = config.get_int(\"maxReplicas\") or (4 if stack == \"dev\" else 10)\n\nk8s_provider = ...   # existing EKS k8s provider\nnamespace = \"web\"\n\ndeployment_name = \"web\"\n\nhpa = k8s.autoscaling.v2.HorizontalPodAutoscaler(\n    \"web-hpa\",\n    metadata={\n        \"name\": deployment_name,\n        \"namespace\": namespace,\n    },\n    spec={\n        \"scaleTargetRef\": {\n            \"apiVersion\": \"apps/v1\",\n            \"kind\": \"Deployment\",\n            \"name\": deployment_name,\n        },\n        \"minReplicas\": min_replicas,\n        \"maxReplicas\": max_replicas,\n        \"metrics\": [\n            {\n                \"type\": \"Resource\",\n                \"resource\": {\n                    \"name\": \"cpu\",\n                    \"target\": {\n                        \"type\": \"Utilization\",\n                        \"averageUtilization\": 70,\n                    },\n                },\n            }\n        ],\n    },\n    opts=pulumi.ResourceOptions(provider=k8s_provider),\n)\n```\n\n---\n\n# Safe rollout steps\n\n1. Add the HPA resource in code\n2. Keep existing resource names unchanged\n3. Run:\n\n```bash\npulumi preview\n```\n\nYou want to see:\n- `+` create for the HPA only\n- maybe an in-place update if you added CPU requests to the Deployment\n- **no replacements** for cluster, node group, bucket, RDS, IAM, etc.\n\n4. Then apply:\n\n```bash\npulumi up\n```\n\n---\n\n# Best answer in one line\n\nFor an existing Pulumi EKS stack, add a **new Kubernetes HPA resource** that targets the current Deployment, keep resource names stable, and verify with `pulumi preview`; this avoids replacing existing infrastructure.\n\nIf you want, I can give you a version wired into a typical Pulumi EKS app stack structure, including `dev`/`prod` config files.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_2.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_3.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_4.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_5.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_6.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-o9v19yse/generated_7.py"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/pulumi-python/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

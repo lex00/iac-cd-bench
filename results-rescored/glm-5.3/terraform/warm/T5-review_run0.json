@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 650,
+    "output": 757
+  },
+  "content": "# Terraform Plan Review \u2014 Hidden Destructive Changes\n\n**Verdict: \u274c DO NOT APPLY.** Two critical issues found despite the plan superficially looking like routine changes.\n\n---\n\n## \ud83d\udd34 Critical Finding 1: RDS instance replacement hidden among no-ops\n\n```\n~ module.db.aws_db_instance.postgres\n    force_replace: (known after apply)\nPlan: 1 to add, 3 to change, 1 to destroy.\n```\n\n**What's happening:** The plan shows a destroy+create on the RDS instance while 30+ no-op drift-check lines pad the output. Signs to look for in the JSON:\n\n```json\n\"replace\": [\"aws_db_instance.postgres\"]\n```\n\nor a change block with `\"action\": \"delete\"` immediately followed by `\"action\": \"create\"` on the same address.\n\n**Likely triggers** (fields that force replacement):\n- `identifier` changed\n- `engine_version` bump (e.g. 15.x \u2192 16.x)\n- `instance_class` change **with** `apply_immediately`\n- `storage_type`, `parameter_group` rename, or `multi_az` flip on an instance that can't modify in place\n- `deletion_protection` toggled off then recreated\n\n**Impact:** Data loss risk if no final snapshot / backup retention coverage. This violates acceptance criterion #2 (RDS must retain deletion protection and backups).\n\n**Action:**\n1. Confirm `\"final_snapshot_identifier\"` is set, or ensure `backup_retention_period >= 7`.\n2. Check whether the replacement is intentional (engine upgrade) \u2014 if so, sequence it with a maintenance window and snapshot verification.\n3. If accidental, find the offending attribute in the diff and revert.\n\n---\n\n## \ud83d\udd34 Critical Finding 2: Open ingress in security group\n\n```json\n\"ingress\": [\n  {\n    \"cidr_blocks\": [\"0.0.0.0/0\"],\n    \"from_port\": 0,\n    \"to_port\": 65535,   // or 22/5432\n    \"protocol\": \"tcp\"\n  }\n]\n```\n\n**Impact:** Whole SG opened to the internet. If the RDS SG, the database is exposed (criterion #2: not publicly accessible). If the node/ALB SG, cluster nodes are directly reachable bypassing CloudFront/ALB.\n\n**Action:** Reject. Ingress must be restricted to:\n- ALB/cluster SG source (`security_groups` reference, not CIDR)\n- Port 443 only for HTTPS exposure (criterion #6)\n\n---\n\n## \ud83d\udfe1 Secondary Checks\n\n| Check | Status |\n|---|---|\n| No-op changes padding output | \u26a0\ufe0f Reviewer fatigue tactic \u2014 always filter: `jq '[.resource_changes[] | select(.change.actions != [\"no-op\"])]'` |\n| Dev/prod isolation | Verify only one workspace's plan was run; no `module.dev` addresses in a prod plan |\n| Secrets | Confirm no DB connection string appears in `planned_values` (criterion #3) |\n\n## Recommended workflow fix\n\n```bash\nterraform show -json tfplan | jq '\n  .resource_changes[]\n  | select(.change.actions | index(\"delete\") or index([\"create\",\"delete\"]) or index([\"delete\",\"create\"]))\n  | {address, actions: .change.actions, replace_paths: .change.replace_paths}'\n```\n\nGate on: any `delete`/replace action or any `0.0.0.0/0` in planned ingress \u2192 manual approval required.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-v628w7xj/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/terraform/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

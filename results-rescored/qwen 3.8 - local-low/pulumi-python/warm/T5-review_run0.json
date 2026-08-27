@@ -1,0 +1,85 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 687,
+    "output": 568
+  },
+  "content": "\n\n# Pulumi Preview Security Review\n\nI'm ready to review your Pulumi preview JSON, but **no JSON output was provided in your message**.\n\n## What I'll Check\n\nOnce you paste the `pulumi preview --show-secrets` (or `--json`) output, I'll flag issues in these categories:\n\n### 1. Secret in Plaintext Outputs\n- `ConfigSecret` values appearing as unencrypted strings in `[~]` update diffs or `[+]` create diffs\n- Sensitive fields (e.g., `masterPassword`, `dbConnectionString`) rendered without the `secrets` marker or without `pulumi config` encryption\n- Any `output` or `stack` reference that echoes a secret into the preview\n\n### 2. Replacement of Stateful Resource\n- `[-]` destroy + `[+]` create pair for `aws:rds:Instance` (or equivalent) \u2014 this means the RDS instance will be **destroyed and recreated**, causing data loss if not properly migrated\n- Look for `replace` markers or `id` changes on RDS, EKS, or S3 resources that hold state\n\n### 3. Missing `protect` Flag\n- No `\"protect\": true` (or `\"options\": {\"protect\": true}`) on:\n  - RDS instance (stateful, destructive)\n  - EKS cluster (stateful, destructive)\n  - S3 bucket (data loss if deleted)\n- Without `protect`, a `pulumi destroy` or misapplied update can silently drop these resources\n\n---\n\n## Please Provide\n\nPaste the output of:\n\n```bash\npulumi preview --show-secrets --json\n```\n\nor the raw JSON from `pulumi preview --json`. I'll produce a line-by-line security review against the acceptance criteria in your canonical spec.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-python/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

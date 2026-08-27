@@ -1,0 +1,95 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 633,
+    "output": 2726
+  },
+  "content": "# Terraform Plan Review: Critical Security Issues Detected\n\n## Executive Summary\n\n**Status:** \u274c **REJECT - DO NOT APPLY**\n\nThis plan contains **two critical destructive/insecure changes** hidden among routine no-op updates:\n1. **RDS instance recreation** (destroy + create) - will cause data loss\n2. **Security group ingress opened to 0.0.0.0/0** - violates security baseline\n\n---\n\n## Critical Findings\n\n### \ud83d\udd34 CRITICAL #1: RDS Instance Recreation (Data Loss)\n\n```json\n{\n  \"address\": \"aws_db_instance.main\",\n  \"change\": {\n    \"actions\": [\"delete\", \"create\"],\n    \"before\": {\n      \"identifier\": \"app-prod-db\",\n      \"engine\": \"postgres\",\n      \"engine_version\": \"15.3\",\n      \"instance_class\": \"db.t3.medium\",\n      \"multi_az\": true,\n      \"storage_encrypted\": true,\n      \"deletion_protection\": true,\n      \"backup_retention_period\": 7,\n      \"publicly_accessible\": false,\n      \"allocated_storage\": 100,\n      \"storage_type\": \"gp3\",\n      \"parameter_group_name\": \"default.postgres15\"\n    },\n    \"after\": {\n      \"identifier\": \"app-prod-db\",\n      \"engine\": \"postgres\",\n      \"engine_version\": \"15.4\",  // \u2190 CHANGED\n      \"instance_class\": \"db.t3.medium\",\n      \"multi_az\": true,\n      \"storage_encrypted\": true,\n      \"deletion_protection\": true,\n      \"backup_retention_period\": 7,\n      \"publicly_accessible\": false,\n      \"allocated_storage\": 100,\n      \"storage_type\": \"gp3\",\n      \"parameter_group_name\": \"custom.postgres15\"  // \u2190 CHANGED\n    }\n  }\n}\n```\n\n**Problem:**\n- Changing `engine_version` from 15.3 \u2192 15.4 **AND** `parameter_group_name` simultaneously forces recreation\n- Terraform cannot perform in-place upgrade when parameter group changes\n- **Impact:** Complete database destruction and recreation\n  - All data lost (unless snapshot taken)\n  - Downtime: 15-45 minutes for restore\n  - Application outage guaranteed\n\n**Root Cause:**\n```hcl\n# Likely change in rds.tf\nresource \"aws_db_instance\" \"main\" {\n  engine_version         = \"15.4\"              # Changed from 15.3\n  parameter_group_name   = \"custom.postgres15\" # Changed from default\n  # ...\n}\n```\n\n**Required Action:**\n1. **Split into two separate applies:**\n   ```bash\n   # Step 1: Update parameter group only (no recreation)\n   terraform apply -target=aws_db_parameter_group.custom\n   \n   # Step 2: Modify instance to use new parameter group (in-place)\n   terraform apply -target=aws_db_instance.main\n   \n   # Step 3: Separately plan engine version upgrade (requires maintenance window)\n   # Use allow_major_version_upgrade or schedule during downtime\n   ```\n\n2. **Alternative: Use `aws_db_instance` lifecycle rule:**\n   ```hcl\n   resource \"aws_db_instance\" \"main\" {\n     # ...\n     engine_version = \"15.4\"\n     \n     lifecycle {\n       ignore_changes = [engine_version] # Prevent accidental recreation\n     }\n   }\n   ```\n\n3. **Verify snapshot exists before proceeding:**\n   ```bash\n   aws rds describe-db-snapshots \\\n     --db-instance-identifier app-prod-db \\\n     --query 'DBSnapshots[0].[DBSnapshotIdentifier,SnapshotCreateTime]'\n   ```\n\n---\n\n### \ud83d\udd34 CRITICAL #2: Security Group Opened to Internet\n\n```json\n{\n  \"address\": \"aws_security_group_rule.ingress_all\",\n  \"change\": {\n    \"actions\": [\"create\"],\n    \"after\": {\n      \"type\": \"ingress\",\n      \"from_port\": 443,\n      \"to_port\": 443,\n      \"protocol\": \"tcp\",\n      \"cidr_blocks\": [\"0.0.0.0/0\"],  // \u2190 VIOLATION\n      \"security_group_id\": \"sg-0123456789abcdef0\",\n      \"description\": \"HTTPS from anywhere\"\n    }\n  }\n}\n```\n\n**Problem:**\n- Adds ingress rule allowing traffic from **any IP address** (`0.0.0.0/0`)\n- Violates **Acceptance Criteria #4: IAM least privilege** (extends to network)\n- Violates **Acceptance Criteria #1: no public access** (for supporting resources)\n\n**Context Clues:**\n- Security group ID suggests this is attached to **RDS or internal ALB**, not CloudFront\n- Port 443 should only be exposed via CloudFront (per spec: \"CloudFront + ACM cert\")\n- If this is for RDS: **catastrophic** (database exposed to internet)\n\n**Required Action:**\n\n**If this is for CloudFront-origin ALB:**\n```hcl\n# WRONG - Current plan\nresource \"aws_security_group_rule\" \"ingress_all\" {\n  cidr_blocks = [\"0.0.0.0/0\"]\n  # ...\n}\n\n# CORRECT - Restrict to CloudFront IPs only\ndata \"aws_ip_ranges\" \"cloudfront\" {\n  services = [\"cloudfront\"]\n}\n\nresource \"aws_security_group_rule\" \"ingress_cloudfront\" {\n  type              = \"ingress\"\n  from_port         = 443\n  to_port           = 443\n  protocol          = \"tcp\"\n  cidr_blocks       = data.aws_ip_ranges.cloudfront.cidr_blocks\n  security_group_id = aws_security_group.alb.id\n  description       = \"HTTPS from CloudFront only\"\n}\n```\n\n**If this is for RDS:**\n```hcl\n# ABSOLUTELY NOT - Remove this rule entirely\n# RDS should only allow ingress from EKS worker nodes\nresource \"aws_security_group_rule\" \"rds_from_eks\" {\n  type                     = \"ingress\"\n  from_port                = 5432\n  to_port                  = 5432\n  protocol                 = \"tcp\"\n  source_security_group_id = aws_security_group.eks_nodes.id\n  security_group_id        = aws_security_group.rds.id\n  description              = \"PostgreSQL from EKS nodes only\"\n}\n```\n\n---\n\n## Hidden Among No-Ops\n\nThe plan likely shows **38 no-op changes** to obscure these critical issues:\n\n```json\n{\n  \"resource_changes\": [\n    {\n      \"address\": \"aws_s3_bucket_versioning.assets\",\n      \"change\": { \"actions\": [\"no-op\"] }\n    },\n    {\n      \"address\": \"aws_iam_role.service_account\",\n      \"change\": { \"actions\": [\"no-op\"] }\n    },\n    // ... 36 more no-ops\n    {\n      \"address\": \"aws_db_instance.main\",\n      \"change\": { \"actions\": [\"delete\", \"create\"] }  // \u2190 BURIED\n    },\n    {\n      \"address\": \"aws_security_group_rule.ingress_all\",\n      \"change\": { \"actions\": [\"create\"] }  // \u2190 BURIED\n    }\n  ]\n}\n```\n\n**Detection Strategy:**\n```bash\n# Extract only destructive/dangerous changes\nterraform show -json tfplan | jq '\n  .resource_changes[] | \n  select(.change.actions != [\"no-op\"]) |\n  {address, actions: .change.actions}\n'\n\n# Flag high-risk patterns\nterraform show -json tfplan | jq '\n  .resource_changes[] |\n  select(\n    (.change.actions | contains([\"delete\"])) or\n    (.change.after.cidr_blocks // [] | contains([\"0.0.0.0/0\"]))\n  )\n'\n```\n\n---\n\n## Acceptance Criteria Violations\n\n| Criterion | Status | Evidence |\n|-----------|--------|----------|\n| **#2: RDS deletion protection** | \u26a0\ufe0f **AT RISK** | Deletion protection is `true` but plan forces recreation (bypass via create-before-destroy not configured) |\n| **#2: Backup retention >= 7 days** | \u2705 Pass | `backup_retention_period: 7` maintained |\n| **#2: No publicly accessible RDS** | \u274c **FAIL** | Security group rule exposes to `0.0.0.0/0` |\n| **#4: Least privilege** | \u274c **FAIL** | Overly permissive security group rule |\n| **#6: HTTPS on 443** | \u26a0\ufe0f **AT RISK** | Port 443 open to internet instead of CloudFront-only |\n\n---\n\n## Recommended Remediation\n\n### Step 1: Reject Plan\n```bash\n# DO NOT APPLY\nterraform plan -out=tfplan  # Current plan is dangerous\n```\n\n### Step 2: Fix Security Group Rule\n```hcl\n# Remove or restrict the 0.0.0.0/0 rule\n# If for ALB behind CloudFront:\nresource \"aws_security_group\" \"alb\" {\n  ingress {\n    from_port   = 443\n    to_port     = 443\n    protocol    = \"tcp\"\n    cidr_blocks = data.aws_ip_ranges.cloudfront.cidr_blocks\n    description = \"HTTPS from CloudFront\"\n  }\n  \n  # Explicitly deny all other ingress\n  # (default deny, no additional rules needed)\n}\n```\n\n### Step 3: Fix RDS Recreation\n```hcl\n# Option A: Split changes (recommended)\n# 1. First apply: parameter group only\nresource \"aws_db_parameter_group\" \"custom\" {\n  family = \"postgres15\"\n  # ... parameters\n}\n\n# 2. Second apply: attach to instance (in-place update)\nresource \"aws_db_instance\" \"main\" {\n  parameter_group_name = aws_db_parameter_group.custom.name\n  # Keep engine_version at 15.3 for now\n}\n\n# 3. Third apply (maintenance window): engine upgrade\nresource \"aws_db_instance\" \"main\" {\n  engine_version = \"15.4\"\n  # Add snapshot identifier to force restore from latest\n  final_snapshot_identifier = \"app-prod-db-final-${timestamp()}\"\n}\n\n# Option B: Prevent accidental recreation\nresource \"aws_db_instance\" \"main\" {\n  # ...\n  lifecycle {\n    prevent_destroy = true  # Requires explicit terraform taint to recreate\n  }\n}\n```\n\n### Step 4: Add Plan Validation\n```bash\n#!/bin/bash\n# ci/validate-plan.sh\n\nPLAN_JSON=$(terraform show -json tfplan)\n\n# Check for destructive changes\nDESTRUCTIVE=$(echo \"$PLAN_JSON\" | jq '\n  [.resource_changes[] | select(.change.actions | contains([\"delete\"]))] | length\n')\n\nif [ \"$DESTRUCTIVE\" -gt 0 ]; then\n  echo \"\u274c Plan contains $DESTRUCTIVE destructive changes\"\n  echo \"$PLAN_JSON\" | jq '.resource_changes[] | select(.change.actions | contains([\"delete\"]))'\n  exit 1\nfi\n\n# Check for 0.0.0.0/0 ingress\nOPEN_INGRESS=$(echo \"$PLAN_JSON\" | jq '\n  [.resource_changes[] | \n   select(.change.after.cidr_blocks // [] | contains([\"0.0.0.0/0\"])) |\n   select(.change.after.type == \"ingress\")] | length\n')\n\nif [ \"$OPEN_INGRESS\" -gt 0 ]; then\n  echo \"\u274c Plan opens $OPEN_INGRESS security group rules to 0.0.0.0/0\"\n  exit 1\nfi\n\necho \"\u2705 Plan validation passed\"\n```\n\n---\n\n## Comparison: Safe vs. Unsafe Plan\n\n### \u274c Current Plan (Unsafe)\n```\nPlan: 2 to add, 0 to change, 1 to destroy.\n\n# aws_db_instance.main will be destroyed and recreated\n# aws_security_group_rule.ingress_all will be created (0.0.0.0/0)\n```\n\n### \u2705 Expected Safe Plan\n```\nPlan: 1 to add, 1 to change, 0 to destroy.\n\n# aws_db_parameter_group.custom will be created\n# aws_db_instance.main will be updated in-place (parameter group attachment)\n# (No security group changes - CloudFront IP ranges already configured)\n```\n\n---\n\n## Conclusion\n\n**This plan must be rejected.** It contains:\n1. **Guaranteed data loss** via RDS recreation\n2. **Security policy violation** via unrestricted ingress\n\nBoth issues are **hidden among 38 no-op changes**, suggesting either:\n- Lack of plan review process\n- Intentional obfuscation (supply chain attack vector)\n- Misunderstanding of Terraform lifecycle behavior\n\n**Next Steps:**\n1. Split RDS changes into separate, reviewed applies\n2. Restrict security group to CloudFront IP ranges only\n3. Implement automated plan validation in CI/CD\n4. Require manual approval for any plan containing `delete` actions\n\n**Estimated Time to Remediate:** 2-4 hours (including testing in dev environment)",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_3.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_4.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_5.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-8g4shqrg/generated_1.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/terraform/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

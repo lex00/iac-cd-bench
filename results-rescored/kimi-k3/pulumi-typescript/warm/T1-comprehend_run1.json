@@ -1,0 +1,95 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 644,
+    "output": 1172
+  },
+  "content": "# Pulumi Preview Behavior Analysis\n\n## 1. Which Property Triggered the Replace?\n\nIn the canonical scenario, the **RDS PostgreSQL instance** differs between dev and prod:\n\n| Property | Dev | Prod |\n|---|---|---|\n| Instance class | `db.t3.micro` | `db.t3.medium` |\n| Multi-AZ | `false` | `true` |\n| Storage encrypted | default | `true` |\n\nThe property that triggers a **replace** (rather than an in-place update) is **`storageEncrypted`**.\n\n```typescript\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: config.require(\"dbInstanceClass\"),\n    multiAz: config.requireBoolean(\"dbMultiAz\"),\n    storageEncrypted: config.requireBoolean(\"dbEncrypted\"),  // \u2190 THIS triggers replace\n    // ...\n});\n```\n\n**Why:** `storageEncrypted` is a **ForceNew** property. Encryption-at-rest on RDS is set at creation time and cannot be toggled on an existing instance. Pulumi's diff engine marks it as `replace: true`.\n\nBy contrast:\n- `instanceClass` \u2192 **in-place update** (RDS supports modifying instance class)\n- `multiAz` \u2192 **in-place update** (RDS supports converting single\u2192multi-AZ)\n\nThe preview output would show:\n\n```\n~ aws:rds/instance:Instance: (update)\n    [id=app-db-abc123]\n    [urn=urn:pulumi:prod::myapp::aws:rds/instance:Instance::app-db]\n  ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n  ~ multiAz      : false => true\n\n+-aws:rds/instance:Instance: (replace)\n    [id=app-db-abc123]\n    [urn=urn:pulumi:prod::myapp::aws:rds/instance:Instance::app-db]\n  ~ storageEncrypted: false => true    // \u2190 forces replacement\n```\n\n---\n\n## 2. What Does `pulumi up --target` Skip?\n\nWhen you run:\n\n```bash\npulumi up --target urn:pulumi:prod::myapp::aws:rds/instance:Instance::app-db\n```\n\nPulumi **skips everything except the targeted resource and its transitive dependencies**.\n\n### What gets skipped:\n\n| Skipped | Reason |\n|---|---|\n| **EKS cluster** | Not a dependency of the RDS instance |\n| **S3 bucket** | Independent resource, not in the dependency graph path |\n| **IAM user/role** | Unless the DB explicitly references an IAM resource |\n| **CloudFront distribution** | Downstream consumer, not a dependency of RDS |\n| **ACM certificate** | Independent of the database |\n| **Other resources** | Anything not in the target's dependency closure |\n\n### What does NOT get skipped:\n\nResources that the RDS instance **depends on** (via `dependsOn` or output references) are still included:\n\n```\nTarget: app-db (RDS)\n\u251c\u2500\u2500 Included: VPC (if db references vpc.id)\n\u251c\u2500\u2500 Included: DB Subnet Group (if referenced)\n\u251c\u2500\u2500 Included: Security Group (if referenced)\n\u2514\u2500\u2500 Skipped: everything else\n```\n\n**Key nuance:** `--target` does **not** skip the dependency graph resolution \u2014 it skips the *deployment* of non-targeted resources. The program still runs in full; Pulumi builds the complete resource graph, then filters operations to only the target + its dependencies.\n\n---\n\n## 3. How Does Pulumi Handle Secrets in Outputs?\n\n### Config Secrets (Input Side)\n\n```yaml\n# Pulumi.prod.yaml\nconfig:\n  myapp:dbPassword:\n    secure: AAABAJ...encrypted-with-stack-passphrase...\n```\n\n```typescript\nconst config = new pulumi.Config();\nconst dbPassword = config.requireSecret(\"dbPassword\");\n// Type: pulumi.Output<string> \u2014 tagged as secret internally\n```\n\n### Propagation Through Outputs\n\nPulumi tracks secret-ness as **metadata on `Output<T>` values**. Once a value is marked secret, the tag **propagates through all transformations**:\n\n```typescript\nconst connectionString = pulumi.interpolate`postgresql://admin:${dbPassword}@host:5432/mydb`;\n// connectionString is automatically marked as secret\n// because dbPassword is secret\n```\n\n### What This Means in Practice\n\n| Surface | Behavior |\n|---|---|\n| **State file** | Secret outputs are stored **encrypted** (with the stack's passphrase/KMS key) |\n| **CLI output** | `pulumi stack output` shows `[secret]` unless `--show-secrets` is passed |\n| **Preview/Up logs** | Secret values are **redacted** in diffs and logs |\n| **`pulumi.export`** | Exported secrets remain encrypted in state |\n| **Stack references** | Reading a secret output from another stack preserves the secret tag |\n\n### The Critical Guarantee\n\n```\nPlaintext secret NEVER appears in:\n  \u2717 State file (encrypted at rest)\n  \u2717 CLI output (redacted by default)\n  \u2717 Pulumi Service logs\n  \u2717 Preview diffs\n\nPlaintext secret ONLY exists in:\n  \u2713 Memory during program execution\n  \u2713 When explicitly unwrapped with --show-secrets or .apply()\n```\n\n### Acceptance Criteria Mapping\n\nThis satisfies **Criterion 3** (\"never stored in plaintext in Git; encrypted at rest\"):\n\n```typescript\n// The DB connection string secret\nexport const dbConnectionString = pulumi.secret(\n    pulumi.interpolate`postgresql://admin:${dbPassword}@${db.endpoint}/mydb`\n);\n// Stored encrypted in Pulumi.prod.yaml state\n// Redacted in all CLI output\n// Safe to commit Pulumi.prod.yaml to Git\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_2.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-m_9glki6/generated_3.ts"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-typescript/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

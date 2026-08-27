@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 993,
+    "output": 4102
+  },
+  "content": "\n\nHere\u2019s a precise breakdown of how the `knr-ops` stack (Flux + kustomize + ACK) will behave when PR #42 merges, aligned with GitOps idioms and the acceptance criteria:\n\n### 1. What reconciles when PR #42 merges, and in what order?\n**Reconciliation chain:**\n1. **Flux `SourceController`** detects the new commit hash in the Git repo and updates the `GitRepository` status.\n2. **Flux `Kustomization` controller** picks up the updated source and runs `kustomize build` for the affected paths (`infra/s3/`, `infra/rds/`, `overlays/prod/`).\n3. **CRDs are applied** to the target cluster(s). ACK `Bucket` and `DBInstance` CRDs are created/updated; the app `Deployment` patch is merged into the prod overlay.\n4. **ACK controllers** watch the new/updated CRDs and reconcile with AWS APIs.\n5. **Kubernetes Deployment controller** applies the replica change and triggers a rollout.\n\n**Order:** By default, Flux reconciles multiple `Kustomization` objects concurrently. However, idiomatic setups use `dependsOn` to enforce: `infra-s3` & `infra-rds` \u2192 `app-deployment`. If `dependsOn` is configured, Flux waits for the infra kustomizations to reach `Ready` status before applying the prod overlay. ACK controllers run continuously, so once CRDs are applied, they reconcile with AWS asynchronously.\n\n---\n\n### 2. Does the RDS instance get recreated? Why or why not?\n**No.** ACK translates the `instanceClass` change into an AWS RDS `ModifyDBInstance` API call, which performs an **in-place update**. The underlying DB instance, data, and endpoint persist. \n- AWS RDS will typically schedule a reboot (unless `ApplyImmediately: false` is set and maintenance window applies).\n- The acceptance criteria require `deletionProtection: true`. ACK respects this and will **never** attempt a delete+create path for this change.\n- ACK controllers avoid recreation unless explicitly forced via annotations or when the change crosses incompatible engine/major-version boundaries.\n\n---\n\n### 3. What happens to the S3 bucket if its manifest is deleted from Git?\n1. **Flux** removes the ACK `Bucket` CRD from the cluster during the next reconciliation interval.\n2. **ACK S3 controller** receives a `DELETE` event and calls the S3 `DeleteBucket` API.\n3. **AWS S3 behavior:** Because the spec requires versioning + encryption, the bucket likely contains objects (or version history). S3 **rejects** deletion of non-empty buckets. The ACK controller will surface an `Error` status on the CRD until objects are removed or the bucket is empty.\n4. **Mitigation:** In production, ACK best practice is to annotate the manifest with `ack.aws.amazon.com/deletion-policy: \"Abandon\"` (or `\"Orphan\"`). This tells ACK to stop managing the resource without calling `DeleteBucket`, preventing accidental data loss while leaving cleanup to manual/S3 lifecycle processes.\n\n---\n\n### 4. How does Flux handle the prod-only replica change?\n- **kustomize isolation:** The `overlays/prod/` directory contains a `kustomization.yaml` that patches the base deployment with `replicas: 4`. `overlays/dev/` does not contain this patch.\n- **Flux scoping:** Each environment is typically represented by a separate `Kustomization` CR pointing to its respective overlay path. Flux builds and applies them independently.\n- **Result:** The prod `Kustomization` applies the patched manifest to the prod cluster/namespace. The dev `Kustomization` remains untouched. Because overlays are built at sync time and applied to distinct targets (different clusters or namespaces), environment isolation is strictly enforced per the acceptance criteria.\n\n---\n\n### 5. What role does the `dependsOn` relationship between kustomizations play?\n`dependsOn` in Flux `Kustomization` resources enforces **deterministic deployment ordering** and acts as a readiness gate:\n- **Infra-first guarantee:** Ensures ACK finishes provisioning/modifying RDS, S3, and IAM resources before the app deployment is applied. This prevents the app from rolling out with missing endpoints, stale connection strings, or insufficient IAM permissions.\n- **Readiness propagation:** Flux waits for the upstream `Kustomization` to reach `Ready: True` (meaning all CRDs are applied and ACK controllers have reported successful AWS reconciliation) before proceeding.\n- **Failure isolation:** If RDS modification fails or times out, Flux blocks the app rollout, surfacing the root cause immediately rather than masking it with pod crash loops.\n\nIdiomatically, `dependsOn` is the primary mechanism in `knr-ops` to coordinate GitOps delivery with ACK's asynchronous cloud resource lifecycle, ensuring safe, idempotent deployments across infra and app layers.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/knr-ops/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

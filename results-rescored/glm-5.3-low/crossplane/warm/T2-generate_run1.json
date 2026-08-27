@@ -1,0 +1,91 @@
+{
+  "model": "glm-5.3",
+  "task": "T2-generate",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "xrds/composite-web-service.yaml') = Path('xrds/composite-web-service.yaml')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:6: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('compositions/composition.yaml').exists\n     +      where PosixPath('compositions/composition.yaml') = Path('compositions/composition.yaml')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:10: AssertionError: assert False\nE   AssertionError: assert (False or False)\n     +  where False = exists()\n     +    where exists = PosixPath('claims/dev.yaml').exists\n     +      where PosixPath('claims/dev.yaml') = Path('claims/dev.yaml')\n     +  and   False = exists()\n     +    where exists = PosixPath('claims/prod.yaml').exists\n     +      where PosixPath('claims/prod.yaml') = Path('claims/prod.yaml')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:14: AssertionError: assert (False or False)\nE   AssertionError: At least one ProviderConfig should exist\n    assert 0 >= 1\n     +  where 0 = len([])\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py:19: AssertionError: At least one ProviderConfig should exist\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_xrd_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_composition_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_claim_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T2-generate/tests/test_task.py::test_provider_config_exists\n============================== 4 failed in 0.01s ===============================\n",
+      "passed_count": 0,
+      "total_count": 4,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 664,
+    "output": 2253
+  },
+  "content": "# Crossplane: Versioned Bucket + RDS + IAM Role\n\nXRD + Composition using `function-patch-and-transform`, targeting the AWS provider family (`provider-aws-s3`, `provider-aws-rds`, `provider-aws-iam`).\n\n## 1. XRD (CompositeResourceDefinition)\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xappstacks.example.platform\nspec:\n  group: example.platform\n  names:\n    kind: XAppStack\n    plural: xappstacks\n  claimNames:\n    kind: AppStack\n    plural: appstacks\n  defaultCompositionRef:\n    name: appstack-aws\n  versions:\n  - name: v1alpha1\n    served: true\n    referenceable: true\n    schema:\n      openAPIV3Schema:\n        type: object\n        properties:\n          spec:\n            type: object\n            properties:\n              # --- Bucket ---\n              bucketName:\n                type: string\n                description: Globally unique S3 bucket name\n              deletionPolicy:\n                type: string\n                default: Delete\n                enum: [Delete, Orphan]\n              # --- RDS ---\n              instanceClass:\n                type: string\n                default: db.t3.micro\n              allocatedStorageGB:\n                type: integer\n                default: 20\n              storageEncrypted:\n                type: boolean\n                default: true\n              multiAZ:\n                type: boolean\n                default: false\n              dbName:\n                type: string\n                default: appdb\n              # --- IAM ---\n              oidcProviderArn:\n                type: string\n                description: ARN of the cluster OIDC provider for trust policy\n              serviceAccountNamespace:\n                type: string\n                default: app\n              serviceAccountName:\n                type: string\n                default: app-sa\n              # --- Network ---\n              vpcId:\n                type: string\n              subnetIds:\n                type: array\n                items:\n                  type: string\n            required:\n            - bucketName\n            - vpcId\n            - subnetIds\n            - oidcProviderArn\n```\n\n## 2. Composition (function-patch-and-transform)\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: appstack-aws\nspec:\n  compositeTypeRef:\n    apiVersion: example.platform/v1alpha1\n    kind: XAppStack\n  mode: Pipeline\n  pipeline:\n  - step: render-resources\n    functionRef:\n      name: function-patch-and-transform\n    input:\n      apiVersion: pt.fn.crossplane.io/v1beta1\n      kind: Resources\n      resources:\n\n      # ---------- S3 Bucket ----------\n      - name: bucket\n        base:\n          apiVersion: s3.aws.crossplane.io/v1beta1\n          kind: Bucket\n          spec:\n            forProvider:\n              location: us-east-1\n              versioning:\n                enabled: true\n              serverSideEncryptionConfiguration:\n                rules:\n                - applyServerSideEncryptionByDefault:\n                    sseAlgorithm: AES256\n              publicAccessBlockConfiguration:\n                blockPublicAcls: true\n                blockPublicPolicy: true\n                ignorePublicAcls: true\n                restrictPublicBuckets: true\n        patches:\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.bucketName\n          toFieldPath: metadata.name\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.deletionPolicy\n          toFieldPath: spec.deletionPolicy\n\n      # ---------- RDS PostgreSQL ----------\n      - name: rds-instance\n        base:\n          apiVersion: rds.aws.crossplane.io/v1beta1\n          kind: DBInstance\n          spec:\n            forProvider:\n              engine: postgres\n              engineVersion: \"15.5\"\n              autoMinorVersionUpgrade: true\n              deletionProtection: true\n              publiclyAccessible: false\n              storageEncrypted: true\n              backupRetentionPeriod: 7\n              dbInstanceClass: db.t3.micro\n              allocatedStorage: 20\n            writeConnectionSecretToRef:\n              name: app-db-conn\n              namespace: crossplane-system\n        patches:\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.instanceClass\n          toFieldPath: spec.forProvider.dbInstanceClass\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.allocatedStorageGB\n          toFieldPath: spec.forProvider.allocatedStorage\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.storageEncrypted\n          toFieldPath: spec.forProvider.storageEncrypted\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.dbName\n          toFieldPath: spec.forProvider.dbName\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.vpcId\n          toFieldPath: spec.forProvider.dbSubnetGroupName  # if using pre-created subnet group\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.deletionPolicy\n          toFieldPath: spec.deletionPolicy\n        # multiAZ as optional: only applied when true\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.multiAZ\n          toFieldPath: spec.forProvider.multiAZ\n          transforms:\n          - type: map\n            map:\n              \"true\": true\n              \"false\": null   # omit \u2192 provider default (single AZ)\n\n      # ---------- IAM Role (OIDC trust) ----------\n      - name: iam-role\n        base:\n          apiVersion: iam.aws.crossplane.io/v1beta1\n          kind: Role\n          spec:\n            forProvider:\n              assumeRolePolicyDocument: |\n                {\n                  \"Version\": \"2012-10-17\",\n                  \"Statement\": [{\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\"AWS\": \"${oidcArn}\"},\n                    \"Action\": \"sts:AssumeRole\",\n                    \"Condition\": {\n                      \"StringEquals\": {\n                        \"${oidcHost}:sub\": \"system:serviceaccount:${ns}:${sa}\",\n                        \"${oidcHost}:aud\": \"sts.amazonaws.com\"\n                      }\n                    }\n                  }]\n                }\n        patches:\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.oidcProviderArn\n          toFieldPath: spec.forProvider.assumeRolePolicyDocument\n          transforms:\n          - type: string\n            string:\n              type: Format\n              fmt: |\n                {\n                  \"Version\": \"2012-10-17\",\n                  \"Statement\": [{\n                    \"Effect\": \"Allow\",\n                    \"Principal\": {\"Federated\": \"%s\"},\n                    \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n                    \"Condition\": {\n                      \"StringEquals\": {\n                        \"%s:sub\": \"system:serviceaccount:%s:%s\",\n                        \"%s:aud\": \"sts.amazonaws.com\"\n                      }\n                    }\n                  }]\n                }\n          - type: string\n            string:\n              type: Regexp\n              regexp:\n                pattern: '^arn:aws:iam::[0-9]+:oidc-provider/(.*)$'\n                group: 1\n        # note: multi-fmt trust doc \u2014 simpler alternative below in \"Notes\"\n\n      # ---------- IAM Policy (least privilege on bucket) ----------\n      - name: iam-policy\n        base:\n          apiVersion: iam.aws.crossplane.io/v1beta1\n          kind: Policy\n          spec:\n            forProvider:\n              name: app-assets-bucket-access\n              policyDocument: |\n                {\n                  \"Version\": \"2012-10-17\",\n                  \"Statement\": [{\n                    \"Effect\": \"Allow\",\n                    \"Action\": [\"s3:GetObject\", \"s3:PutObject\", \"s3:ListBucket\"],\n                    \"Resource\": [\"${bucketArn}\", \"${bucketArn}/*\"]\n                  }]\n                }\n        patches:\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.bucketName\n          toFieldPath: spec.forProvider.policyDocument\n          transforms:\n          - type: string\n            string:\n              type: Format\n              fmt: |\n                {\"Version\":\"2012-10-17\",\"Statement\":[{\"Effect\":\"Allow\",\n                \"Action\":[\"s3:GetObject\",\"s3:PutObject\",\"s3:ListBucket\"],\n                \"Resource\":[\"arn:aws:s3:::%s\",\"arn:aws:s3:::%s/*\"]}]}\n\n      # ---------- Role-Policy Attachment ----------\n      - name: role-policy-attachment\n        base:\n          apiVersion: iam.aws.crossplane.io/v1beta1\n          kind: RolePolicyAttachment\n          spec:\n            forProvider:\n              roleNameSelector:\n                matchControllerRef: true\n              policyArnSelector:\n                matchControllerRef: true\n```\n\n## 3. Example Claim (dev)\n\n```yaml\napiVersion: example.platform/v1alpha1\nkind: AppStack\nmetadata:\n  name: app-dev\n  namespace: dev\nspec:\n  bucketName: acme-app-assets-dev\n  instanceClass: db.t3.micro\n  multiAZ: false\n  dbName: appdb\n  vpcId: vpc-0abc123\n  subnetIds: [subnet-1, subnet-2]\n  oidcProviderArn: arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE\n  serviceAccountNamespace: app\n  serviceAccountName: app-sa\n```\n\n## Notes & Caveats\n\n- **Trust policy templating**: The strict `Format` transform can't inject multiple fields into one string; in practice use `function-go-templating` for the trust document, or precompute the full document in a provider like `function-kcl`. The pipeline above shows the intent; the composition patch limits of `function-patch-and-transform` mean multi-variable string assembly requires chained transforms or an external helper function.\n- **Deletion protection**: Crossplane `Delete` deletion policy on a deletion-protected RDS instance will fail until `deletionProtection` is disabled \u2014 intentional safeguard.\n- **DBSubnetGroup**: In production, add a `DBSubnetGroup` managed resource built from `spec.subnetIds` and patch its status name into the DBInstance \u2014 omitted here for brevity, flagged as a follow-up.\n- **Secrets**: RDS credentials come via `writeConnectionSecretToRef` (never in Git); compose with `provider-kubernetes` ExternalSecretStore for app namespace delivery.\n- **Required functions**: `crossplane-contrib/function-patch-and-transform` must be installed in the cluster (`Function` object or Helm install).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-0rk6z6qn/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-0rk6z6qn/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-0rk6z6qn/generated_2.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.3888888888888889
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/crossplane/warm/T2-generate_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.3888888888888889
+    },
+    "corrected_composite_no_idiom": 0.4375,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

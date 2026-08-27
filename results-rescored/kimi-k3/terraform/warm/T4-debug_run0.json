@@ -1,0 +1,90 @@
+{
+  "model": "kimi-k3",
+  "task": "T4-debug",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\u001b[0mTerraform encountered problems during initialisation, including problems\n\u001b[31m\u2502\u001b[0m \u001b[0mwith the configuration, described below.\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mThe Terraform configuration must be valid before initialization so that\n\u001b[31m\u2502\u001b[0m \u001b[0mTerraform can determine which modules and providers need to be installed.\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1m\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mDuplicate variable declaration\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on generated_1.tf line 3:\n\u001b[31m\u2502\u001b[0m \u001b[0m   3: \u001b[4mvariable \"environment\"\u001b[0m {\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mA variable named \"environment\" was already declared at\n\u001b[31m\u2502\u001b[0m \u001b[0mgenerated_0.tf:3,1-23. Variable names must be unique within a module.\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mDuplicate local value definition\u001b[0m\n\u001b[31m"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 608,
+    "output": 2813
+  },
+  "content": "# Terraform Fix: Circular Dependency + count/for_each Error\n\n## The Problem\n\nHere's a typical broken configuration that produces both errors:\n\n```hcl\n# \u274c BROKEN \u2014 main.tf\n\nvariable \"environment\" {\n  type = string\n}\n\nlocals {\n  env_config = {\n    dev = {\n      node_count    = 2\n      instance_type = \"t3.medium\"\n      db_class      = \"db.t3.micro\"\n      multi_az      = false\n    }\n    prod = {\n      node_count    = 4\n      instance_type = \"t3.large\"\n      db_class      = \"db.t3.medium\"\n      multi_az      = true\n    }\n  }\n  config = local.env_config[var.environment]\n}\n\n# \u2500\u2500\u2500 ERROR 1: Circular Dependency \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n# The IAM role references the secret, and the secret references the role.\n\nresource \"aws_iam_role\" \"app_role\" {\n  name = \"app-${var.environment}\"\n  assume_role_policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      Action    = \"sts:AssumeRole\"\n      Effect    = \"Allow\"\n      Principal = { Service = \"ec2.amazonaws.com\" }\n    }]\n  })\n}\n\nresource \"aws_iam_role_policy\" \"app_secrets\" {\n  name = \"app-secrets-${var.environment}\"\n  role = aws_iam_role.app_role.id\n\n  # \u274c References the secret \u2192 creates dependency: role \u2192 secret\n  policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      Action   = [\"secretsmanager:GetSecretValue\"]\n      Effect   = \"Allow\"\n      Resource = [aws_secretsmanager_secret.db_connection.arn]\n    }]\n  })\n}\n\nresource \"aws_secretsmanager_secret\" \"db_connection\" {\n  name = \"db-connection-${var.environment}\"\n\n  # \u274c References the role \u2192 creates dependency: secret \u2192 role\n  # This completes the CYCLE: role \u2192 secret \u2192 role\n  replica {\n    region = \"us-west-2\"\n  }\n\n  tags = {\n    AllowedRole = aws_iam_role.app_role.arn  # \u2190 circular!\n  }\n}\n\n# \u2500\u2500\u2500 ERROR 2: count vs for_each type mismatch \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nvariable \"subnet_ids\" {\n  type = map(string)  # \u2190 map, not list\n  default = {\n    \"us-east-1a\" = \"subnet-aaa\"\n    \"us-east-1b\" = \"subnet-bbb\"\n  }\n}\n\nresource \"aws_eks_node_group\" \"app\" {\n  cluster_name    = aws_eks_cluster.app.name\n  node_group_name = \"app-${var.environment}\"\n\n  # \u274c ERROR: count requires a number, but var.subnet_ids is a map.\n  #    Terraform says: \"The 'count' value must be a whole number\"\n  #    or if you try count = length(var.subnet_ids), you lose the keys\n  #    and can't reference each.key / each.value.\n  count = length(var.subnet_ids)\n\n  subnet_ids    = [var.subnet_ids[count.index]]  # \u2190 also broken: can't index a map with a number\n  instance_types = [local.config.instance_type]\n\n  scaling_config {\n    desired_size = local.config.node_count\n    max_size     = local.config.node_count + 2\n    min_size     = 1\n  }\n}\n```\n\n### Error Output\n\n```\n\u2577\n\u2502 Error: Cycle: aws_iam_role_policy.app_secrets, aws_secretsmanager_secret.db_connection, aws_iam_role.app_role\n\u2502\n\u2502 aws_iam_role.app_role \u2192 aws_iam_role_policy.app_secrets \u2192 aws_secretsmanager_secret.db_connection \u2192 aws_iam_role.app_role\n\u2575\n\n\u2577\n\u2502 Error: Invalid count argument\n\u2502   on main.tf line 62, in resource \"aws_eks_node_group\" \"app\":\n\u2502   62:   count = length(var.subnet_ids)\n\u2502\n\u2502 The \"count\" value must be a whole number, but the given value is derived\n\u2502 from a map. Use \"for_each\" to iterate over maps.\n\u2575\n```\n\n---\n\n## The Fix\n\n```hcl\n# \u2705 FIXED \u2014 main.tf\n\nvariable \"environment\" {\n  type = string\n  validation {\n    condition     = contains([\"dev\", \"prod\"], var.environment)\n    error_message = \"Environment must be dev or prod.\"\n  }\n}\n\nlocals {\n  env_config = {\n    dev = {\n      node_count    = 2\n      instance_type = \"t3.medium\"\n      db_class      = \"db.t3.micro\"\n      multi_az      = false\n      region        = \"us-east-1\"\n    }\n    prod = {\n      node_count    = 4\n      instance_type = \"t3.large\"\n      db_class      = \"db.t3.medium\"\n      multi_az      = true\n      region        = \"us-east-1\"\n    }\n  }\n  config = local.env_config[var.environment]\n}\n\n# \u2500\u2500\u2500 FIX 1: Break the circular dependency \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n#\n# Root cause: The role policy referenced the secret ARN, and the secret\n# referenced the role ARN in tags. Two resources can't depend on each other.\n#\n# Fix strategy:\n#   a) Remove the tag from the secret that references the role (tags are\n#      metadata, not access control \u2014 they don't need the role ARN).\n#   b) If you need the role ARN associated with the secret, use a\n#      separate aws_secretsmanager_secret_policy resource, which breaks\n#      the cycle by making the attachment a third resource.\n\nresource \"aws_iam_role\" \"app_role\" {\n  name = \"app-${var.environment}\"\n\n  assume_role_policy = var.environment == \"prod\" ? jsonencode({\n    # Prod: OIDC trust for IRSA (IAM Roles for Service Accounts)\n    Version = \"2012-10-17\"\n    Statement = [{\n      Action = \"sts:AssumeRoleWithWebIdentity\"\n      Effect = \"Allow\"\n      Principal = {\n        Federated = aws_iam_openid_connect_provider.eks[0].arn\n      }\n      Condition = {\n        StringEquals = {\n          \"${replace(aws_eks_cluster.app.identity[0].oidc[0].issuer, \"https://\", \"\")}:sub\" = \"system:serviceaccount:app:app-sa\"\n        }\n      }\n    }]\n  }) : jsonencode({\n    # Dev: simple programmatic access\n    Version = \"2012-10-17\"\n    Statement = [{\n      Action    = \"sts:AssumeRole\"\n      Effect    = \"Allow\"\n      Principal = { Service = \"ec2.amazonaws.com\" }\n    }]\n  })\n}\n\n# \u2705 Secret no longer references the role \u2014 cycle broken\nresource \"aws_secretsmanager_secret\" \"db_connection\" {\n  name = \"db-connection-${var.environment}\"\n\n  # No reference to aws_iam_role here.\n  # Tags are static metadata; access control goes in the policy below.\n  tags = {\n    Environment = var.environment\n    ManagedBy   = \"terraform\"\n  }\n}\n\n# \u2705 Role policy CAN reference the secret (one-directional dependency)\nresource \"aws_iam_role_policy\" \"app_secrets\" {\n  name = \"app-secrets-${var.environment}\"\n  role = aws_iam_role.app_role.id\n\n  policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      # Least privilege: only read this specific secret\n      Action = [\n        \"secretsmanager:GetSecretValue\",\n        \"secretsmanager:DescribeSecret\"\n      ]\n      Effect   = \"Allow\"\n      Resource = [aws_secretsmanager_secret.db_connection.arn]\n    }]\n  })\n}\n\n# \u2705 If you need a resource policy ON the secret that references the role,\n#    use a separate resource. This is the standard pattern to avoid cycles:\n#    role \u2192 policy \u2192 secret  (no back-edge)\nresource \"aws_secretsmanager_secret_policy\" \"db_connection\" {\n  secret_arn = aws_secretsmanager_secret.db_connection.arn\n\n  policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      Sid    = \"AllowAppRoleAccess\"\n      Effect = \"Allow\"\n      Principal = {\n        AWS = aws_iam_role.app_role.arn\n      }\n      Action   = \"secretsmanager:GetSecretValue\"\n      Resource = \"*\"\n    }]\n  })\n}\n\n# \u2500\u2500\u2500 FIX 2: Use for_each with maps, count with numbers \u2500\u2500\u2500\u2500\u2500\u2500\n\nvariable \"subnet_ids\" {\n  type = map(string)\n  default = {\n    \"us-east-1a\" = \"subnet-aaa\"\n    \"us-east-1b\" = \"subnet-bbb\"\n  }\n}\n\n# \u2705 for_each iterates over a map, giving you each.key and each.value\nresource \"aws_subnet\" \"app\" {\n  for_each = var.subnet_ids\n\n  availability_zone = each.key\n  cidr_block        = cidrsubnet(\"10.0.0.0/16\", 8, index(keys(var.subnet_ids), each.key))\n  vpc_id            = aws_vpc.app.id\n\n  tags = {\n    Name = \"app-${var.environment}-${each.key}\"\n  }\n}\n\n# \u2705 EKS node group doesn't need count or for_each at all \u2014\n#    it's a single resource per cluster. Pass all subnet IDs as a list.\nresource \"aws_eks_node_group\" \"app\" {\n  cluster_name    = aws_eks_cluster.app.name\n  node_group_name = \"app-${var.environment}\"\n\n  # values() converts map \u2192 list, no count/for_each needed\n  subnet_ids     = values(aws_subnet.app)[*].id\n  instance_types = [local.config.instance_type]\n\n  scaling_config {\n    desired_size = local.config.node_count\n    max_size     = local.config.node_count + 2\n    min_size     = 1\n  }\n}\n\n# \u2500\u2500\u2500 Supporting resources (context) \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\nresource \"aws_vpc\" \"app\" {\n  cidr_block = \"10.0.0.0/16\"\n  tags       = { Name = \"app-${var.environment}\" }\n}\n\nresource \"aws_eks_cluster\" \"app\" {\n  name     = \"app-${var.environment}\"\n  role_arn = aws_iam_role.eks_cluster.arn\n\n  vpc_config {\n    subnet_ids = values(aws_subnet.app)[*].id\n  }\n}\n\nresource \"aws_iam_role\" \"eks_cluster\" {\n  name = \"eks-cluster-${var.environment}\"\n  assume_role_policy = jsonencode({\n    Version = \"2012-10-17\"\n    Statement = [{\n      Action    = \"sts:AssumeRole\"\n      Effect    = \"Allow\"\n      Principal = { Service = \"eks.amazonaws.com\" }\n    }]\n  })\n}\n\n# OIDC provider only for prod (IRSA)\nresource \"aws_iam_openid_connect_provider\" \"eks\" {\n  count = var.environment == \"prod\" ? 1 : 0\n\n  url             = aws_eks_cluster.app.identity[0].oidc[0].issuer\n  client_id_list  = [\"sts.amazonaws.com\"]\n  thumbprint_list = [\"9e99a48a9960b14926bb7f3b02e22da2b0ab7280\"]\n}\n\n# \u2500\u2500\u2500 Environment-specific tfvars \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\n\n# dev.tfvars\n# environment = \"dev\"\n\n# prod.tfvars\n# environment = \"prod\"\n```\n\n---\n\n## Summary of Both Fixes\n\n### Fix 1: Circular Dependency\n\n```\nBEFORE (cycle):\n  role \u2500\u2500policy\u2500\u2500\u2192 secret \u2500\u2500tags\u2500\u2500\u2192 role\n  Terraform can't resolve: which comes first?\n\nAFTER (linear):\n  role \u2500\u2500\u2192 role_policy \u2500\u2500\u2192 secret\n  role \u2500\u2500\u2192 secret_policy \u2500\u2500\u2192 secret\n  No back-edges. Terraform builds a DAG.\n```\n\n**The rule:** If resource A references resource B, resource B must never reference resource A \u2014 directly or transitively. When you need bidirectional references between two resources, extract one side into a **separate attachment resource** (like `aws_secretsmanager_secret_policy`, `aws_iam_role_policy`, `aws_security_group_rule`).\n\n### Fix 2: count vs for_each\n\n| | `count` | `for_each` |\n|---|---|---|\n| **Accepts** | A **number** | A **map** or **set of strings** |\n| **Reference** | `count.index` | `each.key`, `each.value` |\n| **Use when** | You need N identical copies | You need one resource per map entry |\n\n```\nBEFORE:\n  count = length(var.subnet_ids)     \u2190 loses map keys\n  subnet_ids = [var.subnet_ids[count.index]]  \u2190 can't index map with number\n\nAFTER:\n  for_each = var.subnet_ids          \u2190 iterates map properly\n  subnet_ids = values(aws_subnet.app)[*].id   \u2190 splat to get list\n```\n\n**The rule:** Use `count` when you have a number. Use `for_each` when you have a map or set. If you need a list from a map, use `values()` or `keys()` \u2014 don't try to index a map with `count.index`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-wm388gmg/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-wm388gmg/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-wm388gmg/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-wm388gmg/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-wm388gmg/generated_2.txt"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 3,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/terraform/warm/T4-debug_run0.json",
+    "published_score": {
+      "correctness": 0.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4444444444444444
+    },
+    "published_composite_no_idiom": 0.5,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 3,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

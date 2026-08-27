@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 813
+  },
+  "content": "Here\u2019s the review against the canonical spec.\n\n## Summary\n\n**This diff is not acceptable as-is** for the canonical scenario.\n\n### Why\n1. **`deletionPolicy: Delete` added provider-wide**\n   - This is risky for stateful resources.\n   - It likely violates the intended safety posture for **RDS** and may be undesirable for buckets/secrets as well.\n   - It increases blast radius across all managed resources, including prod.\n\n2. **Bucket versioning dropped**\n   - This is a direct violation of the acceptance criteria:\n     - **Bucket: versioning enabled**\n   - Since both **dev and prod require versioned buckets**, this change is not compliant.\n\n---\n\n## Detailed review\n\n## 1) `deletionPolicy: Delete` added provider-wide\n\n### Concern\nApplying `deletionPolicy: Delete` broadly means when a Crossplane managed resource or composite is deleted, the underlying cloud resource will be deleted too.\n\nFor this scenario, that is especially problematic for:\n- **RDS PostgreSQL**\n- **S3 bucket**\n- potentially any generated secrets or IAM-linked resources depending on composition structure\n\n### Spec impact\nThe canonical scenario explicitly requires:\n- **RDS deletion protection on**\n- environment safety and isolation\n- production-grade persistence characteristics\n\nA provider-wide default of `Delete` conflicts with the spirit of those requirements because:\n- deleting a claim/composite could destroy the database\n- deleting prod control-plane objects could remove prod data plane resources\n- this is particularly dangerous if composition updates or claim lifecycle changes are involved\n\n### Recommendation\nDo **not** set `deletionPolicy: Delete` provider-wide.\n\nPrefer:\n- **`deletionPolicy: Orphan`** for stateful/data-bearing resources:\n  - RDS\n  - S3 buckets\n- If you want `Delete` for ephemeral resources, set it **resource-by-resource** only where safe:\n  - maybe some IAM attachments\n  - maybe transient supporting resources in dev\n\n### Minimum acceptable posture\n- **RDS:** `deletionPolicy: Orphan`\n- **S3 bucket:** strongly prefer `Orphan`\n- if any resource uses `Delete`, justify it explicitly in composition\n\n---\n\n## 2) Bucket versioning dropped\n\n### Concern\nThis is a hard failure against the spec.\n\n### Spec impact\nAcceptance criteria state:\n\n> **Bucket**: versioning enabled, server-side encryption (AES-256 or KMS), no public access\n\nThe canonical resource table also says:\n- **Dev:** versioned, encryption\n- **Prod:** versioned, encryption, CRR to us-west-2\n\nSo dropping versioning makes both environments non-compliant.\n\n### Recommendation\nRestore bucket versioning:\n- `status: Enabled` or provider equivalent in the managed resource\n\nAlso verify the diff did **not** accidentally affect:\n- bucket encryption\n- public access blocking\n- replication in prod\n\n---\n\n## Additional checks I would ask for in this PR\n\nBecause this diff touches lifecycle and bucket config, I\u2019d want confirmation of the following:\n\n### Bucket\n- versioning still enabled in both envs\n- SSE still enabled\n- public access block still enforced\n- prod replication still present\n\n### RDS\n- deletion protection still enabled\n- backup retention still `>= 7`\n- not publicly accessible\n- provider-wide `Delete` does not override safe lifecycle assumptions\n\n### Secrets\n- no plaintext secret material introduced into claim/composition\n- secrets still written via Crossplane secret mechanisms only\n\n### Environment isolation\n- ensure this provider-wide lifecycle change does not unintentionally alter both dev and prod behavior without explicit per-environment intent\n\n---\n\n## Verdict\n\n### Reject / request changes\n\n#### Must fix\n- **Restore bucket versioning**\n- **Remove provider-wide `deletionPolicy: Delete`**, or narrow it to explicitly safe resources only\n\n#### Rationale\nThis diff violates the canonical acceptance criteria and weakens lifecycle safety for stateful infrastructure, especially in prod.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/crossplane/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

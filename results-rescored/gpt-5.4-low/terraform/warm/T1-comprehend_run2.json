@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 1017
+  },
+  "content": "Here\u2019s the Terraform behavior in this scenario:\n\n## 1. What does the next plan show when a variable flips?\n\nTerraform compares:\n\n- **Configuration**: your `.tf` files + variable values\n- **State**: what Terraform currently believes exists\n\nSo if a variable changes, the next `terraform plan` shows the delta between the **old state** and the **new desired configuration**.\n\n### Example\nIf `instance_class` changes from:\n\n- `db.t3.micro` in dev\nto\n- `db.t3.medium`\n\nthen plan will usually show:\n\n- `~` for an **in-place update** if AWS allows modifying that attribute\n- `-/+` or `replace` if that attribute requires recreation\n\nTypical plan notation:\n\n- `~` update\n- `+` create\n- `-` destroy\n- `-/+` replace\n\nFor an RDS instance class change, you would usually expect something like:\n\n```hcl\n  ~ resource \"aws_db_instance\" \"main\" {\n      instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n    }\n```\n\n## 2. What happens if the state file is deleted?\n\nIf the state file is deleted but the real infrastructure still exists, Terraform loses its record of what it manages.\n\n### Next `plan`\nTerraform will usually think:\n\n- resources in config **do not exist yet**\n- therefore it needs to **create them all**\n\nSo the plan often shows lots of `+ create`.\n\n### On `apply`\nOne of these happens:\n\n- Terraform tries to create duplicates\n- creation fails because names/resources already exist\n- or you accidentally create parallel resources if naming allows it\n\n### Recovery\nIf infra still exists, the usual fix is:\n\n- restore the deleted state from backup, or\n- use `terraform import` to re-associate existing resources with state\n\nSo deleting state does **not** delete infrastructure, but it does make Terraform \u201cforget\u201d it.\n\n## 3. How does Terraform handle the RDS instance class change?\n\nUsually as an **update**, not a replacement.\n\nFor `aws_db_instance`, changing `instance_class` commonly results in:\n\n- an **in-place modify**\n- AWS may apply it:\n  - during the maintenance window, or\n  - immediately if `apply_immediately = true`\n\n### Important nuance\nTerraform decides behavior from the provider schema:\n\n- if attribute is mutable \u2192 `~ update in-place`\n- if attribute is ForceNew \u2192 `replace`\n\nFor RDS instance class, it is generally mutable, so expect `~`.\n\n### Operational effect\nEven if Terraform shows an in-place update, AWS may still cause:\n\n- brief downtime\n- failover behavior for Multi-AZ\n- pending modification until maintenance window\n\nSo:\n\n- **Terraform plan behavior**: usually `~`\n- **AWS runtime behavior**: may involve reboot/failover depending on settings\n\n## 4. What is the difference between state and configuration?\n\n### Configuration\nYour `.tf` files and variable files define the **desired state**.\n\nExample:\n- \u201cI want one RDS instance\u201d\n- \u201cI want instance class `db.t3.medium`\u201d\n- \u201cI want versioning enabled on the S3 bucket\u201d\n\n### State\nThe `.tfstate` file records Terraform\u2019s understanding of the **current managed reality**.\n\nIt contains things like:\n\n- resource IDs\n- attributes\n- dependencies\n- provider metadata\n\n### Plan\n`terraform plan` is essentially:\n\n**configuration - state = proposed changes**\n\nSo:\n\n- **configuration** = what you want\n- **state** = what Terraform thinks exists\n- **plan** = how to get from state to configuration\n\n---\n\n## Short version\n\n1. **Variable flips** \u2192 plan shows the resource diff, usually `~` for mutable attributes like RDS instance class.\n2. **State deleted** \u2192 Terraform forgets existing infra and plans to recreate it.\n3. **RDS class change** \u2192 usually handled as an in-place modification, not replacement.\n4. **State vs config**:\n   - config = desired infrastructure\n   - state = Terraform\u2019s record of managed infrastructure\n\nIf you want, I can also show a concrete sample `terraform plan` output for this dev/prod RDS class change.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-km83pdcc/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

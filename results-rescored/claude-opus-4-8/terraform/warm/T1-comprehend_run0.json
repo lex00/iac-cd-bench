@@ -1,0 +1,95 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1517,
+    "output": 2023
+  },
+  "content": "# Terraform Plan Behavior Prediction\n\n## 1. What Does the Next Plan Show When a Variable Flips?\n\nWhen a variable changes (e.g., `var.environment` or `var.rds_instance_class`), the plan output depends on **how the variable is consumed** by resources.\n\n### General behavior\n```hcl\nvariable \"rds_instance_class\" {\n  type    = string\n  default = \"db.t3.micro\"   # dev\n}\n```\n\nFlipping this to `db.t3.medium` produces:\n\n```\n  # aws_db_instance.postgres will be updated in-place\n  ~ resource \"aws_db_instance\" \"postgres\" {\n        id             = \"db-XXXX\"\n      ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n        # (unchanged attributes hidden)\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\n### Symbol legend\n| Symbol | Meaning |\n|--------|---------|\n| `+`    | Create |\n| `-`    | Destroy |\n| `~`    | Update in-place |\n| `-/+`  | **Replace** (destroy + recreate) |\n\n**Key point:** The plan is a **diff between the state (current) and the configuration (desired)**. If the variable feeds a *mutable* attribute \u2192 in-place `~`. If it feeds an *immutable/ForceNew* attribute \u2192 `-/+` replace.\n\n---\n\n## 2. What Happens If the State File Is Deleted?\n\nTerraform **loses all knowledge of existing infrastructure** \u2014 but the real resources still exist in AWS.\n\n```\nterraform plan\n# State is empty, so config = \"everything must be created\"\n\nPlan: 14 to add, 0 to change, 0 to destroy.\n```\n\n### Consequences\n- Next `apply` attempts to **create duplicates** (or fails on unique names like S3 buckets, IAM users \u2192 `AlreadyExists`).\n- **Orphaned resources**: original infrastructure is now unmanaged.\n- Any secret outputs / random passwords are regenerated.\n\n### Recovery\n```bash\n# Re-adopt existing resources\nterraform import aws_db_instance.postgres db-XXXX\nterraform import aws_s3_bucket.assets my-bucket-name\n# ... one import per resource\n```\n\n> **Mitigation:** Use a **remote backend** (S3 + DynamoDB lock) so state is never local-only:\n> ```hcl\n> terraform {\n>   backend \"s3\" {\n>     bucket         = \"tf-state-bucket\"\n>     key            = \"prod/terraform.tfstate\"\n>     dynamodb_table = \"tf-locks\"\n>     encrypt        = true\n>   }\n> }\n> ```\n\n---\n\n## 3. How Does Terraform Handle the RDS Instance Class Change?\n\n`instance_class` is an **in-place modifiable** attribute in the AWS provider \u2014 it is **not** `ForceNew`.\n\n```\n  ~ resource \"aws_db_instance\" \"postgres\" {\n      ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n    }\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\n### What actually happens on apply\n- Terraform calls `ModifyDBInstance` (not destroy/create).\n- **No data loss** \u2014 the instance is preserved.\n- Change is applied during the **next maintenance window** unless `apply_immediately = true`:\n  ```hcl\n  resource \"aws_db_instance\" \"postgres\" {\n    instance_class    = var.rds_instance_class\n    apply_immediately = true   # forces reboot now instead of maintenance window\n  }\n  ```\n- A brief **reboot/failover** occurs (near-zero downtime if Multi-AZ, as in prod).\n\n### Contrast \u2014 attributes that DO force replacement (`-/+`)\n| Attribute | Effect |\n|-----------|--------|\n| `engine`  | Replace |\n| `identifier` | Replace |\n| `storage_encrypted` (flip) | Replace |\n| `db_name` | Replace |\n\n> \u26a0\ufe0f With `deletion_protection = true` (required by AC #2), a *replace* would **fail** until protection is removed \u2014 good, it prevents accidental data loss.\n\n---\n\n## 4. Difference Between State and Configuration\n\n| Aspect | Configuration (`.tf`) | State (`.tfstate`) |\n|--------|----------------------|--------------------|\n| **Represents** | Desired state (what you want) | Current/last-known deployed state (what exists) |\n| **Author** | Written by humans | Generated/managed by Terraform |\n| **Format** | HCL | JSON |\n| **Contains** | Resource definitions, variables, modules | Real resource IDs, attributes, metadata, sensitive values |\n| **Source of truth for** | Intent | Mapping config \u2192 real-world resources |\n| **In Git?** | Yes | **No** (contains secrets; use remote backend) |\n\n### The plan is the diff between them:\n\n```\n     Configuration (desired)\n              \u2502\n      terraform plan  \u2500\u2500\u2500 compares \u2500\u2500\u2500\u25ba  Real infra (reconciled via provider refresh)\n              \u2502\n     State (last-known current)\n              \u2502\n              \u25bc\n          The DIFF (+ / ~ / - / -/+)\n```\n\n- If **config = state** \u2192 `No changes.`\n- If **config \u2260 state** \u2192 plan shows the delta to reconcile.\n- If **state is missing/wrong** \u2192 plan is misleading (see #2), hence `terraform refresh`/`plan` re-reads real attributes before diffing.\n\n---\n\n### Scenario-specific note (dev vs prod isolation)\nBecause AC #7 requires independent state, flipping a variable in `prod.tfvars` (e.g., `rds_instance_class = \"db.t3.medium\"`) must **only** touch the prod state:\n\n```bash\nterraform workspace select prod\nterraform plan -var-file=prod.tfvars   # affects prod state only\n```\n\nSeparate workspaces (or separate state keys) guarantee that a prod variable flip produces a diff against **prod state only**, never modifying dev.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kvbxa0lb/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kvbxa0lb/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kvbxa0lb/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kvbxa0lb/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kvbxa0lb/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kvbxa0lb/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-kvbxa0lb/generated_3.txt"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/terraform/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,89 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 981
+  },
+  "content": "Here\u2019s the Terraform behavior in this scenario.\n\n## 1. What does the next plan show when a variable flips?\n\nTerraform compares:\n\n- the **configuration** (`.tf` files + variables)\n- against the **state** (`terraform.tfstate`)\n\nSo if a variable changes, the next `terraform plan` shows the delta needed to make real infrastructure match the new desired config.\n\n### Example\nIf you change:\n\n```hcl\ninstance_class = \"db.t3.micro\"\n```\n\nto:\n\n```hcl\ninstance_class = \"db.t3.medium\"\n```\n\nthen `terraform plan` will usually show an **in-place update** on the RDS resource:\n\n- `~` means update\n- `+` means create\n- `-` means destroy\n- `-/+` or \u201creplace\u201d means recreate\n\nTypical result:\n\n```diff\n  # aws_db_instance.app will be updated in-place\n  ~ resource \"aws_db_instance\" \"app\" {\n      ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n    }\n```\n\nIf the changed attribute is not updatable in place, the plan shows a **replacement** instead.\n\n---\n\n## 2. What happens if the state file is deleted?\n\nIf Terraform loses the state file, it loses its record of what it already manages.\n\n### Next `plan`\nTerraform reads the configuration, sees resources declared, but sees **no tracked resources in state**, so it assumes they do not exist.\n\nResult: the plan usually shows **everything as new**:\n\n```diff\n+ create aws_db_instance.app\n+ create aws_s3_bucket.assets\n+ create aws_eks_cluster.main\n...\n```\n\n### What happens on `apply`\nTerraform then tries to create them.\n\nPossible outcomes:\n\n- If names/identifiers must be unique and the real resource already exists, apply may fail\n- If creation is possible under a different generated name, Terraform may create duplicates\n- Terraform will **not automatically rediscover** existing infra just from config\n\n### How to recover\nUsually you would:\n\n- restore the state from backup/remote backend, or\n- use `terraform import` to re-associate existing resources with state\n\nSo deleting state does **not** delete the actual infrastructure, but Terraform becomes \u201cblind\u201d to it.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\nFor an AWS RDS instance class change, Terraform generally treats it as an **update**, not a replacement, because AWS supports modifying the instance class.\n\nSo the plan typically shows:\n\n```diff\n~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\n### Important nuance\nTerraform decides behavior based on the provider schema:\n\n- If the attribute is marked mutable: **update in place**\n- If marked `ForceNew`: **replace resource**\n\nFor `aws_db_instance.instance_class`, it is normally **modifiable in place**.\n\n### Operational effect\nOn apply, AWS may:\n\n- perform the modification immediately, or\n- defer it to the maintenance window, depending on settings like `apply_immediately`\n\nThere may be:\n\n- a reboot\n- brief downtime\n- failover behavior for Multi-AZ setups\n\nBut from Terraform\u2019s point of view, this is usually an **in-place modify**.\n\n---\n\n## 4. What is the difference between state and configuration?\n\n### Configuration\nThe `.tf` files and variable files define the **desired state**.\n\nThey say things like:\n\n- create an RDS instance\n- use class `db.t3.medium`\n- enable versioning on the bucket\n\nConfiguration is your intent.\n\n### State\nThe state file records Terraform\u2019s understanding of the **currently managed real-world objects**.\n\nIt contains things like:\n\n- resource IDs\n- current known attributes\n- dependency metadata\n- mappings between config addresses and real resources\n\nState is Terraform\u2019s memory.\n\n### Plan\n`terraform plan` compares:\n\n**configuration** vs **state**  \nto decide what to create, update, destroy, or replace.\n\n---\n\n## Short summary\n\n- **Variable flips**: plan shows the diff caused by the new value.\n- **Delete state**: Terraform thinks nothing exists and wants to recreate everything.\n- **RDS instance class change**: usually an **in-place update** (`~`), not replacement.\n- **Configuration vs state**:\n  - config = desired infrastructure\n  - state = Terraform\u2019s record of existing managed infrastructure\n\nIf you want, I can also show this with a concrete `dev.tfvars` \u2192 `prod.tfvars` example and the exact kind of plan output you\u2019d expect.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-cfqhul6y/terraform.tfstate",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-cfqhul6y/generated_0.tf"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/terraform/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

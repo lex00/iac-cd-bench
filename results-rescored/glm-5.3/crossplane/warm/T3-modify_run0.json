@@ -1,0 +1,87 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-y_142tsh/generated_1.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 3 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 1, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 627,
+    "output": 870
+  },
+  "content": "# Adding us-west-2 via a Second ProviderConfig (Crossplane)\n\nThe idiomatic way to add a region in Crossplane is **not** to modify compositions' existing defaults, but to add a second `ProviderConfig` and select it per-resource via `providerConfigRef` patches. Existing claims stay untouched.\n\n## 1. New ProviderConfig for us-west-2\n\n```yaml\n# provider-configs/us-west-2.yaml\napiVersion: aws.crossplane.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  region: us-west-2\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds\n      key: key\n---\napiVersion: aws.crossplane.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-east-1   # existing, renamed explicitly for clarity\nspec:\n  region: us-east-1\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-creds\n      key: key\n```\n\n## 2. Parameterize the composition\n\nAdd a `region` (or `replicationRegion`) input to the composite XR, then patch `spec.providerConfigRef.name` on the resources that need the second region \u2014 here, the prod S3 replication bucket/role (per spec: prod bucket replicates to us-west-2).\n\n```yaml\n# composition patch snippets\n  mode: Pipeline\n  pipeline:\n  - step: render-us-west-2-replication\n    functionRef:\n      name: function-patch-and-transform\n    input:\n      apiVersion: pt.fn.crossplane.io/v1beta1\n      kind: Resources\n      resources:\n      - name: replication-bucket\n        base:\n          apiVersion: s3.aws.crossplane.io/v1beta2\n          kind: Bucket\n          spec:\n            providerConfigRef:\n              name: aws-us-west-2   # fixed: replication always in us-west-2\n            forProvider:\n              locationConstraint: us-west-2\n        patches:\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.replicateToUsWest2   # claim doesn't set this; composition default does\n          toFieldPath: spec.forProvider.versioningConfiguration.enabled\n```\n\nKey point: **claims are unchanged** \u2014 the XR's `spec.parameters` already flow through the composition; the replication resources are only instantiated for prod via a composition-mode `if` condition:\n\n```yaml\n        readinessChecks:\n          - type: None\n      - name: only-if-prod\n        type: FromCompositeFieldPath\n        fieldPath: spec.environment\n        toFieldPath: metadata.annotations[crossplane.io/composition-resource-name]\n        transforms:\n          - type: match\n            ...\n```\n\n(or in pipeline mode, wrap the step with `step: ... if: .spec.environment == \"prod\"`).\n\n## 3. Optional: fully region-parameterized XR\n\nIf future regions are wanted without composition edits, patch the providerConfigRef from a parameter:\n\n```yaml\n- type: FromCompositeFieldPath\n  fromFieldPath: spec.regions.replication\n  toFieldPath: spec.providerConfigRef.name\n  transforms:\n  - type: string\n    string:\n      type: Format\n      fmt: \"aws-%s\"   # \"us-west-2\" -> \"aws-us-west-2\"\n```\n\n## 4. Verification\n\n```bash\nkubectl apply -f provider-configs/us-west-2.yaml\nkubectl get providerconfig aws-us-west-2\nkubectl get composite   # existing claims/XRs unchanged\nkubectl get bucket -o custom-columns=NAME:.metadata.name,PC:.spec.providerConfigRef.name\n```\n\n**Acceptance check:** dev claim produces no replication resources; prod claim gets a bucket in us-west-2 under `aws-us-west-2` provider config; all existing claim YAMLs remain byte-identical.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-y_142tsh/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-y_142tsh/generated_1.yaml"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 1,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/crossplane/warm/T3-modify_run0.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 1,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

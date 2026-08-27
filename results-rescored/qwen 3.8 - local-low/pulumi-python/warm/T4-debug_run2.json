@@ -1,0 +1,91 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_secret_not_plain PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output PASSED [100%]\n\n============================== 2 passed in 0.00s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1084,
+    "output": 2523
+  },
+  "content": "\n\n## Fixed `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\nenv = config.require(\"env\")\nregion = config.get(\"region\", \"us-east-1\")\n\n# FIX 1: Read password as a Secret (encrypts it in the state file)\ndb_password = config.require_secret(\"dbPassword\")\n\n# S3 Bucket\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\n)\n\n# FIX 2: Use bucket.id (the name) instead of arn to build the URL.\n# The original used bucket.arn which produces a malformed URL like:\n#   https://s3.us-east-1.amazonaws.com/arn:aws:s3:::myapp-assets-dev\nbucket_url = bucket.id.apply(lambda name: f\"https://s3.{region}.amazonaws.com/{name}\")\n\n# RDS Instance\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=\"db.t3.medium\",\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app-user\",\n    password=db_password,\n    skip_final_snapshot=True,\n    deletion_protection=True,\n    backup_retention_period=7,\n    publicly_accessible=False,\n)\n\n# Output\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n```\n\n## What was wrong and why it's fixed\n\n| # | Defect | Root cause | Fix |\n|---|--------|-----------|-----|\n| 1 | Secret read as plain string | `config.get(\"dbPassword\")` returns a plain `Optional[str]`; the value is written to the state file in cleartext | `config.require_secret(\"dbPassword\")` returns an `Output[str]` marked as secret \u2014 Pulumi encrypts it in state and masks it in `pulumi preview`/`pulumi up` output |\n| 2 | `.apply()` result used where a usable value was expected | `bucket.arn.apply(lambda arn: f\"https://\u2026/{arn}\")` embeds the full ARN (`arn:aws:s3:::myapp-assets-dev`) into the URL path, producing a nonsensical endpoint. The *shape* of the code (`.apply()` returning `Output[str]`) is valid for `pulumi.export`, but the *logic* is wrong \u2014 the URL needs the bucket **name**, not the ARN | Switch to `bucket.id.apply(lambda name: \u2026)` which yields the bucket name (`myapp-assets-dev`), producing a correct virtual-hosted-style URL |\n\n### Secondary hardening (acceptance criteria)\n\n- `config.require(\"env\")` \u2014 fails fast if the env key is missing instead of silently producing `myapp-assets-None`\n- `deletion_protection=True` \u2014 satisfies \"deletion protection on\"\n- `backup_retention_period=7` \u2014 satisfies \"backup retention >= 7 days\"\n- `publicly_accessible=False` \u2014 satisfies \"no publicly accessible\" (explicit, matching the implicit default)",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-pvzrcqr1/__main__.py"
+  ],
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 3,
+    "completeness": 1.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.7777777777777778
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-python/warm/T4-debug_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 3,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.7777777777777778
+    },
+    "corrected_composite_no_idiom": 0.875,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

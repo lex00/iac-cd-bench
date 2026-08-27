@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: rds.aws.crossplane.io/v1beta1\nkind: DBInstance\nmetadata:\n  name: app-db\nspec:\n  forProvider:\n    dbInstanceClass: db.t3.medium\n    multiAZ: true\n---\napiVersion: s3.aws.crossplane.io/v1beta2\nkind: BucketReplicationConfiguration\nmetadata:\n  name: app-assets-replication\nspec:\n  forProvider:\n    region: us-east-1\n    roleRef:\n      name: s3-replication-role\n    rules:\n      - id: replicate-to-us-west-2\n        status: Enabled\n        prefix: \"\"\n        destination:\n          bucketRef:\n \n[validate CRDs] kubeconform: exit=0\nSummary: 3 resources found in 3 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 3\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hor2u0kr/overlays/prod: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from '../../base': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hor2u0kr/base' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hor2u0kr/base: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hor2u0kr/base' : lstat /private/va"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 801,
+    "output": 872
+  },
+  "content": "## Changes to `overlays/prod/kustomization.yaml` (dev untouched)\n\n```yaml\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\n# Same base reference as dev overlay (e.g. ../../base)\nresources:\n  - ../../base\n\nnamespace: prod\n\npatches:\n  # 1. App deployment replicas: 2 -> 4\n  - target:\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  # 2. RDS instance class: db.t3.micro -> db.t3.medium\n  - target:\n      group: rds.aws.crossplane.io\n      version: v1beta1\n      kind: DBInstance\n      name: app-db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstanceClass\n        value: db.t3.medium\n\n  # 3. Enable multi-AZ\n  - target:\n      group: rds.aws.crossplane.io\n      version: v1beta1\n      kind: DBInstance\n      name: app-db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/multiAZ\n        value: true\n\n# 4. S3 cross-region replication to us-west-2 (adds a new resource only in prod)\nresources:\n  - ../../base\n  - replication-config.yaml\n```\n\nIf the RDS/S3 resources are single documents rather than separate patch targets, you can use strategic merge patches instead:\n\n```yaml\npatchesStrategicMerge:\n  - patch-rds.yaml\n```\n\nwith `patch-rds.yaml`:\n\n```yaml\napiVersion: rds.aws.crossplane.io/v1beta1\nkind: DBInstance\nmetadata:\n  name: app-db\nspec:\n  forProvider:\n    dbInstanceClass: db.t3.medium\n    multiAZ: true\n```\n\n**S3 cross-region replication** \u2014 `replication-config.yaml` (prod-only file, referenced only by the prod overlay):\n\n```yaml\napiVersion: s3.aws.crossplane.io/v1beta2\nkind: BucketReplicationConfiguration\nmetadata:\n  name: app-assets-replication\nspec:\n  forProvider:\n    region: us-east-1\n    roleRef:\n      name: s3-replication-role\n    rules:\n      - id: replicate-to-us-west-2\n        status: Enabled\n        prefix: \"\"\n        destination:\n          bucketRef:\n            name: app-assets-replica-usw2\n          storageClass: STANDARD\n```\n\n## Why this is isolated\n\n- **Only `overlays/prod/kustomization.yaml` was modified** plus one new file (`replication-config.yaml`) that lives under `overlays/prod/` and is referenced exclusively by it \u2014 kustomize will error if the dev overlay doesn't reference a file, and dev never sees these patches.\n- **JSON6902/strategic-merge patches apply only at overlay render time**; `overlays/dev/kustomization.yaml` continues to render the base unchanged (replicas 2, db.t3.micro, single AZ, no replication).\n- Verify isolation before committing:\n\n```bash\nkustomize build overlays/dev  > /tmp/dev.yaml\nkustomize build overlays/prod > /tmp/prod.yaml\ndiff /tmp/dev.yaml /tmp/prod.yaml   # only the 4 intended deltas\n```\n\nNote: adjust `kind`/`group`/`name` in the patch targets to match your actual resource definitions in `infra/` (e.g. if RDS is managed via Terraform controller, the patch target would be `Object` with the appropriate spec path \u2014 the same patch structure applies).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hor2u0kr/overlays/prod/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hor2u0kr/patch-rds.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-hor2u0kr/replication-config.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

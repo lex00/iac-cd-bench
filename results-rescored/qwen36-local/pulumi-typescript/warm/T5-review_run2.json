@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 2026
+  },
+  "content": "\n\nPlease provide the **Pulumi preview JSON output** (`pulumi preview --show-replacement-diffs --json > preview.json`). Without it, I cannot perform the actual review.\n\nOnce you share it, I will analyze it against your three explicit security checks and the acceptance criteria. Below is exactly how I will evaluate it, so you can verify the findings or pre-filter the output:\n\n---\n\n### \ud83d\udd0d What I Will Look For in the JSON\n\n#### 1. \ud83d\udea8 Secret in Plaintext Outputs\n- **JSON Path:** `outputs.<secretName>.value` or `resources[].outputs.<secretField>`\n- **Safe Pattern:** `secure: true`, `value: \"[secret]\"` or `<<REDACTED>>`, or `urn`-referenced secrets.\n- **Violation:** Plain string values (e.g., `postgres://user:pass@host/db`) appearing in `outputs`, `inputs`, or `oldInputs`/`newInputs`.\n- **Acceptance Check:** Violates criterion #3 (`Secret: never stored in plaintext in Git`). Pulumi stack-native encryption (`pulumi config set --secret`) or `pulumi.secret()` must be used.\n\n#### 2. \ud83d\udd04 Replacement of Stateful Resource\n- **JSON Path:** `resources[].change === \"replace\"` or `deleteBeforeReplace: true`\n- **Critical Resources:** `aws:rds:Instance`, `aws:s3:Bucket`, `aws:ec2:Vpc`, `kubernetes:core/v1:Secret`\n- **Safe Pattern:** `change: \"update\"` or `change: \"create\"` with explicit data-migration/recreate intent documented.\n- **Violation:** `replace` on RDS or S3 buckets without explicit backup/state-handling notes. S3 replacement drops objects; RDS replacement drops the DB instance (even if deletion protection is on, Pulumi will attempt it).\n- **Acceptance Check:** Violates implicit safety expectations. RDS must retain data; S3 bucket replacement requires explicit opt-in.\n\n#### 3. \ud83d\udee1\ufe0f Missing `protect` Flag\n- **JSON Path:** `resources[].protect`\n- **Safe Pattern:** `protect: true` on stateful or prod-critical resources.\n- **Violation:** `protect: false` or `undefined` on:\n  - `aws:rds:Instance` (prod & dev)\n  - `aws:s3:Bucket` (prod, especially with replication)\n  - `aws:iam:Role` / `aws:iam:User` (service accounts)\n  - `aws:eks:Cluster` (prod)\n- **Acceptance Check:** Missing `protect` on stateful/prod resources risks accidental `pulumi destroy` or `refresh`-driven teardown. Criterion #7 (environment isolation) and #3 (RDS safety) depend on this.\n\n---\n\n### \ud83d\udccb Mapping to Your Acceptance Criteria\n| Criterion | How I'll Validate in JSON |\n|-----------|---------------------------|\n| **Bucket**: versioning, encryption, no public access | `inputs.bucketVersioning`, `serverSideEncryptionConfiguration`, `publicAccessBlockConfiguration` |\n| **RDS**: deletion protection, backup \u22657d, not public | `deletionProtection: true`, `backupRetentionPeriod >= 7`, `publiclyAccessible: false` |\n| **Secret**: encrypted at rest | `secure: true` on config/outputs; no plaintext in `inputs`/`outputs` |\n| **IAM**: least privilege, no wildcards in prod | `policy` or `policyDocument` strings/objects; scan for `\"Action\": \"*\"` or `\"Effect\": \"Allow\"` on broad resources |\n| **Cluster**: managed node groups, correct sizing | `nodeGroups[].instanceType`, `desiredCapacity`/`minSize`/`maxSize` match env spec |\n| **HTTPS**: 443 listener, valid cert, no forced 80\u2192443 | `loadBalancer.listeners[]`, `defaultActions[]`, `certificateArn` presence |\n| **Env isolation**: independent state | Verify stack references, no cross-stack hardcoding, `protect`/`retain` alignment |\n\n---\n\n### \u2705 Next Step\nPaste the **Pulumi preview JSON** (or redacted excerpt focusing on `outputs`, `resources[].change`, `resources[].protect`, and sensitive `inputs`). I\u2019ll return:\n- A line-by-line security audit\n- Exact JSON paths of violations\n- Remediation commands/code snippets (TypeScript)\n- Pass/Fail against your acceptance criteria\n\nReady when you are.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/pulumi-typescript/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

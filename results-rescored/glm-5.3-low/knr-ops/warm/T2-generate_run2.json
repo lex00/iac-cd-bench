@@ -1,0 +1,99 @@
+{
+  "model": "glm-5.3",
+  "task": "T2-generate",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  name: myapp-logs-irsa\n  assumeRolePolicyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [{\n        \"Effect\": \"Allow\",\n        \"Principal\": { \"Federated\": \"arn:aws:iam::111122223333:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE\" },\n        \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n        \"Condition\": {\n          \"StringEquals\": {\n            \"oidc.eks.us-east-1.amazonaw\n[validate CRDs] kubeconform: exit=0\nSummary: 15 resources found in 11 files - Valid: 1, Invalid: 0, Errors: 0, Skipped: 14\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/overlays/prod: exit=1\nERR: Error: invalid Kustomization: json: unknown field \"spec\"\n\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/overlays/dev: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from '../../infra/iam/logs-irsa': '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/iam/logs-irsa' must resolve to a file': recursed accumulation of path '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/iam/logs-irsa': accumulating resources: accumulation err='accumulating resources from 'policy.yaml': evalsymlink failure on '/private/var/folders/9k/7\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/iam/logs-irsa: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from 'policy.yaml': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/iam/logs-irsa/policy.yaml' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/iam/logs-irsa/policy.yaml: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw00\nkustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/s3/logs: exit=0"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "oundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'infra/s3/logs-bucket.yaml'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'flux/kustomizations.yaml'\n/opt/homebrew/Cellar/python@3.14/3.14.6/Frameworks/Python.framework/Versions/3.14/lib/python3.14/pathlib/__init__.py:771: FileNotFoundError: [Errno 2] No such file or directory: 'flux/kustomizations.yaml'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_manifest_exists\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_bucket_encryption\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_public_access_blocked\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/knr-ops/T2-generate/tests/test_task.py::test_flux_kustomization_added\n========================= 5 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 911,
+    "output": 2823
+  },
+  "content": "# Adding the logs bucket to knr-ops\n\n> \u26a0\ufe0f **One correction up front:** `s3.aws.upbound.io` is the **Crossplane** Upjet API group. The task says \"ACK S3 CRDs\", so I use the actual ACK groups: `s3.services.k8s.aws` and `iam.services.k8s.aws`. If your repo truly pins `s3.aws.upbound.io`, swap the `apiVersion`s accordingly \u2014 structure stays identical.\n\n## Directory layout\n\n```\ninfra/\n\u251c\u2500\u2500 s3/\n\u2502   \u251c\u2500\u2500 kustomization.yaml\n\u2502   \u251c\u2500\u2500 bucket-assets.yaml        # existing\n\u2502   \u2514\u2500\u2500 logs/\n\u2502       \u251c\u2500\u2500 kustomization.yaml\n\u2502       \u251c\u2500\u2500 bucket.yaml\n\u2502       \u251c\u2500\u2500 bucket-policy.yaml\n\u2502       \u2514\u2500\u2500 public-access-block.yaml\n\u2514\u2500\u2500 iam/\n    \u2514\u2500\u2500 logs-irsa/\n        \u251c\u2500\u2500 kustomization.yaml\n        \u251c\u2500\u2500 role.yaml\n        \u251c\u2500\u2500 policy.yaml\n        \u2514\u2500\u2500 oidc-trust.enc.yaml    # SOPS-encrypted OIDC provider/audience\n\nflux/\n\u2514\u2500\u2500 logs-bucket-kustomization.yaml\n```\n\n## 1. Bucket (base) \u2014 `infra/s3/logs/bucket.yaml`\n\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs\n  annotations:\n    s3.services.k8s.aws/region: us-east-1   # overridden per overlay\nspec:\n  name: myapp-logs   # patched to myapp-logs-{env} per overlay\n  versioning:\n    status: Enabled\n  serverSideEncryptionConfiguration:\n    rules:\n      - applyServerSideEncryptionByDefault:\n          sseAlgorithm: AES256\n        bucketKeyEnabled: false\n  tagging:\n    tagSet:\n      - key: app\n        value: myapp\n      - key: component\n        value: logs\n      - key: managed-by\n        value: knr-ops\n```\n\n### `infra/s3/logs/public-access-block.yaml`\n\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: BucketPublicAccessBlock\nmetadata:\n  name: myapp-logs\nspec:\n  bucket:\n    name: myapp-logs\n  blockPublicAcls: true\n  blockPublicPolicy: true\n  ignorePublicAcls: true\n  restrictPublicBuckets: true\n```\n\n### `infra/s3/logs/bucket-policy.yaml`\n\nForces TLS-in-transit only (denies insecure transport):\n\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: BucketPolicy\nmetadata:\n  name: myapp-logs\nspec:\n  bucket: myapp-logs\n  policy: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Sid\": \"DenyInsecureTransport\",\n          \"Effect\": \"Deny\",\n          \"Principal\": \"*\",\n          \"Action\": \"s3:*\",\n          \"Resource\": [\n            \"arn:aws:s3:::myapp-logs\",\n            \"arn:aws:s3:::myapp-logs/*\"\n          ],\n          \"Condition\": { \"Bool\": { \"aws:SecureTransport\": \"false\" } }\n        }\n      ]\n    }\n```\n\n### `infra/s3/logs/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - bucket.yaml\n  - public-access-block.yaml\n  - bucket-policy.yaml\n```\n\n## 2. IRSA role \u2014 `infra/iam/logs-irsa/`\n\n### `policy.yaml` (least privilege, no wildcards)\n\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  name: myapp-logs-irsa\n  policyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        {\n          \"Sid\": \"ListBucket\",\n          \"Effect\": \"Allow\",\n          \"Action\": [\"s3:ListBucket\", \"s3:GetBucketLocation\"],\n          \"Resource\": \"arn:aws:s3:::myapp-logs\"\n        },\n        {\n          \"Sid\": \"ReadWriteObjects\",\n          \"Effect\": \"Allow\",\n          \"Action\": [\n            \"s3:GetObject\", \"s3:PutObject\", \"s3:DeleteObject\",\n            \"s3:AbortMultipartUpload\", \"s3:ListMultipartUploadParts\"\n          ],\n          \"Resource\": \"arn:aws:s3:::myapp-logs/*\"\n        }\n      ]\n    }\n```\n\n### `oidc-trust.enc.yaml` (SOPS-encrypted trust doc)\n\nThe OIDC provider URL is per-cluster and treated as sensitive config; stored encrypted (excerpt \u2014 the `data` payload is `sops`-encrypted `ENC[...]`):\n\n```yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: myapp-logs-oidc-trust\ntype: Opaque\nstringData:\n  oidcProvider: ENC[AES256_GCM,data:tS9x...,iv:...]\n  oidcAudience: ENC[AES256_GCM,data:tsa4...,iv:...]\n  namespace: myapp\n  serviceAccount: logs-writer\nsops:\n  kms:\n    - arn: arn:aws:kms:us-east-1:111122223333:key/aaaa-bbbb-cccc\n      created_at: \"2024-01-15T10:00:00Z\"\n      enc: AQICA...\n  mac: ENC[AES256_GCM,...]\n  version: 3.8.1\n```\n\n### `role.yaml`\n\nACK's `Role` CR doesn't templatize the trust policy, so reconcile a `Role` whose trust is kept in sync via a small kustomize var or, idiomatically in ACK repos, the trust doc is written to match the overlay-patched provider. Simplest reliable pattern \u2014 patch the trust per overlay:\n\n```yaml\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  name: myapp-logs-irsa\n  assumeRolePolicyDocument: |\n    {\n      \"Version\": \"2012-10-17\",\n      \"Statement\": [{\n        \"Effect\": \"Allow\",\n        \"Principal\": { \"Federated\": \"arn:aws:iam::111122223333:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE\" },\n        \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n        \"Condition\": {\n          \"StringEquals\": {\n            \"oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE:sub\": \"system:serviceaccount:myapp:logs-writer\",\n            \"oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE:aud\": \"sts.amazonaws.com\"\n          }\n        }\n      }]\n    }\n```\n\n### `infra/iam/logs-irsa/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - policy.yaml\n  - role.yaml\n  - oidc-trust.enc.yaml\n```\n\n## 3. Overlays\n\n### `overlays/dev/logs-patch.yaml`\n\n```yaml\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: Bucket\nmetadata:\n  name: myapp-logs\n  annotations:\n    s3.services.k8s.aws/region: us-east-1\nspec:\n  name: myapp-logs-dev\n---\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: BucketPublicAccessBlock\nmetadata:\n  name: myapp-logs\nspec:\n  bucket:\n    name: myapp-logs-dev\n---\napiVersion: s3.services.k8s.aws/v1alpha1\nkind: BucketPolicy\nmetadata:\n  name: myapp-logs\nspec:\n  bucket: myapp-logs-dev\n  policy: |\n    { \"Version\": \"2012-10-17\",\n      \"Statement\": [{ \"Sid\": \"DenyInsecureTransport\", \"Effect\": \"Deny\", \"Principal\": \"*\",\n        \"Action\": \"s3:*\",\n        \"Resource\": [\"arn:aws:s3:::myapp-logs-dev\", \"arn:aws:s3:::myapp-logs-dev/*\"],\n        \"Condition\": { \"Bool\": { \"aws:SecureTransport\": \"false\" } } }] }\n---\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Policy\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  policyDocument: |\n    { \"Version\": \"2012-10-17\",\n      \"Statement\": [\n        { \"Sid\": \"ListBucket\", \"Effect\": \"Allow\",\n          \"Action\": [\"s3:ListBucket\", \"s3:GetBucketLocation\"],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-dev\" },\n        { \"Sid\": \"ReadWriteObjects\", \"Effect\": \"Allow\",\n          \"Action\": [\"s3:GetObject\",\"s3:PutObject\",\"s3:DeleteObject\",\"s3:AbortMultipartUpload\",\"s3:ListMultipartUploadParts\"],\n          \"Resource\": \"arn:aws:s3:::myapp-logs-dev/*\" } ] }\n---\napiVersion: iam.services.k8s.aws/v1alpha1\nkind: Role\nmetadata:\n  name: myapp-logs-irsa\nspec:\n  name: myapp-logs-irsa-dev\n  assumeRolePolicyDocument: |\n    { \"Version\": \"2012-10-17\",\n      \"Statement\": [{ \"Effect\": \"Allow\",\n        \"Principal\": { \"Federated\": \"arn:aws:iam::111122223333:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/DEVOIDCDEV\" },\n        \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n        \"Condition\": { \"StringEquals\": {\n          \"oidc.eks.us-east-1.amazonaws.com/id/DEVOIDCDEV:sub\": \"system:serviceaccount:myapp:logs-writer\",\n          \"oidc.eks.us-east-1.amazonaws.com/id/DEVOIDCDEV:aud\": \"sts.amazonaws.com\" } } }] }\n```\n\nUpdate `overlays/dev/kustomization.yaml` and `overlays/prod/kustomization.yaml` (prod patch is identical in shape: `myapp-logs-prod`, region `us-west-2` if that's prod's region, prod OIDC provider ID, `myapp-logs-irsa-prod`):\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../infra/s3/logs\n  - ../../infra/iam/logs-irsa\npatches:\n  - path: logs-patch.yaml\n```\n\n## 4. Separate Flux kustomization \u2014 `flux/logs-bucket-kustomization.yaml`\n\n```yaml\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: logs-bucket\n  namespace: flux-system\nspec:\n  interval: 10m\n  path: ./overlays/dev            # promoted to ./overlays/prod on the prod branch\n  prune: true\n  sourceRef:\n    kind: GitRepository\n    name: knr-ops                 # matches the existing source in flux/kustomizations.yaml\n  timeout: 2m\n  decryption:\n    provider: sops                # decrypts oidc-trust.enc.yaml\n  healthChecks:\n    - apiVersion: s3.services.k8s.aws/v1alpha1\n      kind: Bucket\n      name: myapp-logs\n      namespace: default\n```\n\n## Notes on acceptance criteria\n\n- \u2705 Versioning, AES256, full public access block \u2014 enforced in base, both envs\n- \u2705 Least privilege \u2014 actions enumerated explicitly, resource ARNs scoped to the logs bucket only, no wildcards (even in dev)\n- \u2705 Secrets \u2014 only the OIDC trust details are sensitive; stored SOPS-encrypted and decrypted by Flux's `decryption.provider: sops`\n- \u2705 Env isolation \u2014 all env differences live in overlays; Flux path per environment means prod changes can't touch dev state\n- \u26a0\ufe0f Because prod policy is stricter in the spec's spirit, consider adding a `targetBucket`/KMS upgrade in prod overlay if you later switch from AES256 to KMS",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/s3/logs/bucket.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/s3/logs/public-access-block.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/s3/logs/bucket-policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/s3/logs/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/policy.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/oidc-trust.enc.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/role.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/infra/iam/logs-irsa/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/overlays/dev/logs-patch.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/overlays/dev/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ap7n9wje/overlays/prod/kustomization.yaml"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.16666666666666666,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.3703703703703704
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T2-generate_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 0.16666666666666666,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.3703703703703704
+    },
+    "published_composite_no_idiom": 0.4166666666666667,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.16666666666666666,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.3703703703703704
+    },
+    "corrected_composite_no_idiom": 0.4166666666666667,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

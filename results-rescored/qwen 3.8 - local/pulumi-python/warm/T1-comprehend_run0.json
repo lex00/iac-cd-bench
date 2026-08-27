@@ -1,0 +1,88 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1024,
+    "output": 1265
+  },
+  "content": "# Pulumi Preview Behavior Analysis\n\n## 1. Which property triggered the replace?\n\nIn Pulumi, a resource replacement (indicated by `~` or `+`/`-` pairs in preview output, typically shown as `replace` with both a destroy and create) is triggered when a **replacing change** is detected. For RDS (AWS::RDS::DBInstance via `pulumi-aws`), the properties that trigger replacement include:\n\n- **`identifier`** (DB instance name)\n- **`allocatedStorage`** (in older AWS providers; in newer versions, storage can be increased in-place, but *decreasing* triggers replacement)\n- **`dbClusterIdentifier`** (moving between standalone and cluster)\n- **`engine`** (e.g., postgres \u2192 mysql)\n- **`engineVersion`** (major version changes like 13 \u2192 14)\n- **`storageType`** (e.g., gp2 \u2192 io1 may trigger replace depending on provider version)\n- **`multiAz`** (changing multi-AZ status can trigger replacement in some configurations)\n- **`kmsKeyId`** (changing KMS key for encryption)\n- **`caCertificateIdentifier`** (in certain cases)\n\nThe most common trigger in a dev\u2192prod or configuration change scenario is **`engineVersion`** (major version upgrade), **`storageType`**, or **`allocatedStorage`** if it's a decrease. The preview output will explicitly show which argument changed and mark it as a replacing change. For example:\n\n```\n~ updating aws:rds:DBInstance with:\n    ~ allocatedStorage: \"20\" => \"10\"\n    replacement: true\n```\n\nThe specific property is shown in the preview diff with an arrow (`=>`) and the resource is marked for replacement.\n\n## 2. What does `pulumi up --target` skip?\n\n`pulumi up --target <urn>` limits the update to **only the specified resource** (and any resources that depend on it, if they are affected by the change). It **skips**:\n\n- **All resources not in the dependency chain** of the targeted resource. Resources that do not depend on the target and are not the target itself are not evaluated for changes and are left untouched.\n- **Resources that would normally be updated, replaced, or created** in a full `pulumi up` but are unrelated to the target's dependency graph.\n\nSpecifically:\n- Only the targeted resource is inspected for property changes.\n- If the target is a component resource, its child resources are included if they are part of the dependency.\n- Resources that **depend on** the target may also be updated if the target's changes affect them (Pulumi includes dependent resources in the update scope when the target's output changes).\n- All other resources in the stack state are **completely skipped** \u2014 Pulumi does not even evaluate whether they need changes.\n\nThis is useful for partial updates, debugging specific resources, or performing targeted remediations without touching the rest of the infrastructure.\n\n**Caveat:** `--target` only works when the target resource is a leaf or has a clear dependency chain. If the target resource's properties are outputs of other resources, those upstream dependencies may also need to be included.\n\n## 3. How does Pulumi handle secrets in outputs?\n\nPulumi handles secrets in outputs through the following mechanisms:\n\n### Encryption at Rest\n- Secrets are **encrypted in the state file** using the encryption key configured for the stack (via `pulumi config pass --base64` or a KMS-based passphrase).\n- The state file stores secrets in an **encrypted form** (base64-encoded, AES-encrypted ciphertext with the key reference).\n- The plaintext is **never stored in the state file** or in Git.\n\n### `config.require_secret()` / `config.get_secret()`\n- In Python, `config.require_secret(\"key\")` retrieves a secret value as a `Secret` object.\n- The value is marked as a secret, and Pulumi ensures it is not logged in plaintext during `pulumi up` or `pulumi preview`.\n- In the preview/up output, secrets are shown as `sensitive` or masked (e.g., `[secret]`) rather than as plaintext values.\n\n### Exporting Secrets as Outputs\n- When you use `pulumi.export(\"name\", some_secret_output)`, the output is **automatically marked as a secret** in the state if the value is a `Secret`.\n- In the state file, the output is stored in encrypted form.\n- When other stacks or resources reference the output via `pulumi.Reference` or stack outputs, the secret is **decrypted only in-memory** when needed, and the decryption key is required.\n- In console output during `pulumi up`/`pulumi preview`, the value is **masked** (shown as `**`) to prevent accidental leakage in logs or CI output.\n\n### Key Behaviors:\n| Aspect | Behavior |\n|--------|----------|\n| **State storage** | Encrypted with stack's passphrase/KMS key |\n| **Preview/Up logs** | Values masked as `**` or `[secret]` |\n| **`pulumi stack output`** | Secret outputs are shown masked unless `--show-secrets` is used |\n| **Cross-stack references** | Secrets propagate as encrypted; consuming stack must have access to decrypt |\n| **Git** | Never stored in plaintext; only the encrypted blob in state is committed (if using source control) |\n\n### Important Note:\nIf a secret is accidentally exported as a plain string (e.g., via `config.get()` instead of `config.require_secret()`), it will **not** be treated as a secret by Pulumi and will be stored in plaintext in the state. Always use `require_secret()` or `get_secret()` for sensitive values to ensure proper encryption and masking behavior.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-835ldifw/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/pulumi-python/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

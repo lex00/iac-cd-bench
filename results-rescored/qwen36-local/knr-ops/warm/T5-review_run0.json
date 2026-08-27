@@ -1,0 +1,85 @@
+{
+  "model": "qwen36-local",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 789,
+    "output": 3326
+  },
+  "content": "\n\nHere is the structured PR security review based on the `knr-ops` stack conventions and provided acceptance criteria:\n\n### 1. Security Issues Identified\n\n| Issue | Description | Impact |\n|-------|-------------|--------|\n| **S3 Bucket Public Read Policy** | A new bucket policy grants public read access (`Principal: \"*\"` or `s3:GetObject` to all). | Violates acceptance criterion #1. Exposes application assets to unauthorized download, data exfiltration, or use for malicious hosting. |\n| **Plaintext DB Password in Deployment** | Database connection string/password is hardcoded directly in the deployment's `env` block. | Violates acceptance criterion #3. Secrets in Git are permanently exposed to anyone with repo access, cannot be rotated easily, and risk accidental commits to public forks. |\n| **Missing Container Resource Limits** | No `resources.requests` or `resources.limits` defined for CPU/memory. | Violates CIS Kubernetes Benchmark best practices. Allows noisy-neighbor issues, resource exhaustion, and masks potential cryptojacking or DoS via unbounded processes. |\n\n*(Note: RDS instance class change is explicitly noted as benign and aligns with environment sizing specs.)*\n\n### 2. Severity Ranking\n\n| Severity | Issue | Rationale |\n|----------|-------|-----------|\n| \ud83d\udd34 **CRITICAL** | S3 Bucket Public Read Policy | Direct data exposure risk; fails explicit acceptance criterion. Must block merge. |\n| \ud83d\udd34 **CRITICAL** | Plaintext Password in Deployment | Secrets in plaintext in Git are a severe compliance and supply-chain risk; fails explicit acceptance criterion. Must block merge. |\n| \ud83d\udfe1 **WARNING** | Missing Container Resource Limits | Increases attack surface for resource exhaustion and violates K8s security hardening standards. Should be fixed before merge. |\n\n### 3. Required Changes Before Merge\n\n#### \ud83d\udd34 Fix S3 Bucket Policy\n- **Remove** the public-read policy statement entirely from the diff.\n- Ensure `BlockPublicAccess` is enforced at the bucket level (via underlying IaC or Crossplane/Flux-managed bucket spec).\n- If external access is required, replace with:\n  - Explicit IAM principal/role-based policy (`Principal: { AWS: \"arn:aws:iam::...\" }`)\n  - S3 Access Points with VPC endpoints\n  - Time-limited presigned URLs handled by the app\n\n#### \ud83d\udd34 Encrypt & Externalize Secrets\n- **Encrypt** the DB password/connection string using `sops` (per `knr-ops` stack spec):\n  ```bash\n  sops --encrypt -i db-secret.yaml\n  ```\n- **Generate** a Kubernetes `Secret` via Kustomize `secretGenerator` with SOPS encryption, or commit the encrypted `.enc.yaml` and let Flux decrypt at sync time.\n- **Update** the deployment to reference the secret:\n  ```yaml\n  env:\n    - name: DB_PASSWORD\n      valueFrom:\n        secretKeyRef:\n          name: app-db-credentials\n          key: password\n  ```\n- Verify Flux is configured with `--enable-sops` or the Kustomize `secret-generator` plugin, and that the KMS/Age key is properly provisioned for both `dev` and `prod` overlays.\n\n#### \ud83d\udfe1 Add Container Resource Limits\n- Add explicit `resources` block to every container in the deployment:\n  ```yaml\n  resources:\n    requests:\n      cpu: \"100m\"\n      memory: \"128Mi\"\n    limits:\n      cpu: \"500m\"\n      memory: \"256Mi\"\n  ```\n- *(Optional but recommended)* Enforce a namespace-level `LimitRange` or `PodSecurity` policy to prevent future deployments from bypassing this requirement.\n\n### \u2705 Pre-Merge Checklist\n- [ ] S3 policy restricted to explicit IAM principals or fully blocked for public access\n- [ ] Plaintext secret removed; replaced with SOPS-encrypted secret referenced via `secretKeyRef`\n- [ ] Container `requests` and `limits` applied\n- [ ] Diff re-validated against `overlays/dev/` and `overlays/prod/` to ensure environment isolation isn't broken\n- [ ] Flux sync dry-run (`flux diff --all`) shows no unexpected state drift\n\nOnce these changes are applied, the PR will align with the `knr-ops` security baseline and acceptance criteria.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen36-local/knr-ops/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

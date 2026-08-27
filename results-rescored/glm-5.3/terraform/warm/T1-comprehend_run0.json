@@ -1,0 +1,89 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 928,
+    "output": 750
+  },
+  "content": "# Terraform Plan Behavior \u2014 Predicted Answers\n\n## 1. What does the next plan show after a variable flips?\n\nTerraform compares **configuration (desired state) vs. state file** and shows a diff. Example \u2014 flipping `instance_class` from `db.t3.micro` to `db.t3.medium`:\n\n```\n~ module.rds.aws_db_instance.this\n    instance_class: \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\n- `~` = in-place update (RDS instance class is an updatable attribute)\n- No create/destroy unless the attribute is `ForceNew: true` (e.g., changing `engine`, or replacing via `storage_type` in some cases)\n- If the flip affects `for_each`/`count` keys, you may see `-`/`+` (destroy + create) instead, since resources keyed differently can't be updated in place\n\nPer the acceptance criteria, flipping a prod variable (e.g., `terraform plan -var-file=prod.tfvars`) only affects prod \u2014 dev state is untouched (separate workspaces/tfvars/state).\n\n## 2. What happens if the state file is deleted?\n\n**Terraform loses all knowledge of existing resources.**\n\n- The next `terraform plan` reads an empty state \u2192 every resource shows `+` (create)\n- Applying would attempt to **create duplicate infrastructure** alongside the real one (or fail on name collisions, e.g., the S3 bucket already exists \u2192 `BucketAlreadyExists`)\n- The original resources become **orphaned** \u2014 still running, billing, but unmanaged\n- Recovery: `terraform import` to adopt existing resources back into a fresh state (this is why state backups / remote backends with versioning matter)\n\n## 3. How does Terraform handle the RDS instance class change?\n\n`instance_class` is **updatable in place** (unless `apply_immediately = false`, in which case it applies during the next maintenance window):\n\n```\n~ aws_db_instance.this\n    instance_class: \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\n- AWS performs an instance **resize (stop/modify/start)** \u2014 brief downtime on single-AZ\n- On **prod (multi-AZ)**: AWS fails over to the standby, modifies the primary, fails back \u2014 still a restart but more resilient\n- If the schema also changed a `ForceNew` attribute, the plan would instead show `# Warning: this will destroy and recreate` \u2192 `-/+` replacement\n\n## 4. Difference between state and configuration\n\n| | Configuration (.tf files) | State (.tfstate) |\n|---|---|---|\n| **What it is** | Desired state \u2014 declarative intent | Recorded actual state \u2014 resource IDs, attributes, provider metadata |\n| **Authored by** | You (in Git) | Terraform (generated, sensitive \u2014 may contain secrets) |\n| **Role** | \"This is what should exist\" | \"This is what Terraform last created/knows exists\" |\n| **Plan** | Input to the diff | The other side of the diff |\n\n**Plan = Configuration \u2212 State** (plus a refresh against real cloud APIs before diffing). Configuration without state means nothing is tracked; state without configuration means Terraform wants to destroy everything (`plan` shows `-` on everything).\n\n**Key implication for this stack:** secrets must never land in Git \u2014 but state files can capture secrets in plaintext, so remote backends (S3 + encryption + locking via DynamoDB) are required to satisfy acceptance criterion #3 in practice.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-_aqqnm49/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-_aqqnm49/generated_1.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/terraform/warm/T1-comprehend_run0.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

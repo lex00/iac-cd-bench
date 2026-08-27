@@ -1,0 +1,88 @@
+{
+  "model": "claude-opus-5",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 2243,
+    "output": 10700
+  },
+  "content": "## First: what the slice does and doesn't tell me\n\nThree things determine most of the answer and aren't visible in the slice. I'll state assumptions and flag where the answer flips.\n\n| Unknown | Assumed | Answer flips if... |\n|---|---|---|\n| `prune:` on each Kustomization | `true` | `false` \u2192 Q3 answer is \"nothing happens, resource is orphaned\" |\n| `dependsOn` graph + `wait:` | infra \u2192 app, `wait` unset | `wait: true` changes gating semantics materially (Q5) |\n| Does `infra/s3/kustomization.yaml` list the new file | yes | kustomize does **not** glob \u2014 an unreferenced file is a silent no-op |\n| Do dev/prod target the same cluster | separate clusters/namespaces | same cluster + no `namePrefix` \u2192 the two Kustomizations fight over the same objects |\n\n---\n\n## Q1: What reconciles, and in what order\n\n**Trigger chain:**\n\n1. Merge to the tracked branch. `GitRepository` notices on its `interval` (typically 30s\u20131m), or instantly if a `Receiver`/webhook is wired. New artifact revision published.\n2. `kustomize-controller` watches the source, so **every** Kustomization pointing at that GitRepository is queued essentially simultaneously \u2014 not on its own 10m interval.\n3. Ordering between Kustomizations comes **only** from `dependsOn`. There is no implicit \"infra before app.\"\n4. Ordering *within* one Kustomization is **not** the order in `resources:`. Flux's SSA engine applies in staged, kind-sorted order: Namespaces and CRDs first (waits for CRD registration), then everything else. Deletes run in reverse.\n\n> \u26a0\ufe0f The provided `flux-docs.md` says *\"Flux follows the dependency order in kustomization.yaml.\"* That's wrong and it's the kind of thing that leads people to believe listing the RDS before the Deployment guarantees sequencing. It does not.\n\n**Concretely for PR #42:**\n\n- `infra/rds` Kustomization \u2192 patches the existing `DBInstance` CR. One `kubectl apply`-equivalent, ~1s. AWS work happens asynchronously afterward.\n- `infra/s3` Kustomization \u2192 creates a new `Bucket` CR. ACK calls `CreateBucket` within seconds.\n- `overlays/prod` (or whichever Kustomization builds prod) \u2192 re-renders, sees `replicas: 4` diff on one Deployment, applies it. Rollout is standard Kubernetes.\n- `overlays/dev` \u2192 **also reconciles**, and here's the first real finding below.\n\n**Wall clock:** Flux reports success in 5\u201330 seconds. AWS convergence takes 5\u201320 minutes and Flux almost certainly won't be watching for it (see Q5).\n\n### \ud83d\udd34 Finding 1: the RDS change is in the *base*, not the prod overlay\n\n`infra/rds/instance.yaml` is base material. The canonical spec says dev = `db.t3.micro`, prod = `db.t3.medium`. If you change the base to `db.t3.medium`, then **unless `overlays/dev` carries an explicit patch pinning `db.t3.micro`, the dev database is resized too** \u2014 a real reboot on a real dev DB, plus ~4x cost. That directly violates acceptance criterion 7 (changing prod must not modify dev).\n\nThe correct shape is: base stays `db.t3.micro` (or has no class at all), and each overlay patches its own value.\n\n### \ud83d\udd34 Finding 2: a base S3 bucket with a hardcoded `spec.name` collides across environments\n\nS3 bucket names are **globally unique**. Kustomize `namePrefix` renames the *Kubernetes object* (`metadata.name`), not `spec.name` inside the ACK `Bucket`. If the new manifest in `infra/s3/` hardcodes `spec.name: acme-app-assets` and both overlays include it, you get two `Bucket` CRs racing for one AWS name. One succeeds; the other lands in `ACK.Terminal` with `BucketAlreadyExists` / `BucketAlreadyOwnedByYou` and stays there forever \u2014 ACK does not retry terminal errors. The overlay must patch `spec.name` per environment.\n\n---\n\n## Q2: Does the RDS instance get recreated?\n\n**No.** Two independent reasons:\n\n1. **ACK never destroy/recreates.** This is the core behavioral difference from Terraform. Terraform computes a plan and will emit `-/+ must be replaced` for immutable-field changes. ACK's reconcile loop only ever calls `Modify*` on delta, or \u2014 if you touch a field AWS treats as immutable \u2014 sets `ACK.Terminal=True` with a message like *\"Immutable Spec field(s) modified\"* and **stops**. It does not delete. The resource silently stops converging, and Flux still reports the Kustomization as Ready because the apply succeeded.\n\n2. **`DBInstanceClass` is mutable anyway.** ACK's `rds-controller` issues `ModifyDBInstance` with the new class. AWS performs a compute resize:\n   - **Multi-AZ (prod per spec):** modifies the standby, then fails over. ~60\u2013120s of connection interruption, one DNS-level failover.\n   - **Single-AZ (dev):** instance reboots. **Several minutes of hard downtime.** This is why Finding 1 matters \u2014 it's not a free change on dev.\n\n**Timing caveat to verify:** whether the resize starts immediately or defers to the maintenance window depends on `ApplyImmediately` handling in your `rds-controller` version. Historically ACK sets it true on modify, so assume the reboot starts within a minute or two of merge. Confirm before merging:\n\n```bash\nkubectl get dbinstance <name> -n <ns> -o jsonpath='{.status.dbInstanceStatus}'\n# expect: available -> modifying -> available\naws rds describe-db-instances --db-instance-identifier <id> \\\n  --query 'DBInstances[0].PendingModifiedValues'\n```\n\n**CRD naming note:** ACK's rds-controller ships `DBInstance` with `spec.dbInstanceClass`. The slice references `Instance` / `instanceClass`, which is Crossplane vocabulary. If the manifest literally says `instanceClass`, ACK's CRD schema will reject it with `unknown field` under structural pruning \u2014 or worse, silently drop it if the CRD allows unknown fields, meaning **the change appears to apply and nothing happens**. Verify the field name against the installed CRD, not the docs snippet.\n\n---\n\n## Q3: What if the S3 bucket manifest is deleted from Git?\n\nAssuming `prune: true` (the default in most knr-ops setups):\n\n1. Flux rebuilds, diffs against `status.inventory`, sees the `Bucket` object is gone, issues a delete.\n2. The CR has an ACK finalizer (`finalizers.s3.services.k8s.aws/Bucket`) and enters `Terminating`.\n3. ACK calls `DeleteBucket`.\n\nNow three outcomes:\n\n- **Empty bucket, `deletionPolicy: delete` (default):** bucket is deleted in AWS, finalizer removed, CR gone. **Data is destroyed. There is no confirmation prompt, no plan step, no `prevent_destroy`.** A one-line file deletion in a PR nukes production assets.\n- **Non-empty bucket:** AWS returns `BucketNotEmpty`. ACK retries forever. The CR is **stuck in Terminating with the finalizer held**. The Kustomization reports the prune as failed/pending on every interval and \u2014 if it's a dependency of anything \u2014 blocks the whole downstream chain. Also blocks namespace deletion. This is the most common ACK S3 incident.\n- **`services.k8s.aws/deletion-policy: retain` annotation set:** ACK removes the finalizer and drops the CR without touching AWS. Bucket survives, now unmanaged.\n\nIf `prune: false`: nothing happens at all. The `Bucket` CR stays in-cluster, ACK keeps reconciling it, and you now have infrastructure with no Git representation \u2014 invisible until someone audits.\n\n**Recommendation for this repo:** annotate stateful ACK resources (RDS, S3) with `deletion-policy: retain` and rely on explicit, deliberate deletion. Git-file-deletion is far too low-friction a gesture to be wired to `DeleteBucket`.\n\n---\n\n## Q4: How does Flux handle the prod-only replica change?\n\nCleanly, and this is the strongest part of the design. Isolation happens at **build time**, not apply time:\n\n- `overlays/prod` renders `replicas: 4`; the prod Kustomization diffs against its own inventory and patches one Deployment.\n- `overlays/dev` renders byte-identical output to before. Flux still reconciles it (same source revision), computes zero drift, and no-ops. Dev's Deployment isn't touched, its generation doesn't bump, no pods restart.\n\nEach Kustomization owns a disjoint inventory, so there's no shared-state class of failure \u2014 this is genuinely better than a single Terraform state file, and equivalent to separate workspaces.\n\n**Two caveats specific to `replicas`:**\n\n1. **Patch target must match the pre-transformation name.** Kustomize runs patches before `namePrefix`/`nameSuffix`. If the prod overlay sets `namePrefix: prod-` and the patch targets `name: prod-app`, it matches nothing and **silently applies zero patches**. Kustomize does not error on an unmatched patch target by default. Verify with `flux build`, not by reading the YAML.\n2. **HPA conflict.** If an HPA exists on that Deployment, Flux's server-side apply claims ownership of `spec.replicas` as field manager `kustomize-controller`. Every reconcile (default 10m) snaps it back to 4, fighting the autoscaler. Fix is either drop `replicas` from the manifest and let the HPA own it, or add:\n   ```yaml\n   patches:\n     - patch: |\n         - op: remove\n           path: /spec/replicas\n       target: { kind: Deployment, name: app }\n   ```\n   or use `spec.patches` + `ignore` rules. Given the spec calls for fixed replica counts per env, static `replicas` is fine \u2014 just confirm no HPA is in the base.\n\n---\n\n## Q5: What does `dependsOn` actually buy you?\n\n`dependsOn` gates *ordering*, not *readiness of AWS resources*. This is the sharpest edge in the whole stack.\n\n**What it does:** `app` Kustomization won't apply until `infra-rds` Kustomization reports `Ready=True`.\n\n**What \"Ready\" means:**\n- Without `wait: true` on the dependency \u2192 Ready means *\"the manifests were successfully applied to the API server.\"* The `DBInstance` CR exists. The database does not. Your app rolls out and CrashLoopBackOffs on connection refused for 10\u201315 minutes.\n- With `wait: true` \u2192 Flux runs kstatus health evaluation on every applied object. **kstatus doesn't understand ACK.** ACK sets conditions of type `ACK.ResourceSynced`, `ACK.Terminal`, `ACK.Recoverable` \u2014 none of which are the `Ready`/`Reconciling`/`Stalled` types kstatus keys on. A custom resource with no recognized conditions is reported **Current**. So `wait: true` gives you a false green on ACK resources.\n\n**The fix** (Flux \u2265 2.4) is `healthCheckExprs`, which lets you teach Flux what ACK readiness looks like via CEL:\n\n```yaml\nspec:\n  wait: true\n  healthCheckExprs:\n    - apiVersion: rds.services.k8s.aws/v1alpha1\n      kind: DBInstance\n      current: >-\n        status.conditions.exists(c, c.type == 'ACK.ResourceSynced' && c.status == 'True')\n        && status.dbInstanceStatus == 'available'\n      failed: >-\n        status.conditions.exists(c, c.type == 'ACK.Terminal' && c.status == 'True')\n    - apiVersion: s3.services.k8s.aws/v1alpha1\n      kind: Bucket\n      current: >-\n        status.conditions.exists(c, c.type == 'ACK.ResourceSynced' && c.status == 'True')\n      failed: >-\n        status.conditions.exists(c, c.type == 'ACK.Terminal' && c.status == 'True')\n```\n\nWithout this, `dependsOn` is doing much less than the repo's authors probably think. Note also the second-order effect on **this PR**: if `wait: true` and the RDS goes into `modifying`, a correctly-configured health check will hold the app Kustomization for the duration of the resize \u2014 which is what you want, but means an app deploy in the same PR would stall behind a DB reboot. Land the resize separately.\n\n---\n\n## Risk ranking for PR #42\n\n| # | Risk | Severity | Detect before merge |\n|---|---|---|---|\n| 1 | Base RDS class change resizes **dev** too (reboot + cost) | High | `flux build kustomization dev --path ./overlays/dev \\| grep -i instanceclass` |\n| 2 | New bucket has fixed `spec.name` \u2192 cross-env collision, terminal ACK error | High | diff `spec.name` across both rendered overlays |\n| 3 | Multi-AZ failover on prod DB, unannounced | Medium | schedule; confirm `PendingModifiedValues` |\n| 4 | New file not listed in `infra/s3/kustomization.yaml` \u2192 silent no-op | Medium | `flux build` output contains the Bucket |\n| 5 | Prod patch target doesn't match post-`namePrefix` name \u2192 silent no-op | Medium | grep rendered output for `replicas: 4` |\n| 6 | `dependsOn` false-green on ACK resources | Medium | `kubectl get dbinstance -o yaml \\| yq .status.conditions` |\n| 7 | Field is `dbInstanceClass`, not `instanceClass` \u2192 change dropped | Medium | `kubectl explain dbinstance.spec` |\n\n## Pre-merge commands\n\n```bash\n# Real preview \u2014 note: `konflate render` in the provided docs is not a Flux tool.\nflux build kustomization prod --path ./overlays/prod \\\n  --kustomization-file ./flux/kustomizations.yaml --dry-run\nflux build kustomization dev  --path ./overlays/dev  --dry-run\n\n# The one that matters most \u2014 server-side diff against live cluster:\nflux diff kustomization prod --path ./overlays/prod\nflux diff kustomization dev  --path ./overlays/dev   # MUST be empty for the RDS change\n\n# Confirm dev is pinned\ndiff <(flux build kustomization dev  --path ./overlays/dev  | yq 'select(.kind==\"DBInstance\")') \\\n     <(flux build kustomization prod --path ./overlays/prod | yq 'select(.kind==\"DBInstance\")')\n```\n\n## Doc corrections worth pushing back into `flux-docs.md`\n\n- `konflate render` doesn't exist \u2192 `flux build kustomization` / `flux diff kustomization`.\n- \"Flux follows the dependency order in kustomization.yaml\" \u2192 false; apply order is kind-staged (CRDs/Namespaces first), ordering across Kustomizations comes from `dependsOn` only.\n- ACK's s3-controller has **one** `Bucket` CRD with inline `spec.versioning`, `spec.encryption`, `spec.publicAccessBlock`, `spec.replication` \u2014 there are no separate `BucketVersioning`/`BucketPolicy` CRDs (that's Crossplane's upjet provider). Relevant to acceptance criterion 1: versioning and SSE must be inline in the new bucket manifest, and prod's cross-region replication needs `spec.replication` plus a destination bucket in `us-west-2` (which requires a per-resource `services.k8s.aws/region` annotation or a second controller install).\n- ACK's RDS CRD is `DBInstance` / `dbInstanceClass`, not `Instance` / `instanceClass`.\n- Worth adding: ACK never destroy/recreates. Immutable-field edits produce a terminal condition and silent stall, which is a *different* failure mode from Terraform's forced replacement and needs its own alerting.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-n4ev5snk/infra/s3/kustomization.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5/knr-ops/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

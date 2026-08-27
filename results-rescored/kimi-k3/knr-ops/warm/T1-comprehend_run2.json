@@ -1,0 +1,88 @@
+{
+  "model": "kimi-k3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 938,
+    "output": 933
+  },
+  "content": "# PR #42 Merge: Reconciliation Analysis\n\n## 1. What Reconciles and in What Order\n\nFlux reconciles kustomizations based on their `dependsOn` graph. A typical knr-ops setup has:\n\n```\ninfra (S3, RDS, IAM) \u2192 app (deployment)\n```\n\n**Reconciliation order:**\n\n1. **`infra` kustomization** reconciles first:\n   - RDS instance spec update (`db.t3.micro` \u2192 `db.t3.medium`)\n   - New S3 bucket creation\n2. **`app` kustomization** reconciles after `infra` reports ready:\n   - Prod overlay applies the `replicas: 4` patch\n\nFlux detects changes via its source controller (Git polling or webhook), then walks the dependency DAG. Within the `infra` kustomization, ACK controllers handle the actual AWS API calls \u2014 Flux just applies the manifests.\n\n## 2. Does the RDS Instance Get Recreated?\n\n**No.** The ACK RDS controller performs an **in-place modification**. `instanceClass` is a mutable attribute in the RDS `ModifyDBInstance` API. The controller:\n\n1. Detects drift between the CR's `spec` and the actual AWS resource\n2. Calls `ModifyDBInstance` with the new instance class\n3. The change may apply immediately or during the next maintenance window, depending on the `applyImmediately` field in the manifest\n\nThe database endpoint, data, and snapshots are preserved. There will be a brief failover/availability impact during the resize, but no data loss.\n\n## 3. What Happens to the S3 Bucket if Its Manifest Is Deleted?\n\n**The bucket is deleted.** Flux's default behavior is **prune-on-delete**: when a manifest is removed from Git, Flux deletes the corresponding Kubernetes resource. This triggers a cascading deletion:\n\n1. Flux removes the ACK `Bucket` CR from the cluster\n2. The ACK S3 controller sees the CR deletion and calls AWS `DeleteBucket`\n3. The bucket is destroyed (assuming it's empty or `forceDestroy`-equivalent behavior)\n\n**Mitigation options:**\n- Set `deletionPolicy: Orphan` on the ACK resource (if supported)\n- Add a finalizer or use `kustomize.toolkit.fluxcd.io/prune: disabled` annotation\n- Use a separate, non-pruned kustomization for stateful resources\n\n## 4. How Flux Handles the Prod-Only Replica Change\n\nThe `overlays/prod/kustomization.yaml` includes a patch:\n\n```yaml\npatches:\n  - target:\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n```\n\nFlux's **kustomize controller** builds the prod overlay by:\n1. Taking the base manifests from `infra/app/`\n2. Applying the prod overlay patches\n3. Producing a rendered manifest with `replicas: 4`\n4. Applying that to the cluster\n\nThe **dev overlay is untouched** \u2014 it builds from the same base but without the replica patch. This is the environment isolation mechanism: each overlay is an independent Flux kustomization with its own reconciliation loop.\n\n## 5. Role of `dependsOn`\n\n`dependsOn` creates an **ordered DAG** of kustomizations:\n\n```yaml\n# flux/kustomizations.yaml\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: app\nspec:\n  dependsOn:\n    - name: infra        # \u2190 waits for infra to be Ready\n  path: ./overlays/prod\n  # ...\n```\n\n**What it guarantees:**\n- The app deployment won't be applied until RDS, S3, and IAM resources report `Ready` status\n- If `infra` fails, `app` reconciliation is blocked (not attempted)\n- On updates, changes flow through the DAG in order\n\n**What it does NOT guarantee:**\n- It doesn't wait for the RDS instance to finish resizing \u2014 it waits for the ACK CR to report ready, which may happen before the AWS-side modification completes\n- It doesn't prevent the app from running against a database that's mid-resize\n\n**For PR #42 specifically:** the `dependsOn` ensures the new S3 bucket exists and the RDS modification is initiated before the app scales to 4 replicas. This matters because the app likely references the bucket name and database endpoint in its environment variables or secrets.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-oe76qc0q/overlays/prod/kustomization.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/knr-ops/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

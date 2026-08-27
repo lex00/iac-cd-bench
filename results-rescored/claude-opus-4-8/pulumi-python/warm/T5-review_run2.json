@@ -1,0 +1,86 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1058,
+    "output": 767
+  },
+  "content": "Please share the Pulumi preview JSON output you'd like me to review. Once you paste it, I'll analyze it against your three focus areas plus the broader acceptance criteria.\n\n## What I'll check for\n\n**Your three primary concerns:**\n\n1. **Secrets in plaintext outputs** \u2014 I'll scan `outputs`, resource `inputs`/`outputs`, and any `stackReferences` for:\n   - DB connection strings, passwords, tokens rendered as cleartext\n   - Values that *should* be marked `\"secret\": true` but aren't\n   - Secret material leaking into non-secret outputs (a common footgun when interpolating a secret into a plain string)\n\n2. **Replacement of stateful resources** \u2014 I'll look at each step's `op` field for `\"replace\"`, `\"delete-replaced\"`, or `\"create-replacement\"`, and flag them specifically when the resource is stateful:\n   - `aws:rds/instance:Instance` (data loss risk)\n   - `aws:s3/bucket:Bucket` (asset loss risk)\n   - I'll also report the `replaceReasons`/`diffReasons` (which property forced the replacement) so you know *why*.\n\n3. **Missing protect flag** \u2014 I'll check whether stateful resources carry `\"protect\": true` in their state, per acceptance criteria (RDS deletion protection, bucket durability).\n\n**Plus, since I have the spec, I'll cross-check against acceptance criteria where the preview reveals them:**\n- Bucket: versioning, encryption, public access block\n- RDS: deletion protection, backup retention \u2265 7 days, not publicly accessible\n- IAM: wildcard actions (especially on prod)\n- Cluster: instance types / node counts matching env spec\n- Environment isolation (which stack the preview targets \u2014 `dev` vs `prod`)\n\n## A couple of quick questions (optional)\n\n- **Which stack** is this preview for (`dev` or `prod`)? Some findings (e.g., wildcard IAM, cross-region replication, multi-AZ) are prod-specific.\n- Was this generated with `pulumi preview --json`? If you used `--show-secrets`, note that secrets will appear in cleartext in the JSON itself \u2014 which is expected from the flag but means the file itself should be handled carefully.\n\nGo ahead and paste the JSON.",
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/pulumi-python/warm/T5-review_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

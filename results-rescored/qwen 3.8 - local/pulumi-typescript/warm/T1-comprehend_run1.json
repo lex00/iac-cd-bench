@@ -1,0 +1,88 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 685,
+    "output": 1479
+  },
+  "content": "Here is the analysis of the Pulumi preview behavior based on the provided scenario and Pulumi's specific behaviors.\n\n### 1. Which property triggered the replace?\n\nIn Pulumi (and infrastructure-as-code in general), a resource is replaced rather than updated when a change to a property is **immutable** or would require the resource to be recreated to apply the change.\n\nFor the **RDS PostgreSQL instance** defined in the spine:\n*   **Dev**: `db.t3.micro`, single AZ\n*   **Prod**: `db.t3.medium`, multi-AZ, encrypted\n\nIf you preview a change that modifies **`instanceClass`** (e.g., changing from `db.t3.micro` to `db.t3.small` or `db.t3.medium`), Pulumi will show a **replace**.\n\n**Reason:** In AWS RDS, the `instanceClass` property is immutable for existing instances in many configurations, or more accurately, changing the instance class often requires a reboot or, in the case of Pulumi's resource provider for RDS, is marked as a property that forces replacement if it involves certain engine or storage changes. However, the most common immutable property that triggers a replace for RDS is **`identifier`** (the database name) or changes to **`availabilityZone`** (if moving out of the original AZ without a multi-AZ transition that allows it). \n\nBut the most classic and unambiguous example in Pulumi RDS resources is a change to **`instanceClass`** combined with certain configurations, or explicitly, a change to the **`identifier`**. Let's look at the spec: Dev is `db.t3.micro`, Prod is `db.t3.medium`. If you change the stack config from dev to prod, you are changing the `instanceClass`. \n\nActually, **`instanceClass`** is **updateable** in RDS. The properties that are **immutable** and trigger a replace for RDS are:\n*   `identifier` (the DB name)\n*   `engine` (e.g., changing from postgres to mysql)\n*   `engineVersion` (major version upgrades usually require replacement)\n*   `availabilityZone` (if you try to move to a specific AZ that is not the current one, and the instance is not Multi-AZ, it may require replacement)\n\nGiven the spec mentions \"single AZ\" vs \"multi-AZ\", if you change `multiAz` from `false` to `true`, it is an **update**. If you change the **`availabilityZone`** to a different AZ, Pulumi may replace it.\n\nHowever, the most definitive \"replace\" trigger in Pulumi RDS resources is a change to the **`identifier`**. If you change the `identifier` in the stack config, Pulumi will show:\n```\n~ aws:rds:Instance: my-db (replace)\n  ~ identifier: \"dev-db\" -> \"prod-db\"\n```\n\n**Answer:** The **`identifier`** property (or potentially `engineVersion` if upgrading major versions) triggers the replace. In the context of dev vs. prod, if the `identifier` is hardcoded or derived from the stack name, and you are switching contexts, a change to `identifier` is the most likely cause of a replace.\n\n*(Note: If the question implies a property change within the same resource type that forces replacement, `instanceClass` is typically an update. `availabilityZone` is a replace if you change the AZ. `identifier` is always a replace.)*\n\n**Most likely intended answer for \"property triggered replace\":** **`identifier`** or **`availabilityZone`** (if changing AZs). Given the dev/prod difference in AZ (single vs multi), if you change the `availabilityZone` explicitly, it triggers a replace.\n\n### 2. What does `pulumi up --target` skip?\n\n`pulumi up --target` limits the operation to the specified resources and their dependencies.\n\nIt **skips**:\n1.  **Resources that are not in the target list** and do **not** depend on the target resources.\n2.  **Resources that are upstream of the target** (i.e., resources that the target depends on) **IF** they are not already in the desired state. Wait, no. `--target` means \"only update these resources and their dependencies.\"\n\nActually, the Pulumi documentation states:\n> `--target` (or `-t`) is a comma-separated list of URN strings. The up or destroy command will only operate on the specified resources. **Note that dependencies of the specified resources will also be operated on if they are out of sync.**\n\nSo, `pulumi up --target <resource>` **skips**:\n*   Any resource that is **not** the target itself.\n*   Any resource that **does not** depend on the target.\n*   It **does not skip** resources that the target **depends on** if they are out of sync. Pulumi will update those dependencies first to ensure the target can be updated.\n\n**In other words, it skips all unrelated resources.** It does **not** skip upstream dependencies that need changes.\n\n**Answer:** `pulumi up --target` skips **all resources that are not the target and do not depend on the target**. It only updates the target resource and any upstream dependencies that are out of sync.\n\n### 3. How does Pulumi handle secrets in outputs?\n\nPulumi treats outputs as part of the state. If an output is a **secret**, Pulumi:\n1.  **Encrypts** the value at rest using the configured **Pulumi Secrets Manager** (e.g., AWS KMS, GCP KMS, Azure Key Vault, HashiCorp Vault, or a passphrase).\n2.  The **encrypted value** is stored in the Pulumi state file (or backend, like Pulumi Cloud).\n3.  The **plaintext** value is **never** stored in the state file or Git.\n4.  When you reference the secret in a deployment or via `pulumi output`, Pulumi **decrypts** it on-the-fly using the configured secrets manager credentials.\n5.  If you use `pulumi.config.set <key> <value> --secret`, it is encrypted before being stored in `Pulumi.dev.yaml` / `Pulumi.prod.yaml`.\n\n**Key Behavior:**\n*   Secrets in outputs are **encrypted at rest** in the state/backend.\n*   They are **decrypted** when accessed in the program or via CLI.\n*   If no secrets manager is configured, Pulumi uses a **passphrase** to encrypt the state file itself, and secrets within are encrypted with that passphrase.\n\n**Answer:** Pulumi **encrypts** secret outputs at rest using the configured **Pulumi Secrets Manager** (or passphrase). The plaintext value is **never stored** in the state file or Git. It is **decrypted** on-demand when the output is accessed in the program or via the CLI.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-gokrtnix/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local/pulumi-typescript/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

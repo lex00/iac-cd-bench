@@ -1,0 +1,86 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n# (preserve existing resources, namespace, labels from the current file)\nresources:\n  - ../../base\npatches:\n  # 1. Scale app deployment 2 -> 4\n  - patch: |-\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: app\n      spec:\n        replicas: 4\n    target:\n      kind: Deployment\n      name: app\n  # 2 + 3. RDS: db.t3.medium, multi-AZ\n  - patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstan\n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-jxx3whiq/overlays/prod: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from '../../base': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-jxx3whiq/base' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-jxx3whiq/base: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-jxx3whiq/base' : lstat /private/va"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 801,
+    "output": 621
+  },
+  "content": "# Prod Overlay Changes \u2014 knr-ops (Flux + kustomize)\n\n## `overlays/prod/kustomization.yaml`\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\n# (preserve existing resources, namespace, labels from the current file)\nresources:\n  - ../../base\n\npatches:\n  # 1. Scale app deployment 2 -> 4\n  - patch: |-\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: app\n      spec:\n        replicas: 4\n    target:\n      kind: Deployment\n      name: app\n\n  # 2 + 3. RDS: db.t3.medium, multi-AZ\n  - patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstanceClass\n        value: db.t3.medium\n      - op: replace\n        path: /spec/forProvider/multiAZ\n        value: true\n    target:\n      group: rds.aws.upbound.io\n      version: v1beta1\n      kind: DBInstance\n      name: app-db\n\n  # 4. S3 cross-region replication to us-west-2\n  - patch: |-\n      - op: add\n        path: /spec/forProvider/replicationConfiguration\n        value:\n          role: arn:aws:iam::<prod-account-id>:role/s3-replication\n          rules:\n            - id: replicate-to-us-west-2\n              status: Enabled\n              destination:\n                bucket: arn:aws:s3:::app-assets-prod-replica-usw2\n                storageClass: STANDARD\n    target:\n      group: s3.aws.upbound.io\n      version: v1beta1\n      kind: Bucket\n      name: app-assets\n```\n\n## Notes / verification\n\n- **Dev untouched**: dev overlay has no references to these patches; patches target resources by name/kind in this overlay only. Kustomize patch scoping is per-overlay, so `overlays/dev` renders identically.\n- **Prerequisites for replication** (base or repo-side, not dev-affecting): the source bucket must have versioning enabled (already required by spec) and the destination bucket `app-assets-prod-replica-usw2` must exist in us-west-2 with versioning.\n- Replace `<prod-account-id>` with the actual account ID (or reference it via a ConfigMap/external mechanism rather than hardcoding).\n- Verify isolation:\n\n```bash\nkubectl kustomize overlays/dev | grep -A1 'replicas:'   # still 2\nkubectl kustomize overlays/prod | grep -A1 'replicas:'  # 4\n```\n\nIf your repo names differ (e.g., deployment name, RDS resource name), adjust `metadata.name` / `target.name` accordingly \u2014 the patch structure stays the same.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-jxx3whiq/overlays/prod/kustomization.yaml"
+  ],
+  "score": {
+    "correctness": 0.5,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.5
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/knr-ops/warm/T3-modify_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0.5,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.5
+    },
+    "corrected_composite_no_idiom": 0.5833333333333334,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

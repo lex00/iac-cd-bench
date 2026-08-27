@@ -1,0 +1,93 @@
+{
+  "model": "gpt-5.4",
+  "task": "T3-modify",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[init] terraform: exit=1\n\u001b[0m\u001b[1mInitializing modules...\u001b[0m\n- app_dev in\n- stack in\n- app in\n- app_prod in\n\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mUnreadable module directory\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0mUnable to evaluate directory symlink: lstat modules: no such file or\n\u001b[31m\u2502\u001b[0m \u001b[0mdirectory\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mUnreadable module directory\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0mThe directory  could not be read for module \"app_dev\" at generated_0.tf:1.\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b\n[validate] terraform: exit=1\nERR: \u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mArgument or block definition required\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[0m  on generated_3.tf line 1, in resource \"aws_s3_bucket\" \"assets_dev\":\n\u001b[31m\u2502\u001b[0m \u001b[0m   1: resource \"aws_s3_bucket\" \"assets_dev\" { \u001b[4m...\u001b[0m }\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0mAn argument or block definition is required here.\n\u001b[31m\u2575\u001b[0m\u001b[0m\n\u001b[31m\u2577\u001b[0m\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\u001b[1m\u001b[31mError: \u001b[0m\u001b[0m\u001b[1mDuplicate local value definition\u001b[0m\n\u001b[31m\u2502\u001b[0m \u001b[0m\n\u001b[31m\u2502\u001b[0"
+    },
+    "static": {
+      "passed": false,
+      "logs": "terraform validate: exit=1"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 628,
+    "output": 1154
+  },
+  "content": "Use a single environment-driven module invocation and migrate state with `moved` blocks or `terraform state mv` so Terraform sees only address changes, not create/destroy.\n\n## Target shape\n\nIf you currently have duplicated blocks like:\n\n```hcl\nmodule \"app_dev\" {\n  source = \"./modules/app\"\n\n  env           = \"dev\"\n  instance_type = \"t3.medium\"\n  node_count    = 2\n}\n\nmodule \"app_prod\" {\n  source = \"./modules/app\"\n\n  env           = \"prod\"\n  instance_type = \"t3.large\"\n  node_count    = 4\n}\n```\n\nRefactor to:\n\n```hcl\nlocals {\n  envs = {\n    dev = {\n      instance_type = \"t3.medium\"\n      node_count    = 2\n      db_class      = \"db.t3.micro\"\n      multi_az      = false\n      region        = \"us-east-1\"\n    }\n    prod = {\n      instance_type = \"t3.large\"\n      node_count    = 4\n      db_class      = \"db.t3.medium\"\n      multi_az      = true\n      region        = \"us-east-1\"\n    }\n  }\n}\n\nmodule \"app\" {\n  for_each = local.envs\n  source   = \"./modules/app\"\n\n  env           = each.key\n  instance_type = each.value.instance_type\n  node_count    = each.value.node_count\n  db_class      = each.value.db_class\n  multi_az      = each.value.multi_az\n  region        = each.value.region\n}\n```\n\n## Zero-diff state migration\n\nIf old addresses were:\n\n- `module.app_dev`\n- `module.app_prod`\n\nnew addresses become:\n\n- `module.app[\"dev\"]`\n- `module.app[\"prod\"]`\n\n### Best option: `moved` blocks\n\nAt root:\n\n```hcl\nmoved {\n  from = module.app_dev\n  to   = module.app[\"dev\"]\n}\n\nmoved {\n  from = module.app_prod\n  to   = module.app[\"prod\"]\n}\n```\n\nIf there were top-level duplicated resources instead of modules:\n\n```hcl\nresource \"aws_s3_bucket\" \"assets_dev\" { ... }\nresource \"aws_s3_bucket\" \"assets_prod\" { ... }\n```\n\nrefactor to:\n\n```hcl\nresource \"aws_s3_bucket\" \"assets\" {\n  for_each = local.envs\n  bucket   = \"myapp-${each.key}-assets\"\n}\n```\n\nand move state:\n\n```hcl\nmoved {\n  from = aws_s3_bucket.assets_dev\n  to   = aws_s3_bucket.assets[\"dev\"]\n}\n\nmoved {\n  from = aws_s3_bucket.assets_prod\n  to   = aws_s3_bucket.assets[\"prod\"]\n}\n```\n\n## If `moved` blocks aren\u2019t possible\n\nUse CLI moves before apply:\n\n```bash\nterraform state mv module.app_dev module.app[\\\"dev\\\"]\nterraform state mv module.app_prod module.app[\\\"prod\\\"]\n```\n\nFor resources:\n\n```bash\nterraform state mv aws_s3_bucket.assets_dev aws_s3_bucket.assets[\\\"dev\\\"]\nterraform state mv aws_s3_bucket.assets_prod aws_s3_bucket.assets[\\\"prod\\\"]\n```\n\n## Important constraints for zero diff\n\n1. Keep all underlying arguments identical during the refactor.\n2. Do not rename resource names inside the child module at the same time unless you also move those addresses.\n3. Keep provider aliases unchanged if they were environment-specific.\n4. If dev/prod used separate tfvars or workspaces, preserve that isolation unless intentionally changing operating model.\n5. Run `terraform plan` after moves; expected result should be only address migrations, ideally `No changes`.\n\n## Recommended module input pattern for this scenario\n\n```hcl\nlocals {\n  envs = {\n    dev = {\n      eks = {\n        node_count    = 2\n        instance_type = \"t3.medium\"\n      }\n      s3 = {\n        replication = false\n      }\n      rds = {\n        instance_class      = \"db.t3.micro\"\n        multi_az            = false\n        storage_encrypted   = true\n        backup_retention    = 7\n        deletion_protection = true\n      }\n    }\n    prod = {\n      eks = {\n        node_count    = 4\n        instance_type = \"t3.large\"\n      }\n      s3 = {\n        replication = true\n      }\n      rds = {\n        instance_class      = \"db.t3.medium\"\n        multi_az            = true\n        storage_encrypted   = true\n        backup_retention    = 7\n        deletion_protection = true\n      }\n    }\n  }\n}\n```\n\nThen:\n\n```hcl\nmodule \"stack\" {\n  source   = \"./modules/stack\"\n  for_each = local.envs\n\n  env  = each.key\n  eks  = each.value.eks\n  s3   = each.value.s3\n  rds  = each.value.rds\n}\n```\n\n## Minimal rollout sequence\n\n1. Extract shared dev/prod logic into one reusable module.\n2. Replace duplicated root blocks with one `for_each`.\n3. Add `moved` blocks mapping old addresses to indexed addresses.\n4. Run `terraform plan`.\n5. Verify zero infrastructure changes.\n6. Apply only the state/address migration.\n\nIf you want, I can generate the exact before/after Terraform for EKS, S3, RDS, IAM, and secrets based on your current duplicated blocks.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_3.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_4.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_5.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_6.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-i3yk_zpb/generated_7.tf"
+  ],
+  "score": {
+    "correctness": 0.0,
+    "attempted_stages": 2,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/terraform/warm/T3-modify_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0.0,
+      "attempted_stages": 2,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

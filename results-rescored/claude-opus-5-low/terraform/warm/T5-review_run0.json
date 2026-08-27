@@ -1,0 +1,93 @@
+{
+  "model": "claude-opus-5",
+  "task": "T5-review",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1066,
+    "output": 4551
+  },
+  "content": "# Terraform Plan Review \u2014 `prod` workspace\n\n**Plan:** `terraform show -json tfplan.json` \u2192 40 resource changes\n**Verdict:** \ud83d\udd34 **DO NOT APPLY** \u2014 two blocking findings\n\n---\n\n## Summary of the 40 changes\n\n| Action | Count | Notes |\n|---|---|---|\n| `[\"no-op\"]` | 31 | Noise \u2014 mostly tag drift reconciliation and `aws_s3_bucket_*` sub-resources |\n| `[\"update\"]` | 6 | 5 benign, **1 blocking** (SG ingress) |\n| `[\"create\"]` | 1 | Part of the RDS replace |\n| `[\"delete\",\"create\"]` | 1 | **Blocking** \u2014 RDS replace |\n| `[\"create\",\"delete\"]` | 1 | CloudFront cert association (create-before-destroy, benign) |\n\nThe `no-op` entries are the problem: a plain `terraform plan` prints 40 lines and the two dangerous ones scroll past. This is exactly why the JSON gets machine-reviewed.\n\n---\n\n## \ud83d\udd34 Finding 1 \u2014 RDS instance will be **destroyed and recreated**\n\n```json\n{\n  \"address\": \"module.database.aws_db_instance.postgres\",\n  \"type\": \"aws_db_instance\",\n  \"name\": \"postgres\",\n  \"change\": {\n    \"actions\": [\"delete\", \"create\"],\n    \"before\": {\n      \"identifier\": \"app-prod-postgres\",\n      \"engine_version\": \"15.4\",\n      \"instance_class\": \"db.t3.medium\",\n      \"multi_az\": true,\n      \"storage_encrypted\": true,\n      \"kms_key_id\": \"arn:aws:kms:us-east-1:...:key/a1b2c3d4-...\",\n      \"deletion_protection\": true,\n      \"backup_retention_period\": 14,\n      \"skip_final_snapshot\": false\n    },\n    \"after\": {\n      \"identifier\": \"app-prod-postgres\",\n      \"engine_version\": \"15.4\",\n      \"instance_class\": \"db.t3.medium\",\n      \"multi_az\": true,\n      \"storage_encrypted\": true,\n      \"kms_key_id\": \"arn:aws:kms:us-east-1:...:key/9f8e7d6c-...\",\n      \"deletion_protection\": true,\n      \"backup_retention_period\": 14,\n      \"skip_final_snapshot\": false\n    },\n    \"after_unknown\": { \"id\": true, \"endpoint\": true, \"address\": true, \"resource_id\": true },\n    \"replace_paths\": [[\"kms_key_id\"]]\n  }\n}\n```\n\n### Why it's replacing\n\n`replace_paths: [[\"kms_key_id\"]]` \u2014 the KMS key ARN changed. `kms_key_id` on `aws_db_instance` is `ForceNew`; you cannot re-key an RDS instance in place. The diff is a **single attribute** buried in a resource where 20 other attributes are identical, so `terraform plan` output shows mostly unchanged lines with one `# forces replacement` marker.\n\n### Root cause\n\nTrace the ARN change back to the KMS key resource:\n\n```json\n{\n  \"address\": \"module.database.aws_kms_key.rds\",\n  \"change\": {\n    \"actions\": [\"no-op\"],\n    \"before\": { \"arn\": \"arn:aws:kms:us-east-1:...:key/9f8e7d6c-...\" },\n    \"after\":  { \"arn\": \"arn:aws:kms:us-east-1:...:key/9f8e7d6c-...\" }\n  }\n}\n```\n\nThe key itself is a **no-op**. So the `before` on the DB (`a1b2c3d4`) doesn't match the key Terraform is managing (`9f8e7d6c`). Two likely explanations:\n\n1. **The DB was created against a different key** \u2014 e.g. it was originally created with the account default `aws/rds` key or a manually-created key, and someone later added `kms_key_id = aws_kms_key.rds.arn` to the module. State now reflects reality; the config wants something else.\n2. **A key was replaced in a prior apply** and the DB was never reconciled.\n\nEither way this is **config drift being \"fixed\" by destroying production data**.\n\n### Blast radius\n\n- `deletion_protection = true` in state \u2014 **the apply will fail partway**, not silently destroy. Terraform issues `DeleteDBInstance`, AWS rejects it with `InvalidParameterCombination: Cannot delete protected DB Instance`. You end up with a failed apply and a lock to clean up. That's the *lucky* outcome.\n- If someone \"fixes\" the failure by setting `deletion_protection = false` and re-running: **total data loss on `app-prod-postgres`**. `skip_final_snapshot = false` gives you a final snapshot, but restoring is a 20\u201360 min RTO with a new endpoint, and every connection string breaks.\n- 14 downstream references to `aws_db_instance.postgres.endpoint` (the secret, ECS task defs, the CloudFront origin health check) all become `(known after apply)` \u2014 cascading updates across the stack.\n\n### Remediation\n\n**Do not apply.** Pick one:\n\n**Option A \u2014 accept the existing key (recommended, zero downtime):**\n```hcl\n# module/database/main.tf\nvariable \"rds_kms_key_arn\" {\n  description = \"Existing KMS key protecting the RDS instance. Changing this forces replacement.\"\n  type        = string\n}\n\nresource \"aws_db_instance\" \"postgres\" {\n  kms_key_id = var.rds_kms_key_arn\n  # ...\n  lifecycle {\n    prevent_destroy = true\n  }\n}\n```\n```hcl\n# prod.tfvars\nrds_kms_key_arn = \"arn:aws:kms:us-east-1:...:key/a1b2c3d4-...\"  # key actually in use\n```\nRe-plan; the DB should drop to `no-op`.\n\n**Option B \u2014 genuinely need to re-key:** you cannot do it in place. Do it deliberately, not as a side effect of a plan:\n1. Snapshot: `aws rds create-db-snapshot --db-instance-identifier app-prod-postgres --db-snapshot-identifier prod-pre-rekey-$(date +%s)`\n2. Copy the snapshot to the new key: `aws rds copy-db-snapshot --source-db-snapshot-identifier ... --kms-key-id <new-key>`\n3. Restore to a *new identifier*, cut over DNS/secret, then retire the old instance.\n4. Import the restored instance into state; do not let Terraform orchestrate the swap.\n\n**Guardrail either way** \u2014 add to the RDS resource permanently:\n```hcl\nlifecycle {\n  prevent_destroy = true\n}\n```\nThis turns a silent replace into a hard plan-time error. It should have been there already; its absence is the real bug. Note `prevent_destroy` does **not** survive `terraform destroy -target` bypasses or state surgery, so treat it as a tripwire, not a lock.\n\n---\n\n## \ud83d\udd34 Finding 2 \u2014 `0.0.0.0/0` ingress added to security group\n\n```json\n{\n  \"address\": \"module.network.aws_security_group.app\",\n  \"type\": \"aws_security_group\",\n  \"name\": \"app\",\n  \"change\": {\n    \"actions\": [\"update\"],\n    \"before\": {\n      \"name\": \"app-prod-sg\",\n      \"ingress\": [\n        {\n          \"from_port\": 443, \"to_port\": 443, \"protocol\": \"tcp\",\n          \"cidr_blocks\": [\"10.0.0.0/16\"],\n          \"description\": \"HTTPS from VPC\"\n        }\n      ]\n    },\n    \"after\": {\n      \"name\": \"app-prod-sg\",\n      \"ingress\": [\n        {\n          \"from_port\": 443, \"to_port\": 443, \"protocol\": \"tcp\",\n          \"cidr_blocks\": [\"10.0.0.0/16\"],\n          \"description\": \"HTTPS from VPC\"\n        },\n        {\n          \"from_port\": 0, \"to_port\": 65535, \"protocol\": \"tcp\",\n          \"cidr_blocks\": [\"0.0.0.0/0\"],\n          \"description\": \"temp debug\"\n        }\n      ]\n    }\n  }\n}\n```\n\n### Assessment\n\nThis is not a \"HTTPS from the internet\" rule. It is **every TCP port, 0\u201365535, from the entire internet**, labelled `\"temp debug\"`. Whoever added it was troubleshooting and committed it.\n\nWhat it exposes, given this SG is attached to the app tier:\n- **5432** \u2014 if the RDS SG allows this SG as a source (check `module.database.aws_security_group.rds`), Postgres becomes reachable from anywhere via the app subnet. This is a direct path to the data the first finding was about to destroy.\n- **22** \u2014 SSH on any node in the group.\n- **10250** \u2014 kubelet API on EKS nodes if this SG is on the node group.\n- Any ephemeral / debug ports left listening.\n\nIt also breaks acceptance criterion 6 (443-only HTTPS exposure) and criterion 4 in spirit \u2014 least privilege is a network property as well as an IAM one.\n\n### Remediation\n\nDelete the rule. Whatever it was debugging, do it with SSM Session Manager or a bastion, not an open SG.\n\n```hcl\n# Remove entirely:\n# ingress {\n#   from_port   = 0\n#   to_port     = 65535\n#   protocol    = \"tcp\"\n#   cidr_blocks = [\"0.0.0.0/0\"]\n#   description = \"temp debug\"\n# }\n```\n\nIf a genuine ad-hoc access need exists, scope it:\n```hcl\nvariable \"debug_access_cidrs\" {\n  description = \"Operator CIDRs for temporary access. Empty in prod.\"\n  type        = list(string)\n  default     = []\n  validation {\n    condition     = !contains(var.debug_access_cidrs, \"0.0.0.0/0\")\n    error_message = \"0.0.0.0/0 is not permitted in debug_access_cidrs.\"\n  }\n}\n\ndynamic \"ingress\" {\n  for_each = length(var.debug_access_cidrs) > 0 ? [1] : []\n  content {\n    from_port   = 22\n    to_port     = 22\n    protocol    = \"tcp\"\n    cidr_blocks = var.debug_access_cidrs\n    description = \"Operator SSH \u2014 remove after incident\"\n  }\n}\n```\n\nAlso worth checking: this SG uses inline `ingress` blocks. Inline blocks are **authoritative** \u2014 Terraform will remove any rule not in config. If someone added this via console, the plan is reconciling it *into* config, which means the SG has been open in prod for however long. Check CloudTrail for `AuthorizeSecurityGroupIngress` on `app-prod-sg` and treat as a potential exposure incident, not just a bad diff.\n\n---\n\n## \ud83d\udfe1 Secondary observations\n\n**IAM policy widened** (`module.iam.aws_iam_policy.service`, `update`):\n```\nbefore: \"Action\": [\"s3:GetObject\", \"s3:PutObject\"]\nafter:  \"Action\": [\"s3:GetObject\", \"s3:PutObject\", \"s3:DeleteObject\", \"s3:ListBucket\"]\n```\n`s3:ListBucket` is fine. `s3:DeleteObject` on a versioned bucket is survivable (delete markers, recoverable) but wasn't in the spec. Confirm the app actually needs it; if it's for a cleanup job, that job should have its own role.\n\n**S3 replication config** (`module.storage.aws_s3_bucket_replication_configuration.assets`) is `no-op` \u2014 good, cross-region replication to `us-west-2` is intact and unaffected by either finding.\n\n**Node group** (`module.eks.aws_eks_node_group.main`) is `no-op` at `desired_size = 4`, `instance_types = [\"t3.large\"]` \u2014 matches prod spec.\n\n---\n\n## What to do\n\n1. Revert the SG change; investigate CloudTrail for how it got there.\n2. Pin `rds_kms_key_arn` to the in-use key (`a1b2c3d4`), add `prevent_destroy`.\n3. Re-plan. Expect the 40 changes to drop to ~4 benign updates.\n4. Re-review before apply.\n\n## Preventing the next one\n\nThe failure mode here is human review of a 40-item plan. Gate it in CI instead:\n\n```bash\nterraform show -json tfplan > plan.json\n\n# Fail on any replace or delete\njq -e '\n  [.resource_changes[]\n   | select(.change.actions | (index(\"delete\") and index(\"create\")) or . == [\"delete\"])\n   | .address] as $d\n  | if ($d | length) > 0 then (\"DESTRUCTIVE: \" + ($d | join(\", \"))) | halt_error(1) else true end\n' plan.json\n\n# Fail on world-open ingress\njq -e '\n  [.resource_changes[]\n   | select(.type == \"aws_security_group\")\n   | .change.after.ingress // [] | .[]\n   | select((.cidr_blocks // []) | index(\"0.0.0.0/0\"))] as $o\n  | if ($o | length) > 0 then \"OPEN INGRESS\" | halt_error(1) else true end\n' plan.json\n```\n\nEscape hatch: an `allow-destroy` PR label that sets `TF_ALLOW_DESTROY=1` and skips the first check, requiring a second approver. Destructive changes should be possible but never accidental.\n\nFor broader coverage, `conftest test plan.json` with OPA policies, or Checkov's `--framework terraform_plan`, cover both of these findings plus public-S3, unencrypted-volume, and wildcard-IAM classes. Worth adding both \u2014 the jq gate is fast and runs on every plan; the policy engine catches the long tail.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mw4guoc3/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mw4guoc3/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mw4guoc3/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mw4guoc3/generated_3.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mw4guoc3/generated_4.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-mw4guoc3/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-5-low/terraform/warm/T5-review_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

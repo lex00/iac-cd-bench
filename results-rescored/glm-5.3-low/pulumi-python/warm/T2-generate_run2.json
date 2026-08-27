@@ -1,0 +1,96 @@
+{
+  "model": "glm-5.3",
+  "task": "T2-generate",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nE501 Line too long (89 > 88)\n  --> components/web_app.py:26:89\n   |\n25 | class WebApp(pulumi.ComponentResource):\n26 |     def __init__(self, name: str, args: WebAppArgs, opts: pulumi.ResourceOptions = None):\n   |                                                                                         ^\n27 |         super().__init__(\"webapp:components:WebApp\", name, None, opts)\n   |\n\nF541 [*] f-string without any placeholders\n   --> components/web_app.py:151:29\n    |\n149 |                     \"Con"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "y::test_rds_deletion_protection FAILED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('components/bucket.py').exists\n     +      where PosixPath('components/bucket.py') = Path('components/bucket.py')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:14: AssertionError: assert False\nE   AssertionError: assert False\n     +  where False = exists()\n     +    where exists = PosixPath('components/rds.py').exists\n     +      where PosixPath('components/rds.py') = Path('components/rds.py')\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:18: AssertionError: assert False\nE   FileNotFoundError: [Errno 2] No such file or directory: 'components/bucket.py'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:22: FileNotFoundError: [Errno 2] No such file or directory: 'components/bucket.py'\nE   FileNotFoundError: [Errno 2] No such file or directory: 'components/rds.py'\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py:28: FileNotFoundError: [Errno 2] No such file or directory: 'components/rds.py'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_bucket_component\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_rds_component\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_bucket_versioning\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T2-generate/tests/test_task.py::test_rds_deletion_protection\n========================= 4 failed, 2 passed in 0.01s ==========================\n",
+      "passed_count": 2,
+      "total_count": 6,
+      "pass_threshold": null,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 661,
+    "output": 2417
+  },
+  "content": "# Pulumi ComponentResource: Web App Infrastructure\n\n## Structure\n\n```\ninfra/\n\u251c\u2500\u2500 Pulumi.yaml\n\u251c\u2500\u2500 components/\n\u2502   \u2514\u2500\u2500 web_app.py\n\u251c\u2500\u2500 __main__.py\n\u251c\u2500\u2500 dev.yaml\n\u2514\u2500\u2500 prod.yaml\n```\n\n## `Pulumi.yaml`\n\n```yaml\nname: web-app\nruntime: python\ndescription: Stateless web app with S3, RDS, IAM\n```\n\n## `components/web_app.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\n\nclass WebAppArgs:\n    def __init__(\n        self,\n        environment: str,                       # \"dev\" | \"prod\"\n        region: str,\n        bucket_replication_region: str = None,  # prod only\n        db_instance_class: str = \"db.t3.micro\",\n        db_multi_az: bool = False,\n        db_allocated_storage: int = 20,\n        oidc_provider_arn: str = None,          # prod: OIDC trust; dev: IAM user\n    ):\n        self.environment = environment\n        self.region = region\n        self.bucket_replication_region = bucket_replication_region\n        self.db_instance_class = db_instance_class\n        self.db_multi_az = db_multi_az\n        self.db_allocated_storage = db_allocated_storage\n        self.oidc_provider_arn = oidc_provider_arn\n\n\nclass WebApp(pulumi.ComponentResource):\n    def __init__(self, name: str, args: WebAppArgs, opts: pulumi.ResourceOptions = None):\n        super().__init__(\"webapp:components:WebApp\", name, None, opts)\n\n        is_prod = args.environment == \"prod\"\n        tags = {\"Environment\": args.environment, \"ManagedBy\": \"Pulumi\"}\n\n        child_opts = pulumi.ResourceOptions(parent=self)\n\n        # ------------------------------------------------------------------\n        # 1. S3 bucket \u2014 versioned, encrypted, no public access\n        # ------------------------------------------------------------------\n        self.bucket = aws.s3.Bucket(\n            f\"{name}-assets\",\n            versioning=aws.s3.BucketVersioningArgs(\n                enabled=True,\n            ),\n            server_side_encryption_configuration=aws.s3.BucketServerSideEncryptionConfigurationArgs(\n                rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n                    apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                        sse_algorithm=\"AES256\",\n                    ),\n                ),\n            ),\n            tags=tags,\n            opts=child_opts,\n        )\n\n        aws.s3.BucketPublicAccessBlock(\n            f\"{name}-assets-pab\",\n            bucket=self.bucket.id,\n            block_public_acls=True,\n            block_public_policy=True,\n            ignore_public_acls=True,\n            restrict_public_buckets=True,\n            opts=child_opts,\n        )\n\n        # Cross-region replication (prod only)\n        if args.bucket_replication_region:\n            replica = aws.s3.Bucket(\n                f\"{name}-assets-replica\",\n                bucket=f\"{name}-assets-replica-{args.environment}\",\n                versioning=aws.s3.BucketVersioningArgs(enabled=True),\n                server_side_encryption_configuration=aws.s3.BucketServerSideEncryptionConfigurationArgs(\n                    rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n                        apply_server_side_encryption_by_default=aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                            sse_algorithm=\"AES256\",\n                        ),\n                    ),\n                ),\n                tags=tags,\n                opts=pulumi.ResourceOptions(parent=self, provider=aws.Provider(\n                    f\"{name}-replica-provider\", region=args.bucket_replication_region,\n                )),\n            )\n            repl_role = aws.iam.Role(\n                f\"{name}-s3-repl-role\",\n                assume_role_policy=aws.iam.get_policy_document(\n                    statements=[aws.iam.GetPolicyDocumentStatementArgs(\n                        actions=[\"sts:AssumeRole\"],\n                        principals=[aws.iam.GetPolicyDocumentStatementPrincipalArgs(\n                            type=\"Service\", identifiers=[\"s3.amazonaws.com\"],\n                        )],\n                    )],\n                ).json,\n                opts=child_opts,\n            )\n            aws.s3.BucketReplicationConfiguration(\n                f\"{name}-assets-repl\",\n                bucket=self.bucket.id,\n                role=repl_role.arn,\n                rules=[aws.s3.BucketReplicationConfigurationRuleArgs(\n                    status=\"Enabled\",\n                    destination=aws.s3.BucketReplicationConfigurationRuleDestinationArgs(\n                        bucket=replica.arn,\n                    ),\n                )],\n                opts=child_opts,\n            )\n\n        # ------------------------------------------------------------------\n        # 2. RDS PostgreSQL \u2014 deletion protection, backups, private\n        # ------------------------------------------------------------------\n        self.db_subnet_group = aws.rds.SubnetGroup(\n            f\"{name}-db-subnets\",\n            subnet_ids=[],  # populated from VPC \u2014 see note below\n            tags=tags,\n            opts=child_opts,\n        )\n\n        self.db_password = pulumi.Config(\"webapp\").require_secret(\"db_password\")\n\n        self.db = aws.rds.Instance(\n            f\"{name}-db\",\n            engine=\"postgres\",\n            engine_version=\"16.3\",\n            instance_class=args.db_instance_class,\n            allocated_storage=args.db_allocated_storage,\n            db_name=\"webapp\",\n            username=\"webapp_admin\",\n            password=self.db_password,\n            db_subnet_group_name=self.db_subnet_group.name,\n            publicly_accessible=False,\n            multi_az=args.db_multi_az,\n            deletion_protection=True,\n            backup_retention_period=7,\n            storage_encrypted=is_prod,\n            skip_final_snapshot=False,\n            final_snapshot_identifier=f\"{name}-db-final\",\n            tags=tags,\n            opts=child_opts,\n        )\n\n        # ------------------------------------------------------------------\n        # 3. IAM \u2014 service account role (least privilege)\n        # ------------------------------------------------------------------\n        if args.oidc_provider_arn:  # prod: OIDC federated trust\n            trust_policy = pulumi.Output.json_dumps({\n                \"Version\": \"2012-10-17\",\n                \"Statement\": [{\n                    \"Effect\": \"Allow\",\n                    \"Action\": \"sts:AssumeRoleWithWebIdentity\",\n                    \"Principal\": {\"Federated\": args.oidc_provider_arn},\n                    \"Condition\": {\"StringEquals\": {\n                        f\"{args.oidc_provider_arn.split('/')[-1]}:sub\":\n                            f\"system:serviceaccount:webapp:webapp-sa\",\n                    }},\n                }],\n            })\n        else:  # dev: service principal trust\n            trust_policy = aws.iam.get_policy_document(\n                statements=[aws.iam.GetPolicyDocumentStatementArgs(\n                    actions=[\"sts:AssumeRole\"],\n                    principals=[aws.iam.GetPolicyDocumentStatementPrincipalArgs(\n                        type=\"Service\", identifiers=[\"eks.amazonaws.com\"],\n                    )],\n                )],\n            ).json\n\n        self.service_role = aws.iam.Role(\n            f\"{name}-service-role\",\n            assume_role_policy=trust_policy,\n            tags=tags,\n            opts=child_opts,\n        )\n\n        aws.iam.RolePolicy(\n            f\"{name}-service-policy\",\n            role=self.service_role.name,\n            # Least privilege \u2014 scoped to this stack's bucket, no wildcards\n            policy=self.bucket.arn.apply(lambda bucket_arn: json.dumps({\n                \"Version\": \"2012-10-17\",\n                \"Statement\": [\n                    {\n                        \"Effect\": \"Allow\",\n                        \"Action\": [\"s3:GetObject\", \"s3:PutObject\"],\n                        \"Resource\": [f\"{bucket_arn}/*\"],\n                    },\n                    {\n                        \"Effect\": \"Allow\",\n                        \"Action\": [\"s3:ListBucket\"],\n                        \"Resource\": [bucket_arn],\n                    },\n                ],\n            })),\n            opts=child_opts,\n        )\n\n        # ------------------------------------------------------------------\n        # Outputs\n        # ------------------------------------------------------------------\n        self.bucket_name = self.bucket.id\n        self.db_endpoint = self.db.endpoint\n        self.service_role_arn = self.service_role.arn\n\n        # Connection string (secret) for app consumption\n        self.db_connection_string = pulumi.Output.secret(\n            pulumi.Output.format(\n                \"postgresql://webapp_admin:{0}@{1}/webapp\",\n                self.db_password, self.db.endpoint,\n            )\n        )\n\n        self.register_outputs({\n            \"bucket_name\": self.bucket_name,\n            \"db_endpoint\": self.db_endpoint,\n            \"service_role_arn\": self.service_role_arn,\n            \"db_connection_string\": self.db_connection_string,\n        })\n```\n\nAdd `import json` at the top.\n\n## `__main__.py`\n\n```python\nimport pulumi\nimport pulumi_aws as aws\nfrom components.web_app import WebApp, WebAppArgs\n\nconfig = pulumi.Config()\nenvironment = pulumi.get_stack()  # \"dev\" or \"prod\"\n\napp = WebApp(\n    \"webapp\",\n    WebAppArgs(\n        environment=environment,\n        region=aws.get_region().name,\n        # Prod-only sizing/replication\n        db_instance_class=config.get(\"db_instance_class\") or \"db.t3.micro\",\n        db_multi_az=config.get_bool(\"db_multi_az\") or False,\n        bucket_replication_region=config.get(\"replica_region\"),\n        oidc_provider_arn=config.get(\"oidc_provider_arn\"),\n    ),\n)\n\npulumi.export(\"bucket_name\", app.bucket_name)\npulumi.export(\"db_endpoint\", app.db_endpoint)\npulumi.export(\"service_role_arn\", app.service_role_arn)\npulumi.export(\"db_connection_string\", app.db_connection_string)\n```\n\n## `dev.yaml`\n\n```yaml\nconfig:\n  webapp:db_instance_class: db.t3.micro\n  webapp:db_multi_az: false\n  webapp:db_password:\n    secure: AAABAH...  # pulumi config set --secret\n```\n\n## `prod.yaml`\n\n```yaml\nconfig:\n  webapp:db_instance_class: db.t3.medium\n  webapp:db_multi_az: true\n  webapp:replica_region: us-west-2\n  webapp:oidc_provider_arn: arn:aws:iam::123456789012:oidc-provider/oidc.eks.us-east-1.amazonaws.com/id/EXAMPLE\n  webapp:db_password:\n    secure: AAABAH...  # pulumi config set --secret\n```\n\n## Usage\n\n```bash\npulumi stack init dev\npulumi config set db_password '...' --secret\npulumi up                          # dev\n\npulumi stack init prod\npulumi config set db_password '...' --secret\npulumi config set db_multi_az true\npulumi up                          # prod \u2014 fully isolated state\n```\n\n## Acceptance criteria mapping\n\n| Criterion | Implementation |\n|---|---|\n| Bucket versioning/SSE/private | `versioning`, `server_side_encryption_configuration` (AES256), `BucketPublicAccessBlock` all-true |\n| RDS protection | `deletion_protection=True`, `backup_retention_period=7`, `publicly_accessible=False`, `storage_encrypted` on prod |\n| Secret handling | `ConfigSecret` (`require_secret`), connection string wrapped in `Output.secret` \u2014 never plaintext in Git |\n| IAM least privilege | Bucket-scoped policy only; OIDC-federated trust with `sub` condition on prod; no wildcards |\n| Env isolation | Separate stack files \u2192 separate Pulumi state; prod changes can't touch dev |\n\n**Note:** VPC/subnets (needed for `db_subnet_group` and the EKS cluster) are omitted per the task's focus on the three wrapped resources \u2014 wire `subnet_ids` from your VPC output or `aws.ec2.get_subnet_ids`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9o93asq0/Pulumi.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9o93asq0/components/web_app.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9o93asq0/__main__.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9o93asq0/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9o93asq0/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9o93asq0/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.3333333333333333,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.4074074074074074
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-python/warm/T2-generate_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 0.3333333333333333,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.4074074074074074
+    },
+    "published_composite_no_idiom": 0.4583333333333333,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.3333333333333333,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.4074074074074074
+    },
+    "corrected_composite_no_idiom": 0.4583333333333333,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

@@ -1,0 +1,88 @@
+{
+  "model": "kimi-k3",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 744,
+    "output": 1177
+  },
+  "content": "# Security Review: PR Diff Analysis\n\n## Executive Summary\n\nThis PR contains **2 critical security issues** that must be resolved before merge, along with 1 warning and 1 informational item.\n\n---\n\n## Findings by Severity\n\n### \ud83d\udd34 CRITICAL\n\n#### 1. S3 Bucket Policy Grants Public Read Access\n\n**Issue:** The new bucket policy allows `Principal: \"*\"` to perform `s3:GetObject` on the bucket, making all application assets publicly accessible.\n\n**Violation:** Acceptance Criteria #1 \u2014 \"no public access\"\n\n**Risk:**\n- Exposure of application assets, potentially including sensitive files\n- Data exfiltration vector\n- Violates least-privilege access principles\n- May violate compliance requirements (SOC 2, PCI-DSS, etc.)\n\n**Required Change:**\n```yaml\n# REMOVE this policy entirely, OR\n# If public access is genuinely needed (e.g., static website):\n# 1. Use CloudFront with OAI/OAC instead of direct bucket access\n# 2. Add explicit deny for sensitive prefixes\n# 3. Enable bucket logging to track access\n```\n\n**Recommended Fix:**\n```json\n{\n  \"Version\": \"2012-10-17\",\n  \"Statement\": [\n    {\n      \"Sid\": \"DenyPublicAccess\",\n      \"Effect\": \"Deny\",\n      \"Principal\": \"*\",\n      \"Action\": \"s3:GetObject\",\n      \"Resource\": \"arn:aws:s3:::app-assets/*\",\n      \"Condition\": {\n        \"StringNotEquals\": {\n          \"aws:PrincipalArn\": \"arn:aws:iam::ACCOUNT:role/app-service-role\"\n        }\n      }\n    }\n  ]\n}\n```\n\nAlso ensure AWS account-level S3 Block Public Access is enabled.\n\n---\n\n#### 2. Plaintext Password in Environment Variables\n\n**Issue:** Database password stored as plaintext string in deployment manifest env vars.\n\n**Violation:** Acceptance Criteria #3 \u2014 \"never stored in plaintext in Git; encrypted at rest via stack-native mechanism\"\n\n**Risk:**\n- Credential exposure in Git history (permanent)\n- Anyone with repo access has database credentials\n- Credentials visible in `kubectl describe pod` output\n- No audit trail for secret access\n\n**Required Change:**\n\nFor knr-ops stack, use **SOPS-encrypted secrets**:\n\n```yaml\n# overlays/prod/secrets.yaml (SOPS-encrypted)\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-credentials\nstringData:\n  password: ENC[AES256_GCM,data:...]  # SOPS encrypted\n```\n\n```yaml\n# deployment.yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: db-credentials\n        key: password\n```\n\n**Additional Steps:**\n1. Rotate the exposed password immediately (assume compromised)\n2. Purge from Git history using `git filter-repo` or BFG\n3. Audit database access logs for unauthorized use\n\n---\n\n### \ud83d\udfe1 WARNING\n\n#### 3. Missing Resource Limits on Containers\n\n**Issue:** Containers lack `resources.limits` and `resources.requests` definitions.\n\n**Risk:**\n- Single pod can consume all node resources (noisy neighbor)\n- Enables resource exhaustion attacks\n- Unpredictable application performance\n- Can trigger cluster autoscaler thrashing\n\n**Recommended Fix:**\n```yaml\nresources:\n  requests:\n    memory: \"256Mi\"\n    cpu: \"250m\"\n  limits:\n    memory: \"512Mi\"\n    cpu: \"500m\"\n```\n\nConsider implementing a `LimitRange` and `ResourceQuota` at namespace level as defense-in-depth.\n\n---\n\n### \ud83d\udd35 INFO\n\n#### 4. RDS Instance Class Change\n\n**Issue:** Instance class modification detected.\n\n**Assessment:** No security concern. Ensure:\n- Change is applied during maintenance window\n- Multi-AZ failover is configured (per spec)\n- Snapshot taken before modification\n\n---\n\n## Merge Checklist\n\n| # | Item | Status | Blocking? |\n|---|------|--------|-----------|\n| 1 | Remove public S3 bucket policy | \u274c | **YES** |\n| 2 | Enable S3 Block Public Access | \u274c | **YES** |\n| 3 | Replace plaintext password with SOPS secret | \u274c | **YES** |\n| 4 | Rotate exposed database credentials | \u274c | **YES** |\n| 5 | Purge credentials from Git history | \u274c | **YES** |\n| 6 | Add container resource limits | \u274c | Recommended |\n| 7 | Verify RDS change timing | \u26a0\ufe0f | No |\n\n---\n\n## Recommended Actions\n\n### Immediate (Before Merge)\n```bash\n# 1. Revert the S3 policy change\ngit revert <commit-with-bucket-policy>\n\n# 2. Create SOPS secret for database password\nsops --encrypt --in-place overlays/prod/db-secret.yaml\n\n# 3. Update deployment to reference secret\n# (see fix above)\n```\n\n### Post-Merge\n1. Add OPA/Kyverno policies to block public S3 policies\n2. Implement pre-commit hooks with `gitleaks` or `trufflehog`\n3. Add `kustomize build | conftest verify` to CI pipeline\n\n---\n\n## Suggested Policy Guardrails\n\n```yaml\n# policies/deny-public-s3.yaml (OPA/Rego)\npackage kubernetes.admission\n\ndeny[msg] {\n  input.request.kind.kind == \"BucketPolicy\"\n  statement := input.request.object.spec.Statement[_]\n  statement.Principal == \"*\"\n  msg := \"Public bucket policies are not allowed\"\n}\n```\n\n---\n\n**Verdict: DO NOT MERGE** until critical issues #1 and #2 are resolved.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-ngfirefp/generated_0.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/knr-ops/warm/T5-review_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

@@ -1,0 +1,85 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "crossplane",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 945,
+    "output": 1012
+  },
+  "content": "# Crossplane Trace: `storageGB` 20 \u2192 50\n\n## 1. Full trace: Claim \u2192 XRD \u2192 Composition \u2192 Managed Resources\n\n```\nClaim (e.g., PostgreSQLInstance claim, namespace-scoped)\n  \u2502  spec.storageGB: 20 \u2192 50\n  \u25bc\nClaim controller detects spec change\n  \u2502  Copies parameters into the composite (XR) owned by the claim\n  \u25bc\nComposite Resource (XR, cluster-scoped)\n  \u2502  spec.resourceRefs \u2192 existing composed resources (same UIDs, no new objects)\n  \u25bc\nComposite (Composition) reconciler\n  \u2502  Re-renders the Composition's function pipeline with new spec\n  \u2502  function-patch-and-transform: toFieldPath patches storageGB\n  \u2502    into rds.aws.upbound.io/v1beta1 Instance.spec.forProvider.allocatedStorage\n  \u2502  Diffs desired composed resources against observed\n  \u25bc\nManaged Resource: RDS Instance (upbound provider-aws)\n  \u2502  spec.forProvider.allocatedStorage: 20 \u2192 50\n  \u25bc\nManaged reconciler calls AWS API:\n  ModifyDBInstance(AllocatedStorage=50) \u2192 Apply=True (upjet uses Update/Patch)\n  \u25bc\nAWS RDS applies change; observed state converges to 50\n  Status flows back: MR \u2192 XR \u2192 Claim (Ready, connectionDetails)\n```\n\n## 2. RDS instance: updated in-place or recreated?\n\n**Updated in-place.** RDS supports increasing `AllocatedStorage` without replacement (`UpdateReplace: false` on the Terraform attribute). Crossplane/upjet updates the spec and the provider calls `ModifyDBInstance`. Storage grows online (can take minutes; there's a 6-hour cooldown per AWS if decreasing \u2014 but decreasing isn't allowed here anyway).\n\n\u26a0\ufe0f It *would* be recreated if the changed field were immutable at AWS (e.g., changing `engine`, storage type to/from some configs, or instance class can be in-place but causes an outage window). Decreasing storage is not supported by AWS and would cause drift/never-converge.\n\n## 3. What happens to the S3 bucket?\n\n**Nothing.** The Composition pipeline re-renders *all* composed resources, but the patch producing the S3 bucket spec depends on other fields (`versioning`, `encryption`, bucket name). The desired S3 spec is byte-identical to observed, so no diff \u2192 **no API calls**. Crossplane is declarative and idempotent: unchanged composed resources are simply re-observed.\n\n## 4. Role of `ReadinessChecks`\n\nThey gate when the XR/Claim reports `Ready: True`:\n\n- **Classic Compositions**: `readinessChecks` (Type: MatchString, NonEmpty, None, MatchCondition) evaluated per composed resource; XR becomes ready when all checks pass.\n- **Pipeline mode**: each MR's `status.atProvider` / conditions are inspected (upjet sets `Ready` based on Terraform apply completion + available state).\n\nFor this trace: after `ModifyDBInstance` starts, the RDS MR is not Ready until AWS reports the instance `available` with 50 GB. So the **Claim stays not-Ready during the resize**, and downstream consumers (e.g., app waiting on the connection secret) can watch claim conditions. ReadinessChecks prevent premature use of half-converged infrastructure.\n\n## 5. The reconciliation loop\n\nCrossplane is **level-triggered, not edge-triggered** \u2014 like a controller, not Terraform plan/apply:\n\n1. **Watch**: Claim controller, composite controller, and each managed reconciler watch their objects.\n2. **Reconcile on change AND periodically**: workqueues re-enqueue on watch events (spec edit, external events) and on resync intervals \u2014 continuous drift correction.\n3. **Converge, not apply**: desired state is diffed against observed; only deltas produce external calls (why S3 is untouched).\n4. **Drift repair**: if someone manually shrinks the DB to 20 in the AWS console, the next RDS reconcile re-issues `ModifyDBInstance(50)` automatically \u2014 no pipeline run needed.\n5. **Backoff**: errors (AWS throttling, invalid params) trigger exponential backoff with `reconcile-rate` caps; conditions surface failure on the Claim.\n6. **Separation of concerns**: three independent loops (claim\u2192XR, XR\u2192MRs, MR\u2192cloud), so a storage change only enqueues the affected loops.\n\n**Net effect:** user edits one number in a Claim; Crossplane converges exactly one RDS instance in-place, leaves the bucket alone, reports unready until AWS finishes, and keeps enforcing 50 GB forever after.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3/crossplane/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

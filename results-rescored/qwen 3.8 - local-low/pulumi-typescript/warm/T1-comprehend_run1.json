@@ -1,0 +1,97 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 713,
+    "output": 3918
+  },
+  "content": "\n\n# Pulumi Preview Behavior \u2014 Canonical Scenario (RDS)\n\n## 1. Which Property Triggered the Replace?\n\nIn the canonical scenario, the RDS instance has these environment-specific settings:\n\n| Property | Dev | Prod | Replace? |\n|----------|-----|------|----------|\n| `instanceClass` | `db.t3.micro` | `db.t3.medium` | No (in-place reboot) |\n| `availabilityZoneMultiAz` | `false` | `true` | **Yes** |\n| `allocatedStorage` | 20 | 100 | No (in-place grow) |\n| `backupRetentionPeriod` | 7 | 14 | No (in-place) |\n| `deletionProtection` | `true` | `true` | No |\n| `identifier` | `app-db-dev` | `app-db-prod` | Yes (if changed) |\n\nThe **most common trigger** in this scenario is:\n\n```\navailabilityZoneMultiAz\n```\n\nToggling from `false` \u2192 `true` (or vice versa) forces a **destroy-and-recreate** because AWS RDS cannot enable or disable Multi-AZ on an existing instance in-place. The Pulumi AWS provider marks this in the resource's `replaceOnChanges` list.\n\nOther properties in the same `replaceOnChanges` set that could trigger it:\n\n```typescript\n// These all force replacement on aws:rds:Instance:\nidentifier            // the DB resource name\navailabilityZone      // moving between AZs\navailabilityZoneMultiAz  // \u2190 the usual culprit here\nengine                // e.g., \"postgres\" \u2192 \"postgres15\"\nengineVersion         // major version bump (14 \u2192 15)\ndbName                // initial database name\nusername              // master username\nallocatedStorage      // only when DECREASED\n```\n\n**Preview output would look like:**\n\n```\n+   pulumi:pulumi:Stack  canonical:dev-standalone\n ~   aws:rds:Instance    app-db\n     - availabilityZoneMultiAz: false\n     + availabilityZoneMultiAz: true\n     ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n     - allocatedStorage: 20\n     + allocatedStorage: 100\n-   (replace)\n```\n\nThe `-` / `+` prefix on `availabilityZoneMultiAz` signals the replace driver.\n\n---\n\n## 2. What Does `pulumi up --target` Skip?\n\n```bash\npulumi up --target 'urn:pulumi:dev::canonical::aws:rds:Instance::app-db'\n```\n\n`--target` restricts the **execution** (not the planning) to a specific resource and its **upstream dependencies only**.\n\n### What it DOES include:\n- The targeted resource itself (the RDS instance)\n- Any resources the target **depends on** that also need changes (e.g., a VPC, subnet, or security group if they changed)\n\n### What it SKIPS:\n\n| Skipped | Reason |\n|---------|--------|\n| **S3 bucket** changes | Unrelated (not a dep of RDS, not a dependent) |\n| **EKS cluster** changes | Unrelated |\n| **IAM user/role** changes | Unrelated |\n| **ALB / CloudFront** changes | Unrelated |\n| **Downstream dependents** (e.g., a Lambda that reads the DB output) | Dependencies flow *upstream* only; `--target` does not cascade to resources that *depend on* the target |\n| **Creates/Deletes** of unrelated resources | Any diff outside the target subtree is suppressed |\n\n### Key semantic:\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  Full graph (what preview shows)                        \u2502\n\u2502                                                         \u2502\n\u2502   VPC \u2500\u2500\u25ba RDS Instance \u2500\u2500\u25ba App (EKS)                   \u2502\n\u2502   \u2502         \u2502              \u2502                            \u2502\n\u2502   \u251c\u2500\u2500\u25ba S3   \u2502              \u251c\u2500\u2500\u25ba ALB                    \u2502\n\u2502   \u2502         \u2502              \u2514\u2500\u2500\u25ba CloudFront             \u2502\n\u2502   \u2514\u2500\u2500\u25ba IAM  \u2502                                           \u2502\n\u2502             \u2502                                           \u2502\n\u2502   --target RDS \u2192 only {VPC (if changed), RDS} execute  \u2502\n\u2502   S3, EKS, IAM, ALB, CloudFront are all SKIPPED        \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n> **Important:** The state is still *recorded* for all resources after the up. Pulumi just doesn't *apply* changes to non-targeted resources. If a non-targeted resource was already drifted, that drift persists until a full `pulumi up` is run.\n\n### In the canonical scenario:\n\nIf the RDS replace is destructive and you want to **only** bring up the new RDS instance without touching the cluster or S3:\n\n```bash\n# This will:\n#   1. Create the new RDS (replacement)\n#   2. Update any upstream deps (VPC subnets if they changed)\n#   3. Skip: S3, EKS, IAM, ALB, CloudFront\npulumi up --target 'urn:pulumi:prod::canonical::aws:rds:Instance::app-db'\n```\n\n---\n\n## 3. How Does Pulumi Handle Secrets in Outputs?\n\n### Storage layer (at rest)\n\nWhen you run:\n```bash\npulumi config set --secret db.connectionString 'postgresql://user:pass@host:5432/db'\n```\n\nThe `prod.yaml` file contains **not** the plaintext, but:\n\n```yaml\nconfig:\n  canonical:db:connectionString:\n    1:\n      ciphertext: \"AvJi...\"   # AES-256-GCM encrypted with the stack passphrase or KMS key\n```\n\nThe `1:` prefix is Pulumi's marker for a secret envelope.\n\n### In-code access\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\n\nconst config = new pulumi.Config(\"canonical\");\nconst dbConnectionString = config.requireSecret(\"db:connectionString\");\n// Type: SecretOutput<string>\n```\n\n### Automatic propagation to outputs\n\nPulumi **automatically marks** any output that *contains* a secret value as a secret. This is transitive:\n\n```typescript\n// The connection string is a secret\nconst connStr = config.requireSecret(\"db:connectionString\");\n\n// This output is NOW automatically a secret (transitively)\nconst dbInfo = pulumi.output({\n  identifier: dbInstance.id,\n  connectionString: connStr,  // \u2190 secret input flows into output\n});\n\nexport const dbEndpoint = dbInfo;\n```\n\nIn the CLI, the output renders as:\n\n```\n    dbEndpoint: {\n        identifier: \"app-db-abc123\"\n        connectionString: [secret]\n    }\n```\n\n### Viewing secrets\n\n| Command | Shows |\n|---------|-------|\n| `pulumi stack output` | Secrets shown as `[secret]` |\n| `pulumi stack output --show-secrets` | Reveals plaintext (requires passphrase) |\n| `pulumi config --show-secrets` | Reveals config secrets |\n| Pulumi Service UI | Always masked; requires explicit \"reveal\" action |\n\n### State file encoding\n\nIn the serialized state (`.pulumi` directory or Pulumi Service), the secret is stored as:\n\n```json\n{\n  \"outputs\": {\n    \"dbEndpoint\": {\n      \"value\": {\n        \"identifier\": \"app-db-abc123\",\n        \"connectionString\": {\n          \"4dabf18193072939515e22adb298388d\": \"AvJi...\"\n        }\n      },\n      \"secret\": true\n    }\n  }\n}\n```\n\nThe key `4dabf18193072939515e22adb298388d` is the UUID Pulumi uses to identify the \"default\" secret provider (passphrase or KMS).\n\n### Canonical scenario compliance\n\n| Requirement | Mechanism |\n|-------------|-----------|\n| Never stored in plaintext in Git | `pulumi config set --secret` \u2192 ciphertext in `dev.yaml`/`prod.yaml` |\n| Encrypted at rest | AES-256-GCM (local) or AWS KMS (cloud) |\n| Not leaked in logs/outputs | Auto `[secret]` redaction in all CLI output |\n| Not leaked to the cluster | Pass as a secret value into a Kubernetes `Secret` resource via `pulumi.secret()` or the provider's `secret` input flag |\n\n```typescript\n// Idiomatically exposing the secret to the app without leaking to outputs\nimport * as k8s from \"@pulumi/kubernetes\";\n\nconst dbSecret = new k8s.core.v1.Secret(\"app-db-secret\", {\n    data: {\n        \"connection-string\": connStr,  // SecretOutput \u2014 provider handles encryption\n    },\n    type: \"Opaque\",\n});\n\n// If you need to export it (discouraged), it stays marked:\nexport const dbSecretName = dbSecret.metadata.name;  // safe \u2014 just a name\n// export const dbSecretData = dbSecret.data;        // would show [secret]\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_0.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_1.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_2.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_3.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-rofblxj2/generated_0.json"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/pulumi-typescript/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.6666666666666666,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.6666666666666666
+    },
+    "published_composite_no_idiom": 0.75,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

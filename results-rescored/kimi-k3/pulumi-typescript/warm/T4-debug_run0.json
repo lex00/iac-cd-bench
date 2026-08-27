@@ -1,0 +1,92 @@
+{
+  "model": "kimi-k3",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2n5tf7sw/database.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2n5tf7sw/database.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "/opt/homebrew/opt/python@3.13/bin/python3.13: No module named pytest\n",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 621,
+    "output": 2842
+  },
+  "content": "I'll fix the Pulumi TypeScript preview crash caused by async misuse and incorrect `pulumi.output()` wrapping. Let me analyze the common patterns and provide corrected code.\n\n## Root Causes\n\n1. **Async misuse**: Using `async/await` inside resource constructors or `.apply()` callbacks where Pulumi expects synchronous `Output` transformations\n2. **Wrong `pulumi.output()` wrapping**: Double-wrapping outputs, wrapping already-Output values, or using `pulumi.output()` on Promises instead of `Output`s\n\n## Fixed Implementation\n\n### `index.ts` (Entry Point)\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\nimport * as eks from \"@pulumi/eks\";\nimport * as k8s from \"@pulumi/kubernetes\";\nimport { Networking } from \"./networking\";\nimport { Database } from \"./database\";\nimport { Storage } from \"./storage\";\nimport { Identity } from \"./identity\";\nimport { Secrets } from \"./secrets\";\n\nconst config = new pulumi.Config();\nconst env = pulumi.getStack(); // \"dev\" or \"prod\"\n\n// Environment configuration - no async here, just plain objects\nconst envConfig = {\n    dev: {\n        nodeCount: 2,\n        nodeType: \"t3.medium\",\n        dbClass: \"db.t3.micro\",\n        multiAz: false,\n        replication: false,\n        region: \"us-east-1\",\n    },\n    prod: {\n        nodeCount: 4,\n        nodeType: \"t3.large\",\n        dbClass: \"db.t3.medium\",\n        multiAz: true,\n        replication: true,\n        region: \"us-east-1\", // primary, replication to us-west-2\n    },\n}[env] || {\n    nodeCount: 2,\n    nodeType: \"t3.medium\",\n    dbClass: \"db.t3.micro\",\n    multiAz: false,\n    replication: false,\n    region: \"us-east-1\",\n};\n\n// FIX: Don't use async/await at top level for resource creation\n// FIX: Pass plain values, let Pulumi handle the dependency graph\nconst networking = new Networking(\"networking\", {\n    cidrBlock: \"10.0.0.0/16\",\n    environment: env,\n});\n\nconst identity = new Identity(\"identity\", {\n    environment: env,\n    oidcProvider: networking.oidcProvider, // Output<string> is fine here\n});\n\nconst storage = new Storage(\"storage\", {\n    environment: env,\n    enableReplication: envConfig.replication,\n    kmsKeyArn: identity.kmsKeyArn, // Pass Output directly, don't unwrap\n});\n\nconst database = new Database(\"database\", {\n    environment: env,\n    dbClass: envConfig.dbClass,\n    multiAz: envConfig.multiAz,\n    subnetIds: networking.privateSubnetIds, // Output<string[]>\n    securityGroupId: networking.dbSecurityGroupId,\n    kmsKeyArn: identity.kmsKeyArn,\n});\n\n// FIX: Don't wrap cluster creation in async function\nconst cluster = new eks.Cluster(\"cluster\", {\n    vpcId: networking.vpcId,\n    privateSubnetIds: networking.privateSubnetIds,\n    publicSubnetIds: networking.publicSubnetIds,\n    instanceType: envConfig.nodeType,\n    desiredCapacity: envConfig.nodeCount,\n    minSize: 1,\n    maxSize: envConfig.nodeCount + 2,\n    providerCredentialOpts: {\n        roleArn: identity.clusterRoleArn, // Output<string>\n    },\n    // FIX: Don't use .apply() here - pass Outputs directly\n    tags: {\n        Environment: env,\n    },\n});\n\n// FIX: Use pulumi.all() for multiple Output dependencies, not async/await\nconst secret = new Secrets(\"secrets\", {\n    environment: env,\n    dbEndpoint: database.endpoint,      // Output<string>\n    dbPassword: database.password,      // Output<string> (secret)\n    dbUsername: database.username,      // Output<string>\n    clusterName: cluster.eksCluster.name, // Output<string>\n});\n\n// FIX: For conditional logic with Outputs, use .apply() correctly\n// Don't do: if (await someOutput) { ... }\n// Do: someOutput.apply(value => { ... })\nexport const kubeconfig = cluster.kubeconfig;\nexport const vpcId = networking.vpcId;\nexport const bucketName = storage.bucketName;\nexport const dbEndpoint = database.endpoint;\n\n// FIX: Don't export async functions that return Outputs\n// Export the Outputs directly, or use .apply() for transformations\nexport const connectionString = pulumi.all([\n    database.endpoint,\n    database.username,\n    database.password,\n]).apply(([endpoint, username, password]) => \n    `postgresql://${username}:${password}@${endpoint}/appdb`\n);\n```\n\n### `storage.ts` - Fixed Output Handling\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\ninterface StorageArgs {\n    environment: string;\n    enableReplication: boolean;\n    kmsKeyArn: pulumi.Input<string>;\n}\n\nexport class Storage extends pulumi.ComponentResource {\n    public readonly bucketName: pulumi.Output<string>;\n    public readonly bucketArn: pulumi.Output<string>;\n\n    constructor(name: string, args: StorageArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"custom:storage:Storage\", name, {}, opts);\n\n        // FIX: Don't do async operations in constructor\n        // FIX: Don't wrap args.kmsKeyArn in pulumi.output() - it's already an Input\n        \n        const bucket = new aws.s3.Bucket(\"app-assets\", {\n            bucket: `app-assets-${args.environment}-${pulumi.getStack()}`,\n            versioning: {\n                enabled: true,\n            },\n            serverSideEncryptionConfiguration: {\n                rule: {\n                    applyServerSideEncryptionByDefault: {\n                        sseAlgorithm: \"aws:kms\",\n                        kmsMasterKeyId: args.kmsKeyArn, // Direct pass, no wrapping\n                    },\n                },\n            },\n            // FIX: Conditional resources use .apply() or separate resources\n        }, { parent: this });\n\n        // FIX: For conditional creation, use count or separate component\n        if (args.enableReplication) {\n            const replicationRole = new aws.iam.Role(\"replication-role\", {\n                assumeRolePolicy: JSON.stringify({\n                    Version: \"2012-10-17\",\n                    Statement: [{\n                        Action: \"sts:AssumeRole\",\n                        Principal: { Service: \"s3.amazonaws.com\" },\n                        Effect: \"Allow\",\n                    }],\n                }),\n            }, { parent: this });\n\n            // Destination bucket in us-west-2\n            const destBucket = new aws.s3.Bucket(\"app-assets-replica\", {\n                bucket: `app-assets-${args.environment}-replica`,\n                versioning: { enabled: true },\n                serverSideEncryptionConfiguration: {\n                    rule: {\n                        applyServerSideEncryptionByDefault: {\n                            sseAlgorithm: \"AES256\",\n                        },\n                    },\n                },\n            }, { parent: this, provider: new aws.Provider(\"us-west-2\", { region: \"us-west-2\" }) });\n\n            new aws.s3.BucketReplicationConfiguration(\"replication\", {\n                bucket: bucket.id,\n                role: replicationRole.arn,\n                rules: [{\n                    id: \"replicate-all\",\n                    status: \"Enabled\",\n                    destination: {\n                        bucket: destBucket.arn,\n                    },\n                }],\n            }, { parent: this });\n        }\n\n        // Block public access\n        new aws.s3.BucketPublicAccessBlock(\"public-access-block\", {\n            bucket: bucket.id,\n            blockPublicAcls: true,\n            blockPublicPolicy: true,\n            ignorePublicAcls: true,\n            restrictPublicBuckets: true,\n        }, { parent: this });\n\n        this.bucketName = bucket.bucket;\n        this.bucketArn = bucket.arn;\n    }\n}\n```\n\n### `database.ts` - Fixed Secret Handling\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\nimport * as random from \"@pulumi/random\";\n\ninterface DatabaseArgs {\n    environment: string;\n    dbClass: string;\n    multiAz: boolean;\n    subnetIds: pulumi.Input<pulumi.Input<string>[]>;\n    securityGroupId: pulumi.Input<string>;\n    kmsKeyArn: pulumi.Input<string>;\n}\n\nexport class Database extends pulumi.ComponentResource {\n    public readonly endpoint: pulumi.Output<string>;\n    public readonly username: pulumi.Output<string>;\n    public readonly password: pulumi.Output<string>; // This is a secret Output\n\n    constructor(name: string, args: DatabaseArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"custom:database:Database\", name, {}, opts);\n\n        // FIX: Generate password without async/await\n        const dbPassword = new random.RandomPassword(\"db-password\", {\n            length: 32,\n            special: true,\n            overrideSpecial: \"!#$%&*()-_=+[]{}<>:?\",\n        }, { parent: this });\n\n        const subnetGroup = new aws.rds.SubnetGroup(\"db-subnet-group\", {\n            subnetIds: args.subnetIds, // Direct pass\n        }, { parent: this });\n\n        const db = new aws.rds.Instance(\"postgres\", {\n            engine: \"postgres\",\n            engineVersion: \"15.4\",\n            instanceClass: args.dbClass,\n            allocatedStorage: 20,\n            storageEncrypted: true,\n            kmsKeyId: args.kmsKeyArn,\n            dbName: \"appdb\",\n            username: \"dbadmin\",\n            password: dbPassword.result, // Output<string> marked as secret\n            dbSubnetGroupName: subnetGroup.name,\n            vpcSecurityGroupIds: [args.securityGroupId],\n            multiAz: args.multiAz,\n            publiclyAccessible: false,\n            deletionProtection: true,\n            backupRetentionPeriod: 7,\n            skipFinalSnapshot: args.environment === \"dev\", // Only skip in dev\n            finalSnapshotIdentifier: args.environment === \"prod\" ? \n                `final-snapshot-${Date.now()}` : undefined,\n        }, { parent: this });\n\n        this.endpoint = db.endpoint;\n        this.username = db.username;\n        // FIX: Mark as secret using pulumi.secret(), not async wrapping\n        this.password = pulumi.secret(dbPassword.result);\n    }\n}\n```\n\n### `secrets.ts` - Fixed ConfigSecret Pattern\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as k8s from \"@pulumi/kubernetes\";\n\ninterface SecretsArgs {\n    environment: string;\n    dbEndpoint: pulumi.Input<string>;\n    dbPassword: pulumi.Input<string>;\n    dbUsername: pulumi.Input<string>;\n    clusterName: pulumi.Input<string>;\n}\n\nexport class Secrets extends pulumi.ComponentResource {\n    constructor(name: string, args: SecretsArgs, opts?: pulumi.ComponentResourceOptions) {\n        super(\"custom:secrets:Secrets\", name, {}, opts);\n\n        // FIX: Use pulumi.all() for combining multiple secrets, not async/await\n        const connectionString = pulumi.all([\n            args.dbEndpoint,\n            args.dbUsername,\n            args.dbPassword,\n        ]).apply(([endpoint, username, password]) => \n            `postgresql://${username}:${password}@${endpoint}/appdb`\n        );\n\n        // FIX: Create k8s secret without wrapping in async function\n        const dbSecret = new k8s.core.v1.Secret(\"db-connection\", {\n            metadata: {\n                name: \"db-connection\",\n                namespace: \"default\",\n            },\n            stringData: {\n                // FIX: Don't use await here - pass the Output directly\n                // Pulumi will serialize this correctly\n                connectionString: connectionString,\n            },\n        }, { \n            parent: this,\n            // FIX: Ensure provider is passed correctly, not created async\n            provider: opts?.provider,\n        });\n\n        // FIX: For SOPS-encrypted secrets, use ConfigSecret at stack level\n        // This is done in the stack config, not in component code\n    }\n}\n```\n\n### Stack Configuration (`Pulumi.dev.yaml`)\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  aws:region: us-east-1\n  # FIX: Use Pulumi's built-in secret encryption, not async wrapping\n  db:password:\n    secure: AAABAH... [encrypted with Pulumi's secret provider]\n```\n\n## Key Fixes Summary\n\n| Anti-Pattern (Crash Cause) | Correct Pattern |\n|---------------------------|-----------------|\n| `const value = await someOutput` | `someOutput.apply(v => ...)` or pass Output directly |\n| `pulumi.output(pulumi.output(x))` | `pulumi.output(x)` once, or just use `x` if already Output |\n| `pulumi.output(async () => {...})` | `pulumi.output(pulumi.all([...]).apply(...))` |\n| `new Resource({ prop: await output })` | `new Resource({ prop: output })` |\n| `if (await condition) { new Resource(...) }` | `condition.apply(c => c ? new Resource(...) : undefined)` |\n| `export async function getX(): Promise<Output<T>>` | `export const x: Output<T>` |\n\n## Verification Commands\n\n```bash\n# Type check\nnpm run build\n\n# Preview should not crash\npulumi preview --stack dev\n\n# Verify no plaintext secrets in state\npulumi stack export --stack dev | grep -i password\n```\n\nThe crash was caused by mixing synchronous Pulumi resource creation with asynchronous JavaScript patterns. Pulumi's dependency graph requires all resources to be registered synchronously, with `Output` values representing future resolution, not `Promise` values requiring `await`.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2n5tf7sw/index.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2n5tf7sw/storage.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2n5tf7sw/database.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2n5tf7sw/secrets.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2n5tf7sw/Pulumi.dev.yaml"
+  ],
+  "score": {
+    "correctness": 0.3333333333333333,
+    "attempted_stages": 3,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.42857142857142855
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "kimi-k3/pulumi-typescript/warm/T4-debug_run0.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0.3333333333333333,
+      "attempted_stages": 3,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.42857142857142855
+    },
+    "corrected_composite_no_idiom": 0.5,
+    "validity_verdict": "invalid",
+    "invalid_reasons": [
+      "tool_missing_scored_as_pass: stage `static` recorded a pass with its binary absent (pulumi) \u2014 nothing was checked (#56)"
+    ],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": []
+  }
+}

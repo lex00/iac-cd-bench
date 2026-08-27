@@ -1,0 +1,88 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 1103
+  },
+  "content": "Here\u2019s how Terraform behaves in this scenario.\n\n## 1. When a variable flips, what does the next plan show?\n\nTerraform compares:\n\n- the **configuration** (`.tf` files + variable values)\n- against the **state** (`terraform.tfstate`)\n- and sometimes provider-read real infrastructure during refresh\n\nSo if a variable changes, the next `terraform plan` shows the delta required to make reality match the new desired config.\n\n### Example\nIf `var.environment = \"dev\"` changes to `\"prod\"` and that affects:\n\n- RDS class: `db.t3.micro` \u2192 `db.t3.medium`\n- EKS node count: `2` \u2192 `4`\n- S3 replication: disabled \u2192 enabled\n\nthen the plan will show changes like:\n\n- `~` for in-place updates\n- `+` for new resources\n- `-` for removed resources\n- `-/+` or \u201creplace\u201d if a resource must be recreated\n\nExample patterns:\n\n- `~ aws_db_instance.main` if instance class can be modified in place\n- `~ aws_eks_node_group.app` if scaling changes\n- `+ aws_s3_bucket_replication_configuration.replication` if prod adds replication\n- possibly `-/+` if some argument is `ForceNew`\n\nSo the answer is: **the next plan shows the difference between current state and the new variable-driven configuration.**\n\n---\n\n## 2. What happens if the state file is deleted?\n\nIf the state file is deleted, Terraform loses its memory of what it manages.\n\n### On the next `plan`\nTerraform sees the configuration, but no tracked resources in state, so it typically plans to:\n\n- **create everything again** (`+` on all resources)\n\nbecause from Terraform\u2019s perspective, nothing exists.\n\n### Important nuance\nThe actual cloud resources may still exist in AWS, but Terraform no longer knows they are the same objects.\n\nThis can lead to:\n\n- duplicate-create attempts\n- name conflicts\n- failures because unique resources already exist\n- dangerous drift between real infra and Terraform tracking\n\n### Recovery options\nUsually you would:\n\n- restore the state from backup, or\n- use `terraform import` to re-associate existing resources with state\n\nIf you use a **remote backend** like S3 + DynamoDB locking, deleting only a local file may not matter if the real state is remote.\n\nSo the practical answer is:\n\n- **If the real Terraform state is deleted, Terraform will plan to recreate resources.**\n- **If the infrastructure already exists, apply may fail or create duplicates unless you import/restore state.**\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\nFor an RDS class change like:\n\n- `db.t3.micro` \u2192 `db.t3.medium`\n\nTerraform usually treats this as a **modifiable attribute** on `aws_db_instance`, so the plan commonly shows:\n\n- `~` update in place\n\nExample idea:\n\n```hcl\n~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n```\n\n### What actually happens\nOn apply:\n\n- Terraform calls AWS to modify the DB instance\n- AWS may apply it:\n  - immediately, or\n  - during the maintenance window, depending on `apply_immediately`\n\n### Replacement?\nUsually **instance class changes do not require replacement**, but some RDS argument changes do. If a change is immutable/ForceNew, Terraform would show a replacement as:\n\n- `-/+` resource replacement\n\nFor this specific question, the typical answer is:\n\n- **Terraform plans an in-place update (`~`) for the RDS instance class**\n- **AWS performs the modification, possibly with downtime/restart depending on the change and settings**\n\n---\n\n## 4. What is the difference between state and configuration?\n\n### Configuration\nThis is your Terraform code:\n\n- `.tf` files\n- variables\n- modules\n- outputs\n\nIt describes the **desired state**.\n\nExample:\n- \u201cI want an RDS instance of class `db.t3.medium`\u201d\n- \u201cI want a versioned encrypted S3 bucket\u201d\n- \u201cI want 4 EKS nodes in prod\u201d\n\n### State\nThis is Terraform\u2019s recorded knowledge of managed resources:\n\n- resource IDs\n- current known attributes\n- dependency data\n- mappings between config addresses and real cloud objects\n\nIt represents Terraform\u2019s understanding of the **current managed state**.\n\n### Simple distinction\n- **Configuration** = what you want\n- **State** = what Terraform believes currently exists and manages\n\n### Why both matter\nTerraform plan works by comparing:\n\n**configuration vs state**\n\nThen it decides whether to:\n\n- create\n- update\n- destroy\n- replace\n\n---\n\n## Short answer summary\n\n1. **Variable flips** \u2192 next plan shows the diff caused by the new desired values (`~`, `+`, `-`, or replacement).\n2. **State file deleted** \u2192 Terraform usually plans to create everything again because it no longer tracks existing resources.\n3. **RDS instance class change** \u2192 usually an **in-place update** (`~`), not replacement, though AWS may reboot/apply during maintenance.\n4. **State vs configuration**:\n   - configuration = desired infrastructure\n   - state = Terraform\u2019s record of managed real infrastructure\n\nIf you want, I can also show a **sample Terraform plan output** for dev \u2192 prod in this exact scenario.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-5wznl2dx/terraform.tfstate"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4/terraform/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

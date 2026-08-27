@@ -1,0 +1,88 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 737
+  },
+  "content": "# Pulumi Preview Behavior \u2014 Analysis\n\n## 1. Which property triggered the replace?\n\nThe DB (RDS instance) shows a **replace** because a change to a property marked **`replaceOnChanges: true`** (or one that AWS-classic treats as requiring replacement) was detected. In this scenario, likely candidates:\n\n- **`instanceClass`** (`db.t3.micro` \u2192 `db.t3.medium` for the dev\u2192prod sizing difference) \u2014 with `replaceOnChanges: [\"instanceClass\"]` if explicitly configured.\n- Other replacement-class properties natively: `engine`, `engineVersion`, `storageType`, `identifier`, or changing `multiAz` alongside `allocatedStorage`/`instanceClass` in aws-classic (instance resize is actually an in-place update in aws-classic, so an explicit `replaceOnChanges` is the common way a replace appears on size change).\n\n**How to identify it:** the preview output shows:\n\n```\n~ db: aws:rds/Instance:Instance (replace)\n    ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\"\n```\n\nThe line(s) prefixed with `~` under `(replace)` are the triggering property(ies). Pulumi diffs the **new inputs** against **last-deployed state**, not the live cloud resource.\n\n## 2. What does `pulumi up --target` skip?\n\n`--target` (e.g. `pulumi up --target 'urn:pulumi:prod::app::aws:rds/Instance::db'`) does an **exact-URN partial update**:\n\n- **Skipped:** every resource **not** in the target list \u2014 no diffs computed against them, no updates, no creates of *new* dependencies that aren't targeted.\n- **Critically, it also skips dependents' updates and can skip necessary replacement steps**: if the replace requires downstream resources (e.g., a secret value or K8s config referencing the new endpoint) those are *not* updated. Pulumi will warn (`warning: changes to ... will be skipped`).\n- It does **not** skip targeting side effects like deletion of the old DB during a replace (that's part of the targeted resource's own operation), but cascading updates to `dependsOn` consumers are skipped unless you also pass `--target-dependents`.\n- Alias/route changes and stack outputs are still computed, but resource operations on non-targets are not performed.\n\nUse `--target-dependents` to include resources that transitively depend on the target.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- **`pulumi.secret(...)` / `Config.getSecret(...)`** wraps values in an **encrypted secret** \u2014 in state they're stored **ciphertext** (encrypted with the stack's passphrase or KMS/keys from the Pulumi Cloud backend).\n- **Preview output:** secret values are masked as `[secret]` \u2014 the actual value never appears in CLI output, logs, or the Pulumi service UI.\n- **Propagation:** secret-ness is **contagious** \u2014 any output derived from a secret (including resource outputs used as inputs to other resources) remains encrypted in state.\n- **Access:** consuming code sees plaintext only in-process (`apply`), or explicitly via `pulumi stack output --show-secrets`.\n- In this stack, the DB connection string should be `config.getSecret(\"dbPassword\")` and composed into the connection string via `pulumi.secret(...)`, satisfying acceptance criterion 3 (never plaintext in Git or state).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-2rzz2dho/generated_0.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "glm-5.3-low/pulumi-typescript/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

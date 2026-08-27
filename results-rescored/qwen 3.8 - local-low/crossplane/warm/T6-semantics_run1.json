@@ -1,0 +1,89 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T6-semantics",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "llecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q1_claim_delete_cascades FAILED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q2_orphan_bucket_survives PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q3_delete_policy_removes_role PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q4_manual_update_policy_pins_revision PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q5_claim_connection_secret_location PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q6_parallel_convergence PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q7_claim_namespaced_xr_cluster_scoped PASSED [100%]\n\n=================================== FAILURES ===================================\nE   AssertionError: q1: expected deleted, got 'kept'\n    assert 'delet' in 'kept'\n     +  where 'kept' = _norm('kept')\n     +    where 'kept' = <built-in method get of dict object at 0x106852080>('q1', '')\n     +      where <built-in method get of dict object at 0x106852080> = {'q1': 'kept', 'q2': 'exists', 'q3': 'deleted', 'q4': 'manual', ...}.get\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py:53: AssertionError: q1: expected deleted, got 'kept'\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T6-semantics/tests/test_task.py::test_q1_claim_delete_cascades\n========================= 1 failed, 6 passed in 0.01s ==========================\n",
+      "passed_count": 6,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1967,
+    "output": 2878
+  },
+  "content": "\n\n```json\n{\n  \"q1\": \"kept\",\n  \"q2\": \"exists\",\n  \"q3\": \"deleted\",\n  \"q4\": \"manual\",\n  \"q5\": {\n    \"name\": \"storefront-conn\",\n    \"namespace\": \"team-a\"\n  },\n  \"q6\": \"parallel-converge\",\n  \"q7\": {\n    \"claim\": \"namespaced\",\n    \"xr\": \"cluster-scoped\"\n  }\n}\n```\n\n**Reasoning summary:**\n\n| Q | Key detail |\n|---|---|\n| **Q1** | The Bucket's `deletionPolicy: Orphan` means its managed-resource object is **not** deleted from the cluster when the composite is removed \u2014 only the Crossplane finalizer is stripped. The Role and RolePolicyAttachment (both `Delete`) are removed. Since not all three are deleted, the answer is *kept*. |\n| **Q2** | Because the Bucket object is orphaned (still in the cluster, provider finalizer intact), the AWS S3 bucket is never touched. Even in the hypothetical deletion path, `forceDestroy: false` would block deletion of a non-empty bucket. \u2192 *exists*. |\n| **Q3** | The Role has `deletionPolicy: Delete`; the managed-resource object is deleted, its provider finalizer fires, and the IAM role is removed from AWS. \u2192 *deleted*. |\n| **Q4** | The claim explicitly sets `compositionUpdatePolicy: Manual`, so a new CompositionRevision is **not** adopted automatically. \u2192 *manual*. |\n| **Q5** | The app team reads the **claim's** connection secret, governed by `writeConnectionSecretToRef` on the claim: name `storefront-conn`, namespace defaults to the claim's namespace `team-a`. The Composition's `writeConnectionSecretsToNamespace: crossplane-system` controls only the intermediate composite-level secret. |\n| **Q6** | Crossplane renders all composed resources in a single reconciliation pass and relies on subsequent reconciles to resolve cross-resource dependencies (e.g., `role-attachment` reading `status.roleName`). It does **not** enforce sequential ordering. \u2192 *parallel-converge*. |\n| **Q7** | By Crossplane design, claims (`WebService`) are **namespaced** (per-team ACL), while the composite/XR (`XWebService`) is **cluster-scoped** (global reconciliation). |",
+  "score": {
+    "correctness": 1.0,
+    "attempted_stages": 1,
+    "completeness": 0.8571428571428571,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "completeness",
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.746031746031746
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/crossplane/warm/T6-semantics_run1.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.746031746031746
+    },
+    "published_composite_no_idiom": 0.8392857142857143,
+    "corrected_score": {
+      "correctness": 1.0,
+      "attempted_stages": 1,
+      "completeness": 0.8571428571428571,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "completeness",
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.746031746031746
+    },
+    "corrected_composite_no_idiom": 0.8392857142857143,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static"
+    ]
+  }
+}

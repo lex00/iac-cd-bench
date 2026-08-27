@@ -1,0 +1,94 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 988,
+    "output": 2456
+  },
+  "content": "\n\n# Terraform Plan Behavior \u2014 Predicted Outcomes\n\n## 1. What Does the Next Plan Show When a Variable Flips?\n\nWhen a variable changes (e.g., in `prod.tfvars` you change `eks_node_count` from `4` to `6`), the next `terraform plan` shows **only the delta** between the current state and the new desired configuration:\n\n```hcl\n# prod.tfvars (changed)\neks_node_count = 6   # was 4\n```\n\n**Plan output:**\n\n```\nTerraform used the selected providers to generate the following execution plan.\nResource actions are indicated with the following symbols:\n  ~ update in-place\n\nTerraform will perform the following 1 action:\n\n  # module.eks.aws_eks_node_group.workers will be updated in-place\n  ~ resource \"aws_eks_node_group\" \"workers\" {\n        ~ scaling_config = {\n            ~ max_size       = 4 -> 6\n            ~ min_size       = 4 -> 6\n              desired_size   = 4 -> 6\n        }\n    # (1 unchanged attribute hidden)\n  }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\n**Key points:**\n- Only the affected resource appears in the plan.\n- Resources unaffected by the variable change are **not** listed.\n- The plan is **idempotent** \u2014 running it twice with no further changes yields an empty plan (`No changes. Your infrastructure matches the configuration.`).\n- If the variable controls a field that requires **replacement** (e.g., `availability_zone` on RDS), the plan shows a destroy + create (`-/+`) instead of an in-place update (`~`).\n\n---\n\n## 2. What Happens If the State File Is Deleted?\n\nThis is the most destructive scenario. If `.terraform.tfstate` (or the remote backend state) is deleted:\n\n```\nTerraform will perform the following actions:\n\n  + resource \"aws_eks_cluster\" \"main\" will be created\n  + resource \"aws_eks_node_group\" \"workers\" will be created\n  + resource \"aws_s3_bucket\" \"assets\" will be created\n  + resource \"aws_db_instance\" \"postgres\" will be created\n  + resource \"aws_iam_role\" \"service\" will be created\n  # ... (every resource in the configuration)\n\nPlan: 8 to add, 0 to change, 0 to destroy.\n```\n\n**Why:**\n| Terraform's View | Reality |\n|---|---|\n| State is empty \u2192 \"nothing exists\" | All resources exist in the cloud |\n| Configuration says \"these should exist\" | |\n| **Plan = Config \u2212 State = everything** | |\n\n**Consequences of `terraform apply`:**\n- **S3 bucket** \u2192 Error: `BucketAlreadyExists` (or creates a bucket with a new name if the config includes a suffix)\n- **EKS cluster** \u2192 Error: cluster name already taken, or creates a duplicate\n- **RDS instance** \u2192 Error: identifier already in use\n- **IAM role** \u2192 Creates a second role (different ARN)\n- **No resources are destroyed** \u2014 Terraform has no record of them\n\n**Recovery:**\n```bash\n# Re-import resources one by one\nterraform import module.eks.aws_eks_cluster.main prod-cluster\nterraform import module.rds.aws_db_instance.postgres db-prod-01\nterraform import module.s3.aws_s3_bucket.assets prod-assets-bucket\n# ... etc.\n```\n\n> **Prevention:** Always use a **remote backend** (S3 + DynamoDB locking, Terraform Cloud, etc.) with state versioning and access controls.\n\n---\n\n## 3. How Does Terraform Handle the RDS Instance Class Change?\n\nChanging `instance_class` on an RDS instance is an **in-place update** \u2014 no replacement required.\n\n```hcl\n# Before (dev.tfvars)\nrds_instance_class = \"db.t3.micro\"\n\n# After (prod.tfvars \u2014 or a promotion)\nrds_instance_class = \"db.t3.medium\"\n```\n\n**Plan output:**\n\n```\nTerraform will perform the following 1 action:\n\n  # module.rds.aws_db_instance.postgres will be updated in-place\n  ~ resource \"aws_db_instance\" \"postgres\" {\n        ~ instance_class      = \"db.t3.micro\" -> \"db.t3.medium\"\n      ~ allocated_storage     = 20 -> 100   # if also changed\n        # (22 unchanged attributes hidden)\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\n**What happens under the hood:**\n1. Terraform calls the AWS RDS API `ModifyDBInstance` with the new `DBInstanceClass`.\n2. RDS performs a **reboot + resize** (the instance is briefly unavailable).\n3. The `apply` blocks until the instance reaches `available` status.\n4. State is updated with the new `instance_class` value.\n\n**When would it require replacement instead?**\n\n| Attribute Change | Behavior |\n|---|---|\n| `instance_class` | `~` in-place update |\n| `allocated_storage` (increase) | `~` in-place update |\n| `availability_zone` | `-/+` **replace** (destroy + create) |\n| `engine` | `-/+` **replace** |\n| `identifier` | `-/+` **replace** |\n| `multi_az` (false \u2192 true) | `~` in-place update (but brief interruption) |\n\n**Force replacement** (if needed):\n```bash\nterraform apply -replace module.rds.aws_db_instance.postgres\n```\n\n---\n\n## 4. What Is the Difference Between State and Configuration?\n\nThis is the foundational mental model of Terraform:\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502                    TERRAFORM PLANNING MODEL                      \u2502\n\u2502                                                                 \u2502\n\u2502   \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510         \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510                    \u2502\n\u2502   \u2502 CONFIGURATION \u2502         \u2502    STATE     \u2502                    \u2502\n\u2502   \u2502  (.tf files)  \u2502         \u2502 (.tfstate /  \u2502                    \u2502\n\u2502   \u2502              \u2502         \u2502  remote)     \u2502                    \u2502\n\u2502   \u2502  \"What I     \u2502         \u2502  \"What       \u2502                    \u2502\n\u2502   \u2502   WANT\"      \u2502         \u2502   EXISTS\"    \u2502                    \u2502\n\u2502   \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518         \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518                    \u2502\n\u2502          \u2502                         \u2502                            \u2502\n\u2502          \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518                            \u2502\n\u2502                       \u25bc                                        \u2502\n\u2502              \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510                                \u2502\n\u2502              \u2502     PLAN       \u2502                                \u2502\n\u2502              \u2502  (the diff)    \u2502                                \u2502\n\u2502              \u2502                \u2502                                \u2502\n\u2502              \u2502  Config \u2212 State\u2502                                \u2502\n\u2502              \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u252c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518                                \u2502\n\u2502                      \u25bc                                         \u2502\n\u2502              \u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510                                \u2502\n\u2502              \u2502    APPLY       \u2502                                \u2502\n\u2502              \u2502  (executes the \u2502                                \u2502\n\u2502              \u2502   plan, updates\u2502                                \u2502\n\u2502              \u2502   state)       \u2502                                \u2502\n\u2502              \u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518                                \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n| Aspect | Configuration | State |\n|---|---|---|\n| **What it represents** | Desired state (intent) | Actual state (reality) |\n| **Where it lives** | `.tf` files, `.tfvars` (in Git) | `.terraform.tfstate` or remote backend |\n| **Who writes it** | Humans (version-controlled) | Terraform (machine-managed) |\n| **Source of truth** | \"What should be\" | \"What is\" |\n| **Mutability** | Changes via PRs, code review | Changes via `apply` only |\n| **Contains** | Resource types, arguments, data sources, variables, outputs | Resource IDs, computed attributes, dependencies, provider configs |\n| **Example** | `instance_class = \"db.t3.medium\"` | `\"arn:aws:rds:us-east-1:12345:db:prod-01\", instance_class: \"db.t3.medium\", status: \"available\"` |\n\n**Critical implications for the canonical scenario:**\n\n- **Dev and prod are isolated** because they use separate workspaces (or separate state files via `-var-file`). Changing `prod.tfvars` and running `terraform plan -state=prod.tfstate` will **never** touch dev state.\n- **Drift detection** works because `plan` compares the live infrastructure (fetched via provider reads) against both state and configuration. If someone manually changed the RDS class in the AWS console, `terraform plan` will show a drift:\n  ```\n  ~ instance_class = \"db.t3.micro\" (drifted) -> \"db.t3.medium\" (configured)\n  ```\n- **State is not a backup** \u2014 it's an index. The cloud provider is the actual source of truth for resource attributes; state is Terraform's *map* to those resources.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-octpmbsu/prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-octpmbsu/prod.tfvars",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-octpmbsu/generated_0.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-octpmbsu/generated_1.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-octpmbsu/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-octpmbsu/generated_2.txt",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-octpmbsu/generated_3.txt"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

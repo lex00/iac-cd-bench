@@ -1,0 +1,92 @@
+{
+  "model": "claude-opus-4-8",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1517,
+    "output": 1488
+  },
+  "content": "# Terraform Plan Behavior \u2014 Predictions\n\n## 1. What does the next plan show when a variable flips?\n\nWhen a variable changes (e.g., `db_instance_class` from `db.t3.micro` \u2192 `db.t3.medium`), the plan diffs the **new desired state (config + vars)** against the **recorded state (.tfstate)**.\n\n```hcl\n# Terraform will perform the following actions:\n\n  ~ resource \"aws_db_instance\" \"postgres\" {\n        id             = \"db-ABC123\"\n      ~ instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n        # (30 unchanged attributes hidden)\n    }\n\nPlan: 0 to add, 1 to change, 0 to destroy.\n```\n\nSymbol meaning:\n- `~` = in-place update (mutable attribute)\n- `+/-` (replace) = destroy + recreate (immutable attribute)\n- `+` = create, `-` = destroy\n\nThe plan is only a **preview** \u2014 no state or infra changes until `apply`.\n\n---\n\n## 2. What happens if the state file is deleted?\n\nTerraform loses all knowledge of what it manages. The consequences:\n\n| Aspect | Behavior |\n|---|---|\n| Plan output | Every resource shows as `+ create` (Terraform thinks nothing exists) |\n| Real infrastructure | Still exists in AWS \u2014 untouched by the delete |\n| Apply result | **Duplicate resources** get created, OR errors on unique names (e.g., S3 bucket name collision, RDS identifier conflict) |\n| Recovery | Restore from backend (S3 + DynamoDB lock) or `terraform import` each resource by ID |\n\n**Key point:** deleting state \u2260 deleting infrastructure. It orphans the real resources.\n\n> With a **remote backend** (S3 + versioning), you can recover the prior `.tfstate` version. This is why local state is discouraged for `dev`/`prod`.\n\n---\n\n## 3. How does Terraform handle the RDS instance class change?\n\n`instance_class` is a **mutable** attribute, so Terraform performs an **in-place modify** \u2014 *not* a replace:\n\n```hcl\n  ~ instance_class = \"db.t3.medium\" -> \"db.t3.large\"\n```\n\n- Executes `ModifyDBInstance` via the AWS provider\n- **Does NOT trigger destroy/recreate** \u2014 no data loss\n- Applied during the next maintenance window unless `apply_immediately = true`\n- Multi-AZ (prod) minimizes downtime via failover during the resize\n\n**Contrast \u2014 immutable attributes force replacement:**\n```hcl\n  -/+ resource \"aws_db_instance\" \"postgres\" {\n      ~ engine = \"postgres\" -> \"mysql\" # forces replacement\n    }\n```\nThat would be catastrophic \u2014 and with the spec's `deletion_protection = true` and `backup_retention >= 7`, Terraform would actually **error out** rather than destroy the instance, protecting prod data.\n\n---\n\n## 4. Difference between State and Configuration\n\n| | Configuration (`.tf`) | State (`.tfstate`) |\n|---|---|---|\n| **Represents** | *Desired* state (what you want) | *Current* deployed reality (what exists) |\n| **Authored by** | Humans (declarative HCL) | Terraform (generated/maintained) |\n| **Contains** | Resource blocks, variables, modules | Resource IDs, attributes, metadata, dependencies |\n| **In Git?** | Yes \u2014 source of truth for intent | No \u2014 may contain secrets (e.g., DB connection string); use remote backend |\n| **Mutable by hand?** | Edit freely | Only via `terraform state` commands |\n\n**Plan = the delta between them:**\n\n```\nPlan = diff(Configuration, State)  \u2192  reconcile real infra toward Config\n```\n\n- Config changes but state doesn't \u2192 `apply` needed\n- State drifts from real infra (manual AWS edit) \u2192 next `plan` shows correction (drift detection)\n- Both aligned \u2192 `No changes. Your infrastructure matches the configuration.`\n\n---\n\n### Environment isolation note (per spec AC #7)\n\nUsing `terraform.workspace` or separate `-var-file`:\n\n```bash\nterraform apply -var-file=prod.tfvars   # touches ONLY prod state\n```\n\nBecause dev and prod have **separate state files** (workspaces or backend keys), flipping a prod variable will **never** appear in a dev plan \u2014 satisfying independent deployability.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-3dz4_xn5/generated_0.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-3dz4_xn5/generated_1.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-3dz4_xn5/generated_2.tf",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-terraform-3dz4_xn5/generated_0.txt"
+  ],
+  "regraded_current_harness": true,
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "claude-opus-4-8/terraform/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

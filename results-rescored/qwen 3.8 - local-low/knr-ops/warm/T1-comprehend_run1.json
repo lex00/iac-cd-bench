@@ -1,0 +1,91 @@
+{
+  "model": "qwen 3.8 - local",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 1424,
+    "output": 3375
+  },
+  "content": "\n\n# Delivery Behavior Analysis \u2014 PR #42\n\n## 1. What Reconciles and in What Order\n\nWhen PR #42 merges to `main`, Flux's `GitRepository` source detects the new commit on the next poll interval (or immediately if a GitHub webhook is configured). The reconciliation cascade proceeds according to the `dependsOn` DAG defined in `flux/kustomizations.yaml`:\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  Reconciliation Order (driven by dependsOn)                     \u2502\n\u251c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2524\n\u2502                                                                 \u2502\n\u2502  \u2460 clusters/eksa/          (cluster bootstrap \u2014 no change)      \u2502\n\u2502         \u2193                                                        \u2502\n\u2502  \u2461 infra/s3/               (Bucket CRD added \u2190 NEW)            \u2502\n\u2502  \u2462 infra/rds/              (Instance spec change \u2190 MODIFIED)   \u2502\n\u2502  \u2463 infra/iam/              (unchanged, but still reconciled)    \u2502\n\u2502         \u2193                                                        \u2502\n\u2502  \u2464 infra/app/ via overlays/prod/   (replicas patch \u2190 NEW)     \u2502\n\u2502                                                                 \u2502\n\u2502  \u2464' infra/app/ via overlays/dev/   (no change \u2192 no-op)         \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n**Key points:**\n\n| Step | Resource | Action | Target Cluster |\n|------|----------|--------|----------------|\n| \u2460 | EKS cluster | No spec change \u2192 no-op | Both |\n| \u2461 | S3 Bucket CRD | **Create** new object | Prod (or both, depending on overlay scoping) |\n| \u2462 | RDS Instance CRD | **Update** spec (in-place) | Prod (or both) |\n| \u2463 | IAM | No change \u2192 no-op | Both |\n| \u2464 | App Deployment | **Update** replicas to 4 | **Prod only** |\n| \u2464' | App Deployment | No change \u2192 no-op | Dev |\n\nFlux reconciles each `Kustomization` independently per cluster. The prod and dev clusters are separate Flux controllers (or separate `Kustomization` objects pointing at different overlay paths), so the prod-only patch does not trigger a dev reconciliation.\n\n---\n\n## 2. Does the RDS Instance Get Recreated?\n\n**No. It is modified in place.**\n\n```yaml\n# Before (PR #42 base)\napiVersion: rds.aws.upbound.io/v1beta1\nkind: Instance\nmetadata:\n  name: app-db\nspec:\n  instanceClass: db.t3.micro   # \u2190 old\n\n# After (PR #42)\nspec:\n  instanceClass: db.t3.medium  # \u2190 new\n```\n\n**Why it's an in-place modification, not a recreate:**\n\n1. **ACK behavior:** The ACK RDS controller (`provider-aws-rds`) watches the `Instance` CRD. When it detects a spec change to `instanceClass`, it calls the AWS `ModifyDBInstance` API with `DBInstanceClass=db.t3.medium`. This is an **in-place resize** operation handled by RDS.\n\n2. **RDS semantics:** AWS RDS supports changing instance class on a running instance. The instance briefly enters `modifying` status, resizes, and returns to `available`. The `DBInstanceIdentifier` (and thus the endpoint) remains the same.\n\n3. **No destructive field changed:** Fields like `engine`, `engineVersion`, `allocatedStorage` (if increased), or `multiAZ` changes could trigger different behaviors, but a pure instance-class change is a non-destructive modification.\n\n4. **Kubernetes object identity:** The `metadata.name` and `metadata.namespace` are unchanged, so Flux performs a patch (update), not a delete+create. ACK then translates that to the appropriate AWS API call.\n\n**What you'd observe:**\n```\nkubectl get rds.instance app-db -w\n# STATUS: modifying \u2192 available  (typically 5\u201315 minutes)\n```\n\n> \u26a0\ufe0f **Caveat:** If the overlay also changed `multiAZ` or `allocatedStorage` simultaneously, RDS might require a maintenance window or brief downtime depending on the parameter combination. A pure class bump is zero-downtime for most engines.\n\n---\n\n## 3. What Happens to the S3 Bucket If Its Manifest Is Deleted from Git?\n\nThis is a **destructive cascade**:\n\n```\nGit delete \u2192 Flux prune \u2192 CRD deletion \u2192 AWS S3 bucket deletion\n```\n\n**Step by step:**\n\n| Stage | What Happens |\n|-------|-------------|\n| 1. Git | The `Bucket` CRD YAML file is removed from `infra/s3/` and merged. |\n| 2. Flux Reconcile | The next reconciliation renders the overlay. The `Bucket` resource is **absent** from the rendered output. |\n| 3. Flux Prune | Flux compares the desired state (rendered manifests) against the live cluster state. The `Bucket` CRD object exists in the cluster but not in the desired state \u2192 Flux **deletes** it. |\n| 4. ACK S3 Controller | The `Bucket` CR is deleted. ACK's `provider-aws-s3` controller sees the finalizer and calls `s3:DeleteBucket`. |\n| 5. AWS S3 | The bucket is deleted, including all objects and versions (if versioning is enabled, versioned objects are removed too). |\n\n**Mitigations / safety nets:**\n\n- If the `Bucket` CRD has a **finalizer** with deletion protection (ACK supports `spec.forDeletion: false` or annotation-based protection), the deletion is blocked.\n- If the bucket has **cross-region replication** enabled (per prod spec), deletion will fail until replication is disabled first \u2014 this acts as a natural guard.\n- **Operational guardrail:** Many teams add a `fluxcd.io/ownership` label or use `prune: false` on critical kustomizations to prevent accidental deletion.\n\n> \ud83d\udea8 **This is the most dangerous operation in the PR lifecycle.** Deleting a manifest in a GitOps repo is equivalent to `terraform destroy` for that resource.\n\n---\n\n## 4. How Does Flux Handle the Prod-Only Replica Change?\n\nThe change lives in `overlays/prod/kustomization.yaml`:\n\n```yaml\n# overlays/prod/kustomization.yaml\nresources:\n  - ../../infra/app/deployment.yaml\npatches:\n  - target:\n      kind: Deployment\n      name: app\n    patch: |\n      apiVersion: apps/v1\n      kind: Deployment\n      metadata:\n        name: app\n      spec:\n        replicas: 4        # \u2190 prod-specific\n```\n\n**Flux behavior:**\n\n```\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  Kustomization \"app-prod\"  \u2192  cluster: prod-eksa        \u2502\n\u2502  path:  overlays/prod                                     \u2502\n\u2502  Renders: deployment with replicas: 4                    \u2502\n\u2502  Action:  kubectl apply \u2192 patch Deployment to 4 replicas \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n\n\u250c\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2510\n\u2502  Kustomization \"app-dev\"   \u2192  cluster: dev-eksa         \u2502\n\u2502  path:  overlays/dev                                       \u2502\n\u2502  Renders: deployment with replicas: 1 (base default)      \u2502\n\u2502  Action:  no change \u2192 no-op                               \u2502\n\u2514\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2518\n```\n\n**Key properties:**\n\n- **Isolation is structural:** The prod patch is scoped to `overlays/prod/`. The dev overlay has no such patch, so the dev cluster's deployment is untouched.\n- **No cross-contamination:** Flux reconciles each `Kustomization` independently. The prod change cannot \"leak\" into dev.\n- **Rollback:** Reverting the patch in `overlays/prod/` and committing will cause Flux to reconcile prod back to the previous replica count on the next interval.\n- **Acceptance criterion 7 satisfied:** \"Changing prod does not modify dev state.\"\n\n---\n\n## 5. What Role Does `dependsOn` Play?\n\n`dependsOn` in Flux `Kustomization` resources creates a **directed acyclic graph (DAG)** of reconciliation ordering:\n\n```yaml\n# flux/kustomizations.yaml (simplified)\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: infra-s3\n  namespace: flux-system\nspec:\n  interval: 5m\n  path: ./infra/s3\n  dependsOn:\n    - name: cluster-bootstrap    # \u2190 must succeed first\n\n---\napiVersion: kustomize.toolkit.fluxcd.io/v1\nkind: Kustomization\nmetadata:\n  name: app-deployment\n  namespace: flux-system\nspec:\n  interval: 5m\n  path: ./overlays/prod\n  dependsOn:\n    - name: infra-s3             # \u2190 S3 must be ready\n    - name: infra-rds            # \u2190 RDS must be ready\n    - name: infra-iam            # \u2190 IAM must be ready\n```\n\n**What it guarantees:**\n\n| Aspect | Behavior |\n|--------|----------|\n| **Ordering** | `app-deployment` will **not** begin reconciliation until `infra-s3`, `infra-rds`, and `infra-iam` have all reached `Ready` status. |\n| **Failure gating** | If `infra-rds` fails (e.g., RDS instance stuck in `modifying`), `app-deployment` is **skipped** and waits for the next interval. |\n| **Prevents race conditions** | The app deployment won't be applied before the S3 bucket exists (for asset loading) or before RDS is available (for DB connections). |\n| **No implicit ordering** | Without `dependsOn`, Flux reconciles all kustomizations in parallel. The app could be deployed before RDS exists, causing crash-loop-backoff. |\n| **Not a blocking lock** | `dependsOn` is a gate, not a transaction. Once dependencies are `Ready`, the dependent proceeds independently. There's no \"rollback if dependent fails\" behavior. |\n\n**In the context of PR #42:**\n\n```\ninfra-s3 (create new bucket)  \u2500\u2500\u2510\ninfra-rds (resize instance)    \u2500\u2500\u253c\u2500\u2500\u25ba  app-deployment (replicas: 4)\ninfra-iam (no-op)              \u2500\u2500\u2518\n```\n\n- If the S3 bucket creation fails (e.g., name collision), the app deployment reconciliation is **blocked** until the next interval retries.\n- The RDS resize takes 5\u201315 minutes. The app deployment won't be applied until the RDS instance returns to `available` status and the `Kustomization` reports `Ready`.\n- This ordering ensures the 4 new replicas don't start crashing because their dependencies aren't ready.\n\n---\n\n## Summary Table\n\n| Question | Short Answer |\n|----------|-------------|\n| 1. Order? | Cluster \u2192 S3/RDS/IAM \u2192 App (prod only for replica change) |\n| 2. RDS recreated? | **No** \u2014 in-place `ModifyDBInstance` (class change is non-destructive) |\n| 3. S3 deleted from Git? | **Bucket deleted from AWS** (Flux prune \u2192 CRD delete \u2192 ACK \u2192 S3 DeleteBucket) |\n| 4. Prod-only replica? | Scoped to `overlays/prod/`; dev is untouched; satisfies env isolation |\n| 5. `dependsOn`? | Gates reconciliation order; prevents app from starting before infra is ready |",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-spd4_eoh/flux/kustomizations.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-spd4_eoh/overlays/prod/kustomization.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-spd4_eoh/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-spd4_eoh/generated_3.yaml"
+  ],
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "qwen 3.8 - local-low/knr-ops/warm/T1-comprehend_run1.json",
+    "published_score": {
+      "correctness": 0.3333333333333333,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.5555555555555556
+    },
+    "published_composite_no_idiom": 0.625,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}

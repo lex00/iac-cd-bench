@@ -1,0 +1,85 @@
+{
+  "model": "gpt-5.4",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "static": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "semantic": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    },
+    "e2e": {
+      "skipped": true,
+      "reason": "disabled by spec.yaml (retroactively applied by rescore; the historical run executed this stage anyway because main's runner did not honor spec.yaml stage gating)"
+    }
+  },
+  "tokens": {
+    "input": 991,
+    "output": 771
+  },
+  "content": "Without the actual Pulumi program, config, and preview diff, I can only answer the Pulumi behavior generally:\n\n1. **What triggered the DB replace?**  \n   A replace is triggered by a **force-new / immutable property** on the RDS resource. In the preview, Pulumi usually shows the exact field in the diff and may label it as requiring replacement. For an AWS RDS instance, common replacement-triggering fields include things like:\n   - `storageEncrypted`\n   - `dbSubnetGroupName` in some cases\n   - `availabilityZone` in some cases\n   - `identifier` / `name`\n   - engine settings that can\u2019t be changed in place\n\n   So the practical answer is: **the property marked in the preview as \u201cforces replacement\u201d is the one that triggered it**.\n\n2. **What does `pulumi up --target` skip?**  \n   `--target` tells Pulumi to operate on **only the targeted resource(s)** plus any **required dependencies**. It skips:\n   - unrelated resources in the stack\n   - updates to non-targeted resources\n   - normal full-stack reconciliation for everything outside the target set\n\n   In short: **it does not do a full stack update**.\n\n3. **How does Pulumi handle secrets in outputs?**  \n   Pulumi preserves secret-ness through outputs:\n   - Values loaded with `config.require_secret()` are marked secret\n   - Any `Output` derived from a secret stays secret\n   - Secret outputs are **redacted in CLI output**\n   - Secret values are **encrypted in Pulumi state**, not stored as plaintext\n\n   So if you `pulumi.export()` a secret-derived value, it will still be treated as a **secret output**.\n\nIf you want, I can also show what this looks like in a typical **Pulumi Python + AWS RDS** preview.",
+  "score": {
+    "correctness": 0,
+    "attempted_stages": 0,
+    "completeness": 0.0,
+    "safety": 1.0,
+    "consistency": 0.0,
+    "idiom": 0.0,
+    "applicable_axes": [
+      "consistency",
+      "correctness",
+      "idiom",
+      "safety"
+    ],
+    "composite": 0.2857142857142857
+  },
+  "_rescore": {
+    "method": "recomputation of an already-published run under the corrected scorer (bench/score.py, bench/validate.py, bench/validity.py on branch bench/historical-rescore) \u2014 no model was re-invoked and no original result JSON was modified",
+    "source_file": "gpt-5.4-low/pulumi-python/warm/T1-comprehend_run2.json",
+    "published_score": {
+      "correctness": 1.0,
+      "completeness": 1.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "composite": 0.7777777777777778
+    },
+    "published_composite_no_idiom": 0.875,
+    "corrected_score": {
+      "correctness": 0,
+      "attempted_stages": 0,
+      "completeness": 0.0,
+      "safety": 1.0,
+      "consistency": 0.0,
+      "idiom": 0.0,
+      "applicable_axes": [
+        "consistency",
+        "correctness",
+        "idiom",
+        "safety"
+      ],
+      "composite": 0.2857142857142857
+    },
+    "corrected_composite_no_idiom": 0.3333333333333333,
+    "validity_verdict": "partial",
+    "invalid_reasons": [],
+    "partial_reasons": [
+      "no_stage_ran: every stage was disabled by spec; this run scores on the rubric judge alone",
+      "no_provenance: run predates the provenance stamp \u2014 harness commit, prompt hash and toolchain versions are unrecoverable, so it cannot be compared against another set"
+    ],
+    "retroactively_skipped_stages": [
+      "lint",
+      "static",
+      "semantic"
+    ]
+  }
+}
