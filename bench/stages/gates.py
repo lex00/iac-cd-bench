@@ -358,3 +358,120 @@ class TerraformGate:
 
 
 register(TerraformGate())
+
+
+class KnrOpsGate:
+    """`kustomize build` per overlay, then `flux build` per Flux Kustomization.
+
+    Migrated because both halves had a locate-by-filename defect. Flux
+    Kustomizations were found by two globs encoding the golden's own filenames
+    (#101), so a model writing `flux/logs-bucket-kustomization.yaml` had correct
+    work silently never built; and a file holding no Kustomization was still
+    built under a stem-derived name, producing a failure the harness invented
+    and charged to the model.
+
+    `examined` counts documents rendered, not commands run: a kustomize build
+    that emits an empty stream has validated nothing, whatever its exit code.
+    """
+
+    stack = "knr-ops"
+
+    def run(self, workspace: Path) -> StageResult:
+        from bench.stages.static import _flux_kustomization_files, _flux_kustomization_target
+
+        overlays = sorted({f.parent for f in workspace.rglob("kustomization.yaml")})
+        flux_files = _flux_kustomization_files(workspace)
+        if not overlays and not flux_files:
+            return StageResult(
+                inapplicable=Inapplicable.NO_ARTIFACT,
+                reason="no kustomization and no Flux Kustomization in workspace",
+            )
+
+        result = StageResult()
+        kustomize = shutil.which("kustomize")
+        if kustomize is None and overlays:
+            return StageResult(inapplicable=Inapplicable.GATE_DEFECT,
+                               reason="kustomize is not on PATH")
+        for d in overlays:
+            argv = ("build", "--load-restrictor", "LoadRestrictionsNone", str(d))
+            try:
+                proc = subprocess.run([kustomize, *argv], capture_output=True,
+                                      text=True, timeout=TIMEOUT)
+            except subprocess.TimeoutExpired:
+                result.checks.append(Check(tool="kustomize", argv=argv,
+                                           exit_code=124, examined=0,
+                                           resolved_path=kustomize))
+                continue
+            rendered = sum(1 for ln in (proc.stdout or "").splitlines()
+                           if ln.startswith("kind:"))
+            result.checks.append(Check(
+                tool="kustomize", argv=argv, exit_code=proc.returncode,
+                examined=rendered, resolved_path=kustomize,
+                detail=(proc.stderr or "")[:400],
+            ))
+
+        flux = shutil.which("flux")
+        if flux is None and flux_files:
+            return StageResult(inapplicable=Inapplicable.GATE_DEFECT,
+                               reason="flux is not on PATH")
+        for kfile in flux_files:
+            name, path = _flux_kustomization_target(kfile, workspace)
+            argv = ("build", "kustomization", name, "--path", str(path),
+                    "--kustomization-file", str(kfile), "--dry-run")
+            try:
+                proc = subprocess.run([flux, *argv], capture_output=True,
+                                      text=True, timeout=TIMEOUT)
+            except subprocess.TimeoutExpired:
+                result.checks.append(Check(tool="flux", argv=argv,
+                                           exit_code=124, examined=0,
+                                           resolved_path=flux))
+                continue
+            rendered = sum(1 for ln in (proc.stdout or "").splitlines()
+                           if ln.startswith("kind:"))
+            result.checks.append(Check(
+                tool="flux", argv=argv, exit_code=proc.returncode,
+                examined=rendered, resolved_path=flux,
+                detail=(proc.stderr or "")[:400],
+            ))
+        return result
+
+    def fixture_pass(self, tmp: Path) -> Path:
+        """An overlay whose patches are REFERENCED BY FILE -- the canonical
+        kustomize form, and the one #102's grader could not see at all."""
+        ws = tmp / "knr-good"
+        (ws / "base").mkdir(parents=True, exist_ok=True)
+        (ws / "overlays" / "prod").mkdir(parents=True, exist_ok=True)
+        (ws / "base" / "deployment.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: myapp\n"
+            "spec:\n  replicas: 1\n  selector:\n    matchLabels: {app: myapp}\n"
+            "  template:\n    metadata:\n      labels: {app: myapp}\n"
+            "    spec:\n      containers:\n        - name: app\n          image: nginx\n"
+        )
+        (ws / "base" / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n"
+            "resources:\n  - deployment.yaml\n"
+        )
+        (ws / "overlays" / "prod" / "replicas.yaml").write_text(
+            "apiVersion: apps/v1\nkind: Deployment\nmetadata:\n  name: myapp\n"
+            "spec:\n  replicas: 4\n"
+        )
+        (ws / "overlays" / "prod" / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n"
+            "resources:\n  - ../../base\n"
+            "patches:\n  - path: replicas.yaml\n"
+        )
+        return ws
+
+    def fixture_fail(self, tmp: Path) -> Path:
+        """An overlay referencing a base that does not exist -- the real error
+        models made in coverage-v3 (`accumulating resources ... no such file`)."""
+        ws = tmp / "knr-bad"
+        (ws / "overlays" / "prod").mkdir(parents=True, exist_ok=True)
+        (ws / "overlays" / "prod" / "kustomization.yaml").write_text(
+            "apiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n"
+            "resources:\n  - ../../base\n"
+        )
+        return ws
+
+
+register(KnrOpsGate())
