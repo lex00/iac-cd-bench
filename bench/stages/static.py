@@ -583,6 +583,12 @@ def _pulumi_static(workspace: Path, results: list[str],
     """
     passed = True
 
+    # Derived from the stack under test, not from what happens to be in the
+    # workspace, and computed unconditionally: it is read again by the
+    # requirements scaffold below, which runs whether or not a Pulumi.yaml was
+    # written here.
+    runtime = "nodejs" if stack.endswith("typescript") else "python"
+
     if not any((workspace / n).exists() for n in ("Pulumi.yaml", "Pulumi.yml")):
         # The project NAME is load-bearing, not cosmetic: `pulumi.Config()`
         # with no argument reads the project's own namespace, so inventing a
@@ -591,7 +597,6 @@ def _pulumi_static(workspace: Path, results: list[str],
         # reference implementation resolve config identically.
         golden_yaml = ROOT / "golden-base" / stack / "Pulumi.yaml"
         name = f"iac-cd-bench-{stack}"
-        runtime = "nodejs" if stack.endswith("typescript") else "python"
         if golden_yaml.exists():
             m = re.search(r"^name:\s*(\S+)", golden_yaml.read_text(), re.M)
             if m:
