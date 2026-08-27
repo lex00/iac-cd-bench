@@ -51,7 +51,12 @@ def test_composition_has_readiness_checks(composition_texts):
     assert composition_texts, (
         f"no Composition found in the workspace. Workspace contains: {gl.inventory()}"
     )
-    assert any(
-        "readiness" in t and ("ReadinessChecks" in t or "checkType" in t)
-        for t in composition_texts
-    ), "Composition should have ReadinessChecks defined"
+    # `readinessChecks` is the field's real name on a ComposedTemplate. The
+    # previous assertion wanted "ReadinessChecks" (capital R) or "checkType",
+    # neither of which is a Crossplane spelling -- so a correct answer written
+    # in valid Crossplane could not satisfy it, and only a comment or a
+    # misspelling could (#84's shape).
+    assert any("readinessChecks" in t for t in composition_texts), (
+        "Composition should declare readinessChecks on the composed resource; "
+        "without them it never reports Ready"
+    )

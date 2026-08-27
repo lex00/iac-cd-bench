@@ -361,9 +361,13 @@ XP_SEED_COMPOSITION = (TASKS / "crossplane/T4-debug/seed/composition.yaml").read
 XP_FIXED_COMPOSITION = XP_SEED_COMPOSITION.replace(
     "spec.parameters.storageClass", "spec.parameters.instanceClass"
 ).replace(
-    "readiness: {}",
-    "readiness:\n        policy: DeriveFromCelQuery\n      "
-    "readinessChecks:\n        - type: MatchCondition\n          checkType: MatchCondition",
+    "            patches:",
+    "            readinessChecks:\n"
+    "              - type: MatchCondition\n"
+    "                matchCondition:\n"
+    "                  type: Ready\n"
+    "                  status: \"True\"\n"
+    "            patches:",
 )
 
 

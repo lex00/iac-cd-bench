@@ -6,7 +6,6 @@ metadata:
     provider: aws
     environment: '*'
 spec:
-  type: XAWSWebService
   mode: Pipeline
   compositeTypeRef:
     apiVersion: composite.example.com/v1
