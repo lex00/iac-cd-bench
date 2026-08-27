@@ -158,6 +158,30 @@ def _declared_path(content: str, block_pos: int, code: str, prev_end: int) -> st
     return m.group(1) if m else None
 
 
+def _looks_like_a_module(code: str) -> bool:
+    """Does this TypeScript code look like a module, or just an illustration?
+
+    A fragment with no `import`, no `export`, and no top-level declaration
+    (const/let/var/function/class/type/interface) is plainly an illustration,
+    not a module. This mirrors the K8s guard: a workspace legitimately contains
+    TypeScript snippets quoted for explanation, and materialising every one
+    breaks chant's build on a correct answer.
+    """
+    clean = "\n".join(l for l in code.split("\n") if not l.strip().startswith("//"))
+    if "import" in clean or "export" in clean:
+        return True
+    # Top-level declaration: const/let/var/function/class/type/interface
+    # at the start of a line (after whitespace).
+    for line in clean.split("\n"):
+        stripped = line.lstrip()
+        if stripped and (
+            stripped.startswith(("const ", "let ", "var ", "function ", "class ",
+                                "type ", "interface ", "async function "))
+        ):
+            return True
+    return False
+
+
 def _accepts(stack: str, lang: str, code: str, *, named: bool) -> bool:
     """Per-stack block filter. `named` blocks (those with a path) are held to
     a slightly looser bar than unnamed ones, exactly as before: an untagged
@@ -175,6 +199,10 @@ def _accepts(stack: str, lang: str, code: str, *, named: bool) -> bool:
     if stack in TF_STACKS and lang not in ("hcl", "terraform", ""):
         return False
     if stack in CHANT_STACKS and lang not in ("typescript", "ts", ""):
+        return False
+    if stack in CHANT_STACKS and lang in ("typescript", "ts") and not _looks_like_a_module(code):
+        # For chant, TypeScript fragments that are plainly illustrations, not modules,
+        # should not be materialised as source files (issue #108).
         return False
     return True
 

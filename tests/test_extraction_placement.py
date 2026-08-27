@@ -270,3 +270,122 @@ def test_repeated_prose_mention_does_not_clobber_the_first_block(tmp_path):
     assert "name: first" in (tmp_path / "base/a.yaml").read_text()
     assert len(written) == len({str(p) for p in written}) == 2
     assert "name: second" in (tmp_path / "generated_1.yaml").read_text()
+
+
+# ── issue #108: TypeScript code snippets should not be materialised ─────────
+
+def test_issue_108_snippet_without_declarations_is_not_materialised(tmp_path):
+    """A code snippet quoted from a file (no imports, exports, or declarations)
+    should not be written to the workspace, even with a declared path (issue #108).
+    This is an illustration, not a module."""
+    content = (
+        "The violating prop is `backupRetentionDays: 5` on the call.\n\n"
+        "```typescript\nbackupRetentionDays: 5,\n```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert written == []
+    assert not (tmp_path / "generated_0.ts").exists()
+
+
+def test_issue_108_real_module_with_import_is_materialised(tmp_path):
+    """A real TypeScript module with imports should be materialised,
+    even if unnamed, to preserve the case where a task legitimately expects
+    a single unlabelled code block containing real code."""
+    content = (
+        "Here's the fix:\n\n"
+        "```typescript\n"
+        "import { PostgresInstance } from \"../../../composites/index.js\";\n"
+        "export const database = PostgresInstance({...});\n"
+        "```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert len(written) == 1
+    assert written[0].name == "generated_0.ts"
+    assert "import" in written[0].read_text()
+
+
+def test_issue_108_real_module_with_declaration_is_materialised(tmp_path):
+    """A real TypeScript module with top-level declarations should be materialised."""
+    content = (
+        "`src/composites/index.ts`\n\n"
+        "```ts\n"
+        "export const MINIMUM_BACKUP_RETENTION_DAYS = 7;\n"
+        "```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert rel(tmp_path, written) == ["src/composites/index.ts"]
+    assert "MINIMUM_BACKUP_RETENTION_DAYS" in (tmp_path / "src/composites/index.ts").read_text()
+
+
+def test_issue_108_real_module_with_export_is_materialised(tmp_path):
+    """A real TypeScript module with export statements should be materialised."""
+    content = (
+        "```ts\n"
+        "export const database = PostgresInstance({\n"
+        "  name: \"myapp-prod-db\",\n"
+        "  backupRetentionDays: 7,\n"
+        "});\n"
+        "```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert len(written) == 1
+    assert written[0].name == "generated_0.ts"
+    assert "backupRetentionDays: 7" in written[0].read_text()
+
+
+def test_issue_108_const_declaration_is_a_module(tmp_path):
+    """Code with just a const declaration (no imports/exports) is a module."""
+    content = (
+        "```ts\n"
+        "const retention = props.backupRetentionDays ?? MINIMUM_BACKUP_RETENTION_DAYS;\n"
+        "if (retention < MINIMUM_BACKUP_RETENTION_DAYS) {\n"
+        "  throw new Error(\"retention too low\");\n"
+        "}\n"
+        "```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert len(written) == 1
+    assert written[0].name == "generated_0.ts"
+
+
+def test_issue_108_function_declaration_is_a_module(tmp_path):
+    """Code with a function declaration is a module."""
+    content = (
+        "```ts\n"
+        "function validateBackupRetention(days: number): boolean {\n"
+        "  return days >= 7;\n"
+        "}\n"
+        "```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert len(written) == 1
+    assert written[0].name == "generated_0.ts"
+
+
+def test_issue_108_snippet_with_no_module_markers_unnamed_is_dropped(tmp_path):
+    """An unnamed block with no module markers is dropped entirely."""
+    content = (
+        "The failing line:\n\n"
+        "```ts\nbackupRetentionDays: 5,\n```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert written == []
+
+
+def test_issue_108_snippet_with_no_module_markers_named_is_dropped(tmp_path):
+    """Even with an explicit path, a snippet with no module markers is not written."""
+    content = (
+        "`src/config.ts`\n\n"
+        "```ts\nbackupRetentionDays: 5,\n```"
+    )
+    written = extract_code_blocks(content, tmp_path, "chant")
+
+    assert written == []
+    assert not (tmp_path / "src/config.ts").exists()
