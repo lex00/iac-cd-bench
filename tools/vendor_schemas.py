@@ -111,6 +111,24 @@ WANTED: dict[str, list[str]] = {
         "role_v1beta1.json", "rolepolicy_v1beta1.json", "policy_v1beta1.json",
     ],
     "rds.aws.upbound.io": ["instance_v1beta1.json"],
+    "aws.upbound.io": ["providerconfig_v1beta1.json"],
+    # Crossplane's own machinery. Without these, a Composition and an XRD --
+    # the two things the crossplane tasks actually ask models to write -- have
+    # no schema, so kubeconform skipped every one of them and the lint gate
+    # PASSED while validating nothing: Valid 0 / Skipped 5 on T3-modify and
+    # Valid 0 / Skipped 2 on T4-debug in coverage-v6. Same defect as #104, in
+    # the stage nobody had checked.
+    #
+    # The legacy community provider group `database.aws.crossplane.io` is NOT
+    # here: the catalog has no schema for it at this pin (404). A model that
+    # reaches for it still skips, which is a known and much smaller blind spot.
+    "apiextensions.crossplane.io": [
+        "composition_v1.json", "compositeresourcedefinition_v1.json",
+        "compositionrevision_v1.json",
+    ],
+    "pkg.crossplane.io": [
+        "function_v1.json", "function_v1beta1.json", "provider_v1.json",
+    ],
 }
 
 
