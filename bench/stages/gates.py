@@ -15,6 +15,7 @@ ever recorded.
 
 from __future__ import annotations
 
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -501,6 +502,20 @@ class ChantGate:
         if not list(workspace.rglob("*.ts")):
             return StageResult(inapplicable=Inapplicable.NO_ARTIFACT,
                                reason="no TypeScript in workspace")
+        # chant resolves `@intentius/chant` and the k8s lexicon out of the
+        # workspace's node_modules. Without it every build fails on module
+        # resolution, and reporting that as a model failure is the same
+        # mistake as #93: an arm looking like it wrote bad programs when the
+        # gate never read them. bench.runner.materialize_task symlinks the
+        # golden's tree in; a workspace that has not had that done to it
+        # cannot be gated here.
+        if not (workspace / "node_modules").exists():
+            return StageResult(
+                inapplicable=Inapplicable.GATE_DEFECT,
+                reason="no node_modules in the workspace: chant cannot "
+                       "resolve @intentius/chant, so nothing here is about "
+                       "the model's answer",
+            )
         chant = lint_mod.workspace_bin(workspace, "chant")
         build_out = workspace / "build" / "manifests.yaml"
         build_out.parent.mkdir(parents=True, exist_ok=True)
@@ -568,3 +583,137 @@ class ChantGate:
 
 
 register(ChantGate())
+
+
+class _PulumiGate:
+    """`pulumi preview` against a local filesystem backend.
+
+    The arm that produced no measurement at all until #93. Its gate died on
+
+        error: if you're using the --stack flag, pass the fully qualified
+        name (organization/project/stack)
+
+    before reading a line of the model's program, in every published set. The
+    cause was a missing Pulumi.yaml: with no project there is no resolvable
+    stack reference, and the golden passed only because it ships its own.
+
+    Two scaffolds, both the same call as symlinking node_modules for chant or
+    running `terraform init` before validate -- the tasks ask for
+    infrastructure, and no prompt asks the model to author a project file or a
+    requirements list:
+
+      Pulumi.yaml       named from the GOLDEN's project, never invented.
+                        `pulumi.Config()` with no argument reads the project's
+                        own namespace, so a wrong name makes config lookups
+                        miss for a reason the model never caused.
+      requirements.txt  python only, from the golden's pins, so the SDK the
+                        answer is evaluated against is the one the arm was
+                        written for.
+
+    `examined` counts resources in the previewed change set. A preview that
+    plans nothing has evaluated nothing, whatever its exit code -- and this arm
+    spent three published sets exiting non-zero without ever reaching the
+    program, which is precisely the state `examined` exists to make visible.
+    """
+
+    runtime = "python"
+
+    def run(self, workspace: Path) -> StageResult:
+        from bench.stages.static import _pulumi_static
+
+        results: list[str] = []
+        passed, acted = _pulumi_static(workspace, results, self.stack)
+        log = "\n".join(results)
+
+        if not acted:
+            return StageResult(inapplicable=Inapplicable.NO_ARTIFACT,
+                               reason=log or "nothing to preview")
+        # The gate reached the program only if preview ran at all. Anything
+        # earlier -- an unresolvable stack, a missing SDK -- is the harness's
+        # problem, not the model's.
+        if "pulumi preview" not in log:
+            return StageResult(inapplicable=Inapplicable.GATE_DEFECT,
+                               reason=log[:400] or "preview never ran")
+        # preview ran but never reached the program: the SDK or the toolchain
+        # is missing from the workspace. That is the harness's problem, and
+        # scoring it as a model failure is how #93 hid for three published
+        # sets -- the arm looked like it wrote bad programs when the gate had
+        # not read them.
+        if re.search(r"SDK has not been installed|Have you run (pulumi install|pip install)"
+                     r"|No module named 'pulumi'", log):
+            return StageResult(inapplicable=Inapplicable.GATE_DEFECT,
+                               reason="preview could not load the Pulumi SDK "
+                                      "from this workspace")
+        planned = len(re.findall(r"^\s*[+~\-]\s+\S+:\S+", log, re.M))
+        return StageResult(checks=[Check(
+            tool="pulumi", argv=("preview", "--non-interactive", "--diff"),
+            exit_code=0 if passed else 1,
+            examined=planned if planned else (1 if passed else 0),
+            resolved_path=shutil.which("pulumi"),
+            detail=log[:500],
+        )])
+
+    def _deps(self, ws: Path) -> None:
+        """Symlink the golden's node_modules, exactly as
+        bench.runner.materialize_task does for a real task workspace. Without
+        it `pulumi preview` cannot load the SDK and the fixture tests the
+        absence of a dependency tree rather than the gate."""
+        src = ROOT / "golden-base" / self.stack / "node_modules"
+        if src.is_dir() and not (ws / "node_modules").exists():
+            (ws / "node_modules").symlink_to(src, target_is_directory=True)
+
+    def fixture_pass(self, tmp: Path) -> Path:
+        """A program with NO Pulumi.yaml -- what model output actually looks
+        like, and the input that produced #93 on every run."""
+        ws = tmp / f"{self.stack}-good"
+        ws.mkdir(parents=True, exist_ok=True)
+        self._write_good(ws)
+        self._deps(ws)
+        return ws
+
+    def fixture_fail(self, tmp: Path) -> Path:
+        ws = tmp / f"{self.stack}-bad"
+        ws.mkdir(parents=True, exist_ok=True)
+        self._write_bad(ws)
+        self._deps(ws)
+        return ws
+
+
+class PulumiPythonGate(_PulumiGate):
+    stack = "pulumi-python"
+    runtime = "python"
+
+    def _write_good(self, ws: Path) -> None:
+        (ws / "__main__.py").write_text(
+            "import pulumi\n"
+            'pulumi.export("ok", "value")\n'
+        )
+
+    def _write_bad(self, ws: Path) -> None:
+        # Raises at evaluation: preview reaches the program and the program
+        # fails, which is a model failure rather than a gate one.
+        (ws / "__main__.py").write_text(
+            "import pulumi\n"
+            "raise RuntimeError('this program does not evaluate')\n"
+        )
+
+
+class PulumiTypeScriptGate(_PulumiGate):
+    stack = "pulumi-typescript"
+    runtime = "nodejs"
+
+    def _write_good(self, ws: Path) -> None:
+        (ws / "index.ts").write_text(
+            'import * as pulumi from "@pulumi/pulumi";\n'
+            'export const ok = "value";\n'
+        )
+
+    def _write_bad(self, ws: Path) -> None:
+        (ws / "index.ts").write_text(
+            'import * as pulumi from "@pulumi/pulumi";\n'
+            'throw new Error("this program does not evaluate");\n'
+        )
+
+
+register(PulumiPythonGate())
+register(PulumiTypeScriptGate())
