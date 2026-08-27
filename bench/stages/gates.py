@@ -475,3 +475,96 @@ class KnrOpsGate:
 
 
 register(KnrOpsGate())
+
+
+class ChantGate:
+    """`chant build` to YAML, kubeconform over the emitted manifests, then any
+    declared plan scenarios.
+
+    The arm this whole contract exists because of. Its gate ran
+    `kubeconform -ignore-missing-schemas` with no `-schema-location` at all,
+    and every kind chant emits is a CRD, so nothing resolved and the summary
+    read `Valid: 0 ... Skipped: 38` on every run ever recorded -- while the
+    static column reported PASS (#104). `examined` makes that unrepresentable:
+    the Valid count IS the evidence, so zero of it cannot be a pass.
+
+    The binary is resolved out of the workspace, never PATH. A global
+    @intentius/chant reporting the same version 0.49.0 was missing the
+    `scenario` command the vendored build ships, and provenance recorded the
+    vendored version while the global one executed (#106). `resolved_path` is
+    what makes those distinguishable after the fact.
+    """
+
+    stack = "chant"
+
+    def run(self, workspace: Path) -> StageResult:
+        if not list(workspace.rglob("*.ts")):
+            return StageResult(inapplicable=Inapplicable.NO_ARTIFACT,
+                               reason="no TypeScript in workspace")
+        chant = lint_mod.workspace_bin(workspace, "chant")
+        build_out = workspace / "build" / "manifests.yaml"
+        build_out.parent.mkdir(parents=True, exist_ok=True)
+
+        result = StageResult()
+        argv = ("build", ".", "-f", "yaml", "-o", str(build_out))
+        try:
+            proc = subprocess.run([chant, *argv], capture_output=True, text=True,
+                                  timeout=TIMEOUT, cwd=str(workspace))
+        except FileNotFoundError:
+            return StageResult(inapplicable=Inapplicable.GATE_DEFECT,
+                               reason="chant is not resolvable")
+        except subprocess.TimeoutExpired:
+            return StageResult(checks=[Check(tool="chant", argv=argv,
+                                             exit_code=124, examined=0,
+                                             resolved_path=chant)])
+        emitted = 0
+        if build_out.exists():
+            emitted = sum(1 for ln in build_out.read_text().splitlines()
+                          if ln.startswith("kind:"))
+        result.checks.append(Check(
+            tool="chant", argv=argv, exit_code=proc.returncode,
+            examined=emitted, resolved_path=chant,
+            detail=(proc.stderr or "")[:500],
+        ))
+        if proc.returncode != 0 or not build_out.exists():
+            return result
+
+        kubeconform = shutil.which("kubeconform")
+        if kubeconform is None:
+            return StageResult(inapplicable=Inapplicable.GATE_DEFECT,
+                               reason="kubeconform is not on PATH")
+        kargv = ("-summary", *lint_mod.kubeconform_schema_args(), str(build_out))
+        proc = subprocess.run([kubeconform, *kargv], capture_output=True,
+                              text=True, timeout=TIMEOUT)
+        result.checks.append(Check(
+            tool="kubeconform", argv=kargv, exit_code=proc.returncode,
+            examined=_kubeconform_valid_count(proc.stdout),
+            resolved_path=kubeconform,
+            detail=(proc.stdout or proc.stderr or "")[:500],
+        ))
+        return result
+
+    def fixture_pass(self, tmp: Path) -> Path:
+        """The golden's source, which is the only chant workspace that can
+        build -- chant needs its vendored node_modules, so a synthetic
+        fixture cannot compile. Noted as the one arm whose fixture is not
+        model-shaped; the model-shaped coverage lives in the T2 grader
+        instead (#107), which grades chant's own evaluation."""
+        ws = tmp / "chant-good"
+        shutil.copytree(ROOT / "golden-base" / "chant", ws, symlinks=True,
+                        dirs_exist_ok=True)
+        return ws
+
+    def fixture_fail(self, tmp: Path) -> Path:
+        """The golden plus a source file that cannot compile."""
+        ws = tmp / "chant-bad"
+        shutil.copytree(ROOT / "golden-base" / "chant", ws, symlinks=True,
+                        dirs_exist_ok=True)
+        (ws / "src" / "broken.ts").write_text(
+            "import { NotAThing } from './does-not-exist.js';\n"
+            "export const x = NotAThing({;\n"
+        )
+        return ws
+
+
+register(ChantGate())
