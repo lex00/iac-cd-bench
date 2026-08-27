@@ -248,3 +248,113 @@ class CrossplaneGate:
 
 
 register(CrossplaneGate())
+
+
+class TerraformGate:
+    """`terraform init -backend=false` then `terraform validate`.
+
+    Migrated because its failures were undiagnosable: all six static failures
+    in coverage-v2 logged `terraform validate: exit=1` and nothing else,
+    because stderr -- where validate writes its errors -- was never recorded.
+    There was no way to separate a model's broken HCL from a broken gate, which
+    is precisely the ambiguity #84 is about. The contract makes the evidence
+    part of the result rather than something a helper may forget to append.
+
+    No `terraform plan`, deliberately: it is not hermetic. Even with a local
+    backend override the AWS provider fails with "no EC2 IMDS role found", so a
+    plan gate would pass on a laptop carrying ~/.aws/credentials and fail in
+    CI -- the defect that makes the pulumi arms unrunnable there.
+    """
+
+    stack = "terraform"
+
+    def run(self, workspace: Path) -> StageResult:
+        if not list(workspace.rglob("*.tf")):
+            return StageResult(
+                inapplicable=Inapplicable.NO_ARTIFACT,
+                reason="no .tf files in workspace",
+            )
+        resolved = shutil.which("terraform")
+        if resolved is None:
+            return StageResult(
+                inapplicable=Inapplicable.GATE_DEFECT,
+                reason="terraform is not on PATH",
+            )
+
+        result = StageResult()
+        # validate needs the provider and module tree installed, so a fresh
+        # model workspace fails for reasons unrelated to its HCL without this.
+        # -backend=false keeps it offline: the golden declares an S3 backend.
+        init_argv = ("init", "-backend=false", "-input=false", "-no-color")
+        proc = subprocess.run([resolved, *init_argv], capture_output=True,
+                              text=True, timeout=180, cwd=str(workspace))
+        if proc.returncode != 0:
+            # init failing is about the workspace, not the model's HCL.
+            return StageResult(
+                inapplicable=Inapplicable.GATE_DEFECT,
+                reason=f"terraform init failed: "
+                       f"{(proc.stderr or proc.stdout or '')[:300]}",
+            )
+        result.checks.append(Check(
+            tool="terraform", argv=init_argv, exit_code=0, examined=0,
+            resolved_path=resolved, detail="init (setup, not evidence)",
+        ))
+
+        argv = ("validate", "-no-color")
+        proc = subprocess.run([resolved, *argv], capture_output=True,
+                              text=True, timeout=60, cwd=str(workspace))
+        result.checks.append(Check(
+            tool="terraform", argv=argv, exit_code=proc.returncode,
+            # Files validate() actually parsed. `terraform validate` reports no
+            # count, so the .tf files it was pointed at are the honest proxy --
+            # and init succeeding means they were loadable.
+            examined=len(list(workspace.rglob("*.tf"))),
+            resolved_path=resolved,
+            # stderr FIRST: it is where validate writes its errors, and
+            # omitting it is what made all six coverage-v2 failures blank.
+            detail=(proc.stderr or proc.stdout or "")[:500],
+        ))
+        return result
+
+    def fixture_pass(self, tmp: Path) -> Path:
+        ws = tmp / "tf-good"
+        ws.mkdir(parents=True, exist_ok=True)
+        (ws / "main.tf").write_text(
+            'terraform {\n'
+            '  required_providers {\n'
+            '    aws = { source = "hashicorp/aws", version = "~> 5.0" }\n'
+            '  }\n'
+            '}\n\n'
+            'provider "aws" {\n'
+            '  region = "us-east-1"\n'
+            '}\n\n'
+            'resource "aws_s3_bucket" "logs" {\n'
+            '  bucket = "myapp-logs-prod"\n'
+            '}\n'
+        )
+        return ws
+
+    def fixture_fail(self, tmp: Path) -> Path:
+        """An argument that does not exist on the resource -- the exact error
+        a model actually made in coverage-v3 (`enable_iam_database_authentication`
+        on `aws_db_instance`), which the old gate reported as a blank exit=1."""
+        ws = tmp / "tf-bad"
+        ws.mkdir(parents=True, exist_ok=True)
+        (ws / "main.tf").write_text(
+            'terraform {\n'
+            '  required_providers {\n'
+            '    aws = { source = "hashicorp/aws", version = "~> 5.0" }\n'
+            '  }\n'
+            '}\n\n'
+            'provider "aws" {\n'
+            '  region = "us-east-1"\n'
+            '}\n\n'
+            'resource "aws_s3_bucket" "logs" {\n'
+            '  bucket = "myapp-logs-prod"\n'
+            '  not_a_real_argument = true\n'
+            '}\n'
+        )
+        return ws
+
+
+register(TerraformGate())
