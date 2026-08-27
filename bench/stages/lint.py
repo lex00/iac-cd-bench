@@ -58,14 +58,24 @@ def is_k8s_manifest(path: Path) -> bool:
     Feeding those in fails the whole gate on `missing 'kind' key`, which is
     what the knr-ops golden did to its own lint stage. Judge a file by whether
     it declares apiVersion and kind, not by its extension.
+
+    A kustomization.yaml is the counter-example that looks like a manifest:
+    it declares `apiVersion: kustomize.config.k8s.io/...` and
+    `kind: Kustomization`, but it is a build input, not a cluster object.
+    kubeconform has no schema for it and never will, so feeding it in produces
+    a permanent skip that pads the skipped count and hides real ones -- knr-ops
+    lint reported Valid=2 Skipped=15, and 9 of those skips were this file.
     """
     try:
-        docs = yaml.safe_load_all(path.read_text())
-        return any(isinstance(d, dict) and "apiVersion" in d and "kind" in d
-                   for d in docs)
+        docs = [d for d in yaml.safe_load_all(path.read_text())
+                if isinstance(d, dict) and "apiVersion" in d and "kind" in d]
     except (OSError, yaml.YAMLError):
         # Unreadable or unparseable: let kubeconform be the one to say so.
         return True
+    return any(
+        not str(d.get("apiVersion", "")).startswith("kustomize.config.k8s.io")
+        for d in docs
+    )
 
 LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
     "knr-ops": [

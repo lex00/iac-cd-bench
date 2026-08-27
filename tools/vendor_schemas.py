@@ -88,12 +88,29 @@ WANTED: dict[str, list[str]] = {
     "addons.cluster.x-k8s.io": ["helmchartproxy_v1alpha1.json"],
     # Flux. Every arm that reconciles through Flux emits these -- chant via
     # FluxAppFor/FluxGitSource, knr-ops as hand-written YAML -- and before
-    # #104 every one of them was skipped by both gates.
-    "kustomize.toolkit.fluxcd.io": ["kustomization_v1.json"],
+    # #104 every one of them was skipped by both gates. Both the v1 and the
+    # v1beta2 spellings: models emit either, and a version we do not carry is
+    # a skip, which is indistinguishable from a kind that does not exist.
+    "kustomize.toolkit.fluxcd.io": [
+        "kustomization_v1.json", "kustomization_v1beta2.json",
+    ],
     "helm.toolkit.fluxcd.io": ["helmrelease_v2.json"],
     "source.toolkit.fluxcd.io": [
         "gitrepository_v1.json", "helmrepository_v1.json",
+        "gitrepository_v1beta2.json",
     ],
+    # Upbound provider CRs. knr-ops is written against these, not ACK (#47),
+    # so its lint validated 2 resources and skipped 15 -- 88% unmeasured, the
+    # same shape as #104. The mirror has to carry the provider the arm
+    # actually uses, or the gate cannot tell a real kind from an invented one.
+    "s3.aws.upbound.io": [
+        "bucket_v1beta1.json", "bucketpublicaccessblock_v1beta1.json",
+        "bucketversioning_v1beta1.json",
+    ],
+    "iam.aws.upbound.io": [
+        "role_v1beta1.json", "rolepolicy_v1beta1.json", "policy_v1beta1.json",
+    ],
+    "rds.aws.upbound.io": ["instance_v1beta1.json"],
 }
 
 
