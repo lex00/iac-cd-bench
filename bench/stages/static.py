@@ -291,16 +291,29 @@ def _classify_crossplane_docs(workspace: Path):
         if docs:
             parsed.append((f, docs))
 
+    # COMPOSITE kinds only. `crossplane render` takes an XR and does no
+    # claim-to-XR translation, so handing it a claim fails with
+    #
+    #   composition's compositeTypeRef.kind (VersionedBucket) does not match
+    #   XR's kind (VersionedBucketClaim)
+    #
+    # -- a failure the harness caused by choosing the wrong input, charged to
+    # the model. Models legitimately write claims; that is what a user applies.
+    # The gate's job is to render the composite the Composition declares, and
+    # `_synthesize_xr` builds one from the XRD when the answer contains none.
     renderable_kinds: set[str] = set()
+    claim_kinds: set[str] = set()
     for _f, docs in parsed:
         for d in docs:
             if d.get("kind") != "CompositeResourceDefinition":
                 continue
             spec = d.get("spec") or {}
-            for key in ("names", "claimNames"):
-                kind = (spec.get(key) or {}).get("kind")
-                if kind:
-                    renderable_kinds.add(kind)
+            kind = (spec.get("names") or {}).get("kind")
+            if kind:
+                renderable_kinds.add(kind)
+            ckind = (spec.get("claimNames") or {}).get("kind")
+            if ckind:
+                claim_kinds.add(ckind)
 
     renderables, compositions, xrds, functions = [], [], [], []
     for f, docs in parsed:
@@ -315,6 +328,10 @@ def _classify_crossplane_docs(workspace: Path):
             kind = d["kind"]
             if kind in renderable_kinds:
                 renderables.append(f); break
+            if kind in claim_kinds:
+                # A claim, not a composite. Not renderable; the XR gets
+                # synthesised from the XRD instead.
+                continue
             if not renderable_kinds and kind not in MACHINERY and \
                     (d.get("metadata") or {}).get("namespace"):
                 renderables.append(f); break
@@ -395,10 +412,20 @@ def _synthesize_xr(workspace: Path, xrd_files: list[Path],
             if not group or not versions:
                 continue
             version = versions[0]
-            # Prefer the claim kind when the XRD offers one: that is what a
-            # user would apply. Fall back to the composite kind.
-            kind = ((spec.get("claimNames") or {}).get("kind")
-                    or (spec.get("names") or {}).get("kind"))
+            # The COMPOSITE kind, never the claim kind. A Composition's
+            # `compositeTypeRef.kind` names the composite, so synthesising a
+            # claim makes render reject it with
+            #
+            #   composition's compositeTypeRef.kind (WebApp) does not match XR
+            #
+            # -- a failure the harness caused, charged to the model. Four of
+            # six crossplane static failures in coverage-v7 were exactly this:
+            # the model declared names.kind=WebApp / claimNames.kind=WebAppClaim,
+            # correctly, and the gate built the claim.
+            #
+            # The golden hid it: its XRD has no claimNames at all, so the
+            # fallback happened to pick the right kind and the fixture passed.
+            kind = (spec.get("names") or {}).get("kind")
             if not kind:
                 continue
 
@@ -452,6 +479,43 @@ def _ensure_functions(workspace: Path, functions: list[Path],
     return [dest]
 
 
+def _synthesize_xr_from_composition(workspace: Path, compositions: list[Path],
+                                    results: list[str]) -> Path | None:
+    """Build a composite from a Composition's `compositeTypeRef`.
+
+    The fallback for an XRD that declares no `spec.names.kind`. A Composition
+    always names the apiVersion and kind it composes, and that pair is exactly
+    what `crossplane render` checks the XR against -- so it is a better source
+    than guessing, and it cannot disagree with the Composition by construction.
+
+    Emits a spec with no fields: without the XRD's schema there is nothing to
+    fill required fields from, and inventing values would fail the render for a
+    reason the model did not cause.
+    """
+    for f in compositions:
+        try:
+            docs = [d for d in yaml.safe_load_all(f.read_text())
+                    if isinstance(d, dict)]
+        except (OSError, yaml.YAMLError):
+            continue
+        for d in docs:
+            if d.get("kind") != "Composition":
+                continue
+            ref = (d.get("spec") or {}).get("compositeTypeRef") or {}
+            api, kind = ref.get("apiVersion"), ref.get("kind")
+            if not api or not kind:
+                continue
+            xr = {"apiVersion": api, "kind": kind,
+                  "metadata": {"name": "harness-synthesized"}, "spec": {}}
+            out = workspace / "harness-synthesized-xr.yaml"
+            out.write_text(yaml.safe_dump(xr, sort_keys=False))
+            results.append(
+                f"synthesised {kind} from the Composition's compositeTypeRef "
+                "(the XRD declares no spec.names.kind)")
+            return out
+    return None
+
+
 def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run crossplane render for Crossplane."""
     passed = True
@@ -485,8 +549,17 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
     # rather than abstain. Same for the Function declarations: T2 tells the
     # model to *use* function-patch-and-transform, not to author the Function
     # resource, which is cluster machinery like ProviderConfig.
-    if not claims and xrds:
-        synthesized = _synthesize_xr(workspace, xrds, results)
+    if not claims and (xrds or compositions):
+        synthesized = _synthesize_xr(workspace, xrds, results) if xrds else None
+        if synthesized is None and compositions:
+            # The XRD declared no `spec.names.kind` --
+            # tasks/crossplane/T4-debug's seed is exactly this shape, and the
+            # gate abstained on it in both conditions. The Composition still
+            # says what it composes, and `compositeTypeRef` is precisely the
+            # apiVersion/kind pair render checks the XR against, so take it
+            # from there rather than abstain on an otherwise complete answer.
+            synthesized = _synthesize_xr_from_composition(
+                workspace, compositions, results)
         if synthesized is not None:
             claims = [synthesized]
     if claims and compositions and not functions:
