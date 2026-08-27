@@ -45,8 +45,16 @@ CATALOG = "https://raw.githubusercontent.com/datreeio/CRDs-catalog"
 DEFAULT_PIN = "7b1e26ef9deea49293714d204c1a2270aab1178f"
 
 # Group -> schema files. Versions are not a choice made here: they are the
-# ones tasks/ and golden-base/ already use (ACK v1alpha1, Cluster API
-# v1beta1). If a fixture starts using a new kind, add it here.
+# ones tasks/ and golden-base/ already use (ACK v1alpha1; Cluster API at
+# v1beta1 for the knr-ops/bare goldens and v1beta2 for chant's). If a fixture
+# starts using a new kind, add it here.
+#
+# Coverage is load-bearing, not best-effort. `bare`'s static gate does not pass
+# `-ignore-missing-schemas`, so an unresolved kind is an error there; chant's
+# gate now matches it (#104). A kind emitted by a golden but missing from this
+# map turns a valid manifest into a gate failure, and a kind missing while the
+# gate *is* lenient turns an invented resource into a silent pass. Both are
+# worse than the fetch cost of listing it here.
 WANTED: dict[str, list[str]] = {
     "s3.services.k8s.aws": ["bucket_v1alpha1.json"],
     "iam.services.k8s.aws": [
@@ -58,17 +66,33 @@ WANTED: dict[str, list[str]] = {
         "dbinstance_v1alpha1.json", "dbsubnetgroup_v1alpha1.json",
         "dbcluster_v1alpha1.json", "dbparametergroup_v1alpha1.json",
     ],
+    "eks.services.k8s.aws": ["podidentityassociation_v1alpha1.json"],
     "cluster.x-k8s.io": [
         "cluster_v1beta1.json", "machinedeployment_v1beta1.json",
         "machine_v1beta1.json", "machineset_v1beta1.json",
+        # chant's golden is on the v1beta2 CAPI kinds.
+        "cluster_v1beta2.json", "machinepool_v1beta2.json",
     ],
-    "controlplane.cluster.x-k8s.io": ["kubeadmcontrolplane_v1beta1.json"],
+    "controlplane.cluster.x-k8s.io": [
+        "kubeadmcontrolplane_v1beta1.json",
+        "awsmanagedcontrolplane_v1beta2.json",
+    ],
     "infrastructure.cluster.x-k8s.io": [
         "awscluster_v1beta1.json", "awsmachinetemplate_v1beta1.json",
         "awsmachine_v1beta1.json",
+        "awsmanagedcluster_v1beta2.json", "awsmanagedmachinepool_v1beta2.json",
     ],
     "bootstrap.cluster.x-k8s.io": [
         "kubeadmconfig_v1beta1.json", "kubeadmconfigtemplate_v1beta1.json",
+    ],
+    "addons.cluster.x-k8s.io": ["helmchartproxy_v1alpha1.json"],
+    # Flux. Every arm that reconciles through Flux emits these -- chant via
+    # FluxAppFor/FluxGitSource, knr-ops as hand-written YAML -- and before
+    # #104 every one of them was skipped by both gates.
+    "kustomize.toolkit.fluxcd.io": ["kustomization_v1.json"],
+    "helm.toolkit.fluxcd.io": ["helmrelease_v2.json"],
+    "source.toolkit.fluxcd.io": [
+        "gitrepository_v1.json", "helmrepository_v1.json",
     ],
 }
 

@@ -487,7 +487,22 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
 
 def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Build the chant workspace to YAML, then validate the emitted manifests
-    with kubeconform (mirrors knr-ops's kubeconform usage)."""
+    with kubeconform against the vendored schema mirror.
+
+    The kubeconform call used to pass `-ignore-missing-schemas` and no
+    `-schema-location` at all, and every kind chant emits is a CRD -- ACK,
+    CAPI/CAPA, Flux, not one core Kubernetes kind. So nothing resolved, the
+    flag swallowed all of it, and the summary read `Valid: 0 ... Skipped: 38`
+    on every run ever recorded (#104). The gate reduced to "did `chant build`
+    exit 0", and an invented kind scored as fine -- the same defect #83 fixed
+    for `bare`, whose gate carries the comment explaining why.
+
+    Now it matches bare: the mirror first, and no `-ignore-missing-schemas`,
+    so a kind that fails to resolve is a kind that does not exist. That is
+    only safe because `tools/vendor_schemas.py` covers the Flux and v1beta2
+    CAPI groups chant emits; adding the flag back would be easier than adding
+    a schema and is the wrong trade.
+    """
     passed = True
 
     build_out = workspace / "build" / "manifests.yaml"
@@ -522,7 +537,8 @@ def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     log.info("kubeconform %s", build_out)
     try:
         proc = subprocess.run(
-            ["kubeconform", "-summary", "-ignore-missing-schemas", str(build_out)],
+            ["kubeconform", "-summary",
+             *lint_mod.kubeconform_schema_args(), str(build_out)],
             capture_output=True, text=True, timeout=60,
         )
         results.append(f"kubeconform {build_out.name}: exit={proc.returncode}")

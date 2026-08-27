@@ -101,3 +101,137 @@ def test_empty_workspace_is_inapplicable_not_a_pass(tmp_path):
 
     assert stage.get("skipped") or stage.get("inapplicable")
     assert not stage.get("passed")
+
+
+# --- chant (#104) -----------------------------------------------------------
+#
+# chant's gate passed `-ignore-missing-schemas` and no `-schema-location` at
+# all. Every kind chant emits is a CRD -- ACK, CAPI/CAPA, Flux, not one core
+# Kubernetes kind -- so nothing resolved, the flag swallowed it, and every run
+# ever recorded summarised as `Valid: 0 ... Skipped: 38`. The gate reduced to
+# "did `chant build` exit 0".
+#
+# `Valid: 0` for every input is the same failure as a gate that fails
+# everything: it cannot tell a right answer from a wrong one. These tests pin
+# the summary, not just the exit code.
+
+# What chant actually emits: Flux delivery objects and v1beta2 CAPI, spelled
+# correctly. Under the old invocation all four of these were skipped.
+CHANT_SHAPED = """\
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: Kustomization
+metadata:
+  name: myapp-dev-infra
+  namespace: flux-system
+spec:
+  interval: 10m
+  path: ./dist/dev/infra
+  prune: true
+  sourceRef:
+    kind: GitRepository
+    name: myapp-infra
+---
+apiVersion: source.toolkit.fluxcd.io/v1
+kind: GitRepository
+metadata:
+  name: myapp-infra
+  namespace: flux-system
+spec:
+  interval: 1m
+  ref:
+    branch: main
+  url: https://github.com/example/myapp-infra
+---
+apiVersion: cluster.x-k8s.io/v1beta2
+kind: Cluster
+metadata:
+  name: myapp-dev
+spec:
+  clusterNetwork:
+    pods:
+      cidrBlocks:
+        - 192.168.0.0/16
+---
+apiVersion: eks.services.k8s.aws/v1alpha1
+kind: PodIdentityAssociation
+metadata:
+  name: myapp-reader
+spec:
+  clusterName: myapp-dev
+  namespace: default
+  roleARN: arn:aws:iam::000000000000:role/myapp-reader
+  serviceAccount: reader
+"""
+
+
+def _kubeconform_summary(tmp_path: Path, text: str) -> str:
+    """Run kubeconform exactly as _chant_static now invokes it."""
+    import subprocess
+
+    from bench.stages import lint as lint_mod
+
+    f = tmp_path / "manifests.yaml"
+    f.write_text(text)
+    proc = subprocess.run(
+        ["kubeconform", "-summary", *lint_mod.kubeconform_schema_args(), str(f)],
+        capture_output=True, text=True, timeout=60,
+    )
+    return proc.stdout + proc.stderr
+
+
+def test_chant_gate_passes_the_schema_mirror_and_does_not_ignore_missing():
+    """The two-line source fact behind #104. `-ignore-missing-schemas` turns an
+    unresolved kind into a silent skip, and with no `-schema-location` every
+    CRD is unresolved -- so the pair together validate nothing at all."""
+    src = (Path(__file__).resolve().parent.parent
+           / "bench" / "stages" / "static.py").read_text()
+    body = src.split("def _chant_static(")[1].split("\ndef ")[0]
+    # Strip the docstring: it discusses `-ignore-missing-schemas` by name.
+    if '"""' in body:
+        body = body.split('"""', 2)[2]
+    assert "kubeconform_schema_args()" in body, (
+        "chant's kubeconform call must point at the vendored mirror, or every "
+        "CRD it emits resolves to nothing"
+    )
+    assert "-ignore-missing-schemas" not in body, (
+        "chant's gate must not skip unresolved kinds -- that is what scored an "
+        "invented resource as fine (#104), the defect #83 fixed for bare"
+    )
+
+
+def test_flux_and_v1beta2_schemas_are_vendored():
+    """Dropping -ignore-missing-schemas is only safe because these exist. If
+    the mirror loses them, chant's own golden starts failing on valid Flux."""
+    for group, name in [
+        ("kustomize.toolkit.fluxcd.io", "kustomization_v1.json"),
+        ("helm.toolkit.fluxcd.io", "helmrelease_v2.json"),
+        ("source.toolkit.fluxcd.io", "gitrepository_v1.json"),
+        ("cluster.x-k8s.io", "cluster_v1beta2.json"),
+        ("infrastructure.cluster.x-k8s.io", "awsmanagedcluster_v1beta2.json"),
+        ("addons.cluster.x-k8s.io", "helmchartproxy_v1alpha1.json"),
+        ("eks.services.k8s.aws", "podidentityassociation_v1alpha1.json"),
+    ]:
+        assert (SCHEMA_DIR / group / name).is_file(), f"missing schema {group}/{name}"
+
+
+def test_chant_shaped_manifests_validate_rather_than_skip(tmp_path):
+    """The load-bearing one. Before #104 this summarised `Valid: 0 ...
+    Skipped: 4`; a gate reporting Valid: 0 for every input cannot discriminate."""
+    out = _kubeconform_summary(tmp_path, CHANT_SHAPED)
+    assert "Valid: 4" in out, f"expected all four resources validated, got: {out}"
+    assert "Skipped: 0" in out, f"nothing should be skipped now, got: {out}"
+
+
+def test_invented_flux_kind_fails_for_chant(tmp_path):
+    """The negative direction, on chant's own delivery surface: a Flux kind
+    that does not exist has to be an error, not a skip."""
+    out = _kubeconform_summary(tmp_path, """\
+apiVersion: kustomize.toolkit.fluxcd.io/v1
+kind: KustomizationSet
+metadata:
+  name: myapp-dev-infra
+spec: {}
+""")
+    assert "Valid: 0" in out and ("Errors: 1" in out or "Invalid: 1" in out), (
+        f"an invented Flux kind must not pass: {out}"
+    )
