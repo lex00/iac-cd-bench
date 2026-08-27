@@ -257,3 +257,40 @@ def test_no_wildcard_actions(built, source_text):
     assert not re.search(r'"Action"\s*:\s*"\*"', haystack), (
         "found a bare wildcard IAM action"
     )
+
+
+def test_secret_axis_is_exempted_for_this_arm_by_the_spec():
+    """chant is not graded on the secret requirement, and that is deliberate.
+
+    `scenario/SPEC.md` line 18 names each arm's mechanism for the encrypted
+    secret and carves this one out explicitly:
+
+        Secret (DB connection string) | SOPS-encrypted (knr-ops), Crossplane
+        SecretStore/ProviderSecret, Terraform -var-file or SOPS, Pulumi
+        ConfigSecret, **chant referenced-provenance secret ref (no committed
+        ciphertext)**
+
+    So `bare` and `knr-ops` each carry four secret/SOPS assertions in their
+    T2 graders and this arm carries none. That traces to a real feature gap
+    (#6), and grading chant on a primitive it does not have would be wrong.
+
+    What was wrong was that the exemption was INVISIBLE: the composite treated
+    chant's denominator as equivalent to the others' while it was measured on
+    strictly less. This test does not assert behaviour — it makes the carve-out
+    legible at the place a reader looks for it, so nobody re-derives it from
+    a grep of assertion counts the way #103 had to.
+
+    It is deliberately not a skip: a skip reads as "not run yet". This IS the
+    current, intended state, and it should turn into a real assertion the day
+    chant ships a committed-encrypted primitive (#6, #67).
+    """
+    import pathlib
+
+    spec = pathlib.Path(__file__).resolve().parents[4] / "scenario" / "SPEC.md"
+    if not spec.is_file():
+        pytest.skip("scenario/SPEC.md not reachable from the workspace")
+    assert "no committed ciphertext" in spec.read_text(), (
+        "SPEC.md no longer carves chant out of the secret requirement. If the "
+        "exemption is gone, this arm needs the four secret assertions bare and "
+        "knr-ops carry, and #103 should be reopened"
+    )
