@@ -210,7 +210,57 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
             log.warning("Command not found: flux")
             passed = False
 
-    return passed, bool(kustomizations or flux_kustomizations)
+    if kustomizations or flux_kustomizations:
+        return passed, True
+
+    # Nothing to build, but that is not the same as nothing to check. knr-ops
+    # T4-debug asks for a SOPS age key to be fixed in `.sops.yaml`, so a
+    # correct answer contains no kustomization at all -- and this gate, being
+    # kustomize-and-flux only, abstained on it in both conditions. That was the
+    # single reason knr-ops sat at 2.25 attempted stages while every other arm
+    # reached 2.50, and under #110 a smaller denominator inflates the score.
+    #
+    # The arm still emits Kubernetes manifests, so validate them the way `bare`
+    # does. Same mirror, same strictness: an unresolvable kind is a kind that
+    # does not exist, which is a real defect worth failing (#83).
+    manifests = [f for f in sorted(list(workspace.rglob("*.yaml"))
+                                   + list(workspace.rglob("*.yml")))
+                 if lint_mod.is_k8s_manifest(f)]
+    if not manifests:
+        results.append("no kustomization, no Flux Kustomization, no manifests")
+        return passed, False
+
+    validated = 0
+    for yfile in manifests:
+        log.info("kubeconform %s", yfile)
+        try:
+            proc = subprocess.run(
+                ["kubeconform", "-summary",
+                 *lint_mod.kubeconform_schema_args(), str(yfile)],
+                capture_output=True, text=True, timeout=60,
+            )
+            results.append(f"kubeconform {yfile.name}: exit={proc.returncode}")
+            if proc.stdout:
+                results.append(proc.stdout[:300])
+                validated += _kubeconform_valid_count(proc.stdout)
+            if proc.stderr:
+                results.append(f"ERR: {proc.stderr[:300]}")
+            if proc.returncode != 0:
+                passed = False
+        except subprocess.TimeoutExpired:
+            results.append(f"TIMEOUT: kubeconform {yfile}")
+            passed = False
+        except FileNotFoundError:
+            results.append("NOT FOUND: kubeconform")
+            log.warning("Command not found: kubeconform")
+            return False, True
+
+    # A pass that validated nothing is not a pass (#104).
+    if passed and validated == 0:
+        results.append(
+            "no manifest resolved to a known schema — nothing was validated")
+        return passed, False
+    return passed, True
 
 
 def _classify_crossplane_docs(workspace: Path):
