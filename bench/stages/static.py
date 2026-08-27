@@ -270,6 +270,137 @@ def _classify_crossplane_docs(workspace: Path):
     return renderables, compositions, xrds, functions
 
 
+_UNFILLABLE = object()
+
+
+def _schema_default(prop: dict):
+    """A value satisfying one required property of an XRD's openAPIV3Schema.
+
+    Prefers the schema's own vocabulary over anything invented: an enum's first
+    member, then `default`, then a type-appropriate empty value. Returns the
+    sentinel None only when the property declares a type we cannot fill, which
+    the caller treats as "do not synthesise" rather than "guess".
+    """
+    if "default" in prop:
+        return prop["default"]
+    enum = prop.get("enum")
+    if enum:
+        return enum[0]
+    t = prop.get("type")
+    if t == "string":
+        return "synthesized"
+    if t in ("integer", "number"):
+        return 0
+    if t == "boolean":
+        return False
+    if t == "array":
+        return []
+    if t == "object":
+        props = prop.get("properties") or {}
+        req = prop.get("required") or []
+        out = {}
+        for name in req:
+            v = _schema_default(props.get(name) or {})
+            if v is _UNFILLABLE:
+                return _UNFILLABLE
+            out[name] = v
+        return out
+    return _UNFILLABLE
+
+
+def _synthesize_xr(workspace: Path, xrd_files: list[Path],
+                   results: list[str]) -> Path | None:
+    """Build a minimal composite resource from an XRD so render has an input.
+
+    The crossplane tasks never ask for one -- T2 says "Author XRD +
+    Composition", and T3 says to add a region "without changing existing
+    claims". So the gate was demanding an artifact the task tells the model not
+    to write, and recording `inapplicable` when it obeyed (#109). Under rule 10
+    an unmeasured axis is dropped rather than failed, which means abstaining
+    inflated the arm's correctness (#110) -- the gate's own defect was scoring
+    as a result.
+
+    Everything needed is declared by the XRD: `spec.group`, the first served
+    version, `spec.names.kind` (or `claimNames.kind` where the XRD offers a
+    claim), and the required fields of its openAPIV3Schema.
+
+    Returns None rather than guessing when a required field cannot be filled
+    from the schema. An honest abstention beats a synthesised XR that fails for
+    a reason the model did not cause.
+    """
+    for f in xrd_files:
+        try:
+            docs = [d for d in yaml.safe_load_all(f.read_text())
+                    if isinstance(d, dict)]
+        except (OSError, yaml.YAMLError):
+            continue
+        for d in docs:
+            if d.get("kind") != "CompositeResourceDefinition":
+                continue
+            spec = d.get("spec") or {}
+            group = spec.get("group")
+            versions = [v for v in (spec.get("versions") or [])
+                        if v.get("served")] or (spec.get("versions") or [])
+            if not group or not versions:
+                continue
+            version = versions[0]
+            # Prefer the claim kind when the XRD offers one: that is what a
+            # user would apply. Fall back to the composite kind.
+            kind = ((spec.get("claimNames") or {}).get("kind")
+                    or (spec.get("names") or {}).get("kind"))
+            if not kind:
+                continue
+
+            schema = (version.get("schema") or {}).get("openAPIV3Schema") or {}
+            spec_schema = ((schema.get("properties") or {})
+                           .get("spec") or {})
+            props = spec_schema.get("properties") or {}
+            body = {}
+            for name in (spec_schema.get("required") or []):
+                value = _schema_default(props.get(name) or {})
+                if value is _UNFILLABLE:
+                    results.append(
+                        f"cannot synthesise an XR: required field {name!r} has "
+                        "no fillable schema")
+                    return None
+                body[name] = value
+
+            xr = {
+                "apiVersion": f"{group}/{version['name']}",
+                "kind": kind,
+                "metadata": {"name": "harness-synthesized"},
+                "spec": body,
+            }
+            out = workspace / "harness-synthesized-xr.yaml"
+            out.write_text(yaml.safe_dump(xr, sort_keys=False))
+            results.append(
+                f"synthesised {kind} from the XRD (no XR in workspace; the "
+                "tasks do not ask for one)")
+            return out
+    return None
+
+
+def _ensure_functions(workspace: Path, functions: list[Path],
+                      results: list[str]) -> list[Path]:
+    """Supply the Function declarations render needs, if the answer has none.
+
+    `crossplane render` needs the pipeline's functions declared. T2 tells the
+    model to "use Crossplane functions mode (function-patch-and-transform)" --
+    i.e. to reference it -- not to author the Function resource, which is
+    cluster machinery the same way ProviderConfig is. Scaffolding it is the
+    same call as Pulumi.yaml (#93) or `terraform init` before validate.
+    """
+    if functions:
+        return functions
+    src = ROOT / "golden-base" / "crossplane" / "compositions" / "functions.yaml"
+    if not src.exists():
+        return functions
+    dest = workspace / "harness-functions.yaml"
+    dest.write_text(src.read_text())
+    results.append("scaffolded the Function declarations render requires")
+    return [dest]
+
+
 def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run crossplane render for Crossplane."""
     passed = True
@@ -291,6 +422,24 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
     # measurement silently AND lifts its composite, because an inapplicable
     # stage leaves the correctness denominator.
     claims, compositions, xrds, functions = _classify_crossplane_docs(workspace)
+
+    # The tasks never ask for a composite resource (#109). T2 says "Author XRD
+    # + Composition"; T3 says to add a region "without changing existing
+    # claims". So the gate was demanding an artifact the task tells the model
+    # NOT to write, and abstaining when it obeyed -- which under rule 10 left
+    # the correctness denominator and INFLATED the arm's score (#110). The
+    # gate's own defect was scoring as a result.
+    #
+    # Everything render needs is declared by the model's own XRD, so build it
+    # rather than abstain. Same for the Function declarations: T2 tells the
+    # model to *use* function-patch-and-transform, not to author the Function
+    # resource, which is cluster machinery like ProviderConfig.
+    if not claims and xrds:
+        synthesized = _synthesize_xr(workspace, xrds, results)
+        if synthesized is not None:
+            claims = [synthesized]
+    if claims and compositions and not functions:
+        functions = _ensure_functions(workspace, functions, results)
 
     for claim in claims:
         log.info("crossplane render %s", claim)
