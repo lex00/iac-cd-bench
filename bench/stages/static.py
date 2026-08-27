@@ -50,7 +50,8 @@ def run_static(workspace: Path, stack: str) -> dict:
     elif stack == "bare":
         all_passed, acted = _bare_static(workspace, results)
     else:
-        return lint_mod.inapplicable(f"no static commands for stack: {stack}")
+        return lint_mod.inapplicable(
+            f"no static commands for stack: {stack}", "gate_defect")
 
     if not acted:
         reason = "\n".join(results) or "nothing to build in workspace"

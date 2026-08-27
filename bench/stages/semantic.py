@@ -54,7 +54,7 @@ def run_semantic(task_dir: Path, workspace: Path | None = None) -> dict:
         # tests/test_task.py a free third of its correctness axis. See
         # bench.stages.lint.inapplicable.
         return {
-            **lint.inapplicable("no semantic tests"),
+            **lint.inapplicable("no semantic tests", "gate_defect"),
             "passed_count": 0,
             "total_count": 0,
             "safety_pass": True,

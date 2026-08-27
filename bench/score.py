@@ -68,6 +68,46 @@ def stage_attempted(stage: dict[str, Any] | None) -> bool:
     return not stage_inapplicable(stage)
 
 
+def stage_gate_defect(stage: dict[str, Any] | None) -> bool:
+    """Whether this stage abstained because the HARNESS could not run it (#110).
+
+    `correctness = passed / attempted`, and an abstention leaves the
+    denominator — so a gate that cannot run *raises* the arm's score. Measured
+    on coverage-v3, same task, same model, same condition:
+
+        crossplane  T3  semantic=inapplicable static=abstained
+                        attempted=1  correctness=1.00  composite=0.714
+        knr-ops     T3  semantic=FAIL         static=FAIL
+                        attempted=3  correctness=0.33  composite=0.444
+
+    Both models produced a modification. crossplane's went unevaluated by two
+    of three gates, so it took full correctness off the one that ran. That is
+    most of why it outranked knr-ops in every published table.
+
+    Failing the stage instead is not the fix — #99 removed exactly that, and
+    correctly: punishing an arm for an axis the harness failed to measure is
+    worse than dropping it. The honest position is that such a run is not
+    comparable, so this is counted and surfaced rather than silently absorbed,
+    and `bench.report` refuses a cross-arm ranking when any arm carries one.
+
+    Three reasons are distinguished, per bench.stages.contract.Inapplicable:
+
+      by_spec       the task declares no such stage (T1 has nothing to build).
+                    Legitimate; leaving the denominator is correct.
+      no_artifact   the model produced nothing to check. A real result about
+                    the model.
+      gate_defect   the harness's own fault. Not scoreable in either direction.
+
+    Results written before the contract carry `inapplicable` with no reason.
+    Those stay unclassified and are treated as by_spec, which is what the old
+    behaviour assumed — this widens the record without retroactively
+    reclassifying runs whose reason nobody recorded.
+    """
+    if not isinstance(stage, dict):
+        return False
+    return stage.get("inapplicable_reason") == "gate_defect"
+
+
 def idiom_score(result: dict[str, Any]) -> float:
     """Idiom axis: the rubric judge's weighted verdict, or 0.0 when absent.
 
@@ -134,6 +174,17 @@ def compute_score(result: dict[str, Any]) -> dict[str, Any]:
     correctness_applicable = bool(total_stages)
     scores["correctness"] = stage_pass / total_stages if total_stages else 0
     scores["attempted_stages"] = total_stages
+
+    # #110. An abstention caused by the HARNESS shrinks the denominator above,
+    # which raises correctness — so the arm whose gate is most broken scores
+    # highest. The composite is left alone (failing the stage would re-create
+    # the #99 defect), but the count travels with the score so a reader, and
+    # bench.report, can tell a measurement from an artefact. A run carrying one
+    # is not comparable with a run that does not.
+    scores["gate_defects"] = sum(
+        1 for name in ("lint", "static", "semantic", "e2e")
+        if stage_gate_defect(stages.get(name))
+    )
 
     # Completeness: semantic assertion coverage. `total_count == 0` means no
     # assertion was evaluated — the task ships no grader, or pytest never

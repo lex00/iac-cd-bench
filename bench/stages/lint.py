@@ -110,7 +110,7 @@ LINT_COMMANDS: dict[str, list[tuple[str, list[str], str]]] = {
 }
 
 
-def inapplicable(reason: str) -> dict:
+def inapplicable(reason: str, reason_code: str = "no_artifact") -> dict:
     """A stage that had nothing to act on did not pass — it did not run.
 
     Recording `passed: True` for "no YAML files in workspace" is the
@@ -121,15 +121,32 @@ def inapplicable(reason: str) -> dict:
     `.get("passed", False)` reader treats it as not-passed, and
     bench.score.compute_score drops it from the correctness denominator
     rather than crediting it.
+
+    `reason_code` says WHY, which is the whole of #110. Dropping every
+    abstention identically means a gate that cannot run raises the arm's score,
+    because correctness is passed/attempted and an abstention leaves the
+    denominator. The three cases are not interchangeable:
+
+      by_spec       the task declares no such stage. Legitimate.
+      no_artifact   the model produced nothing to check. A result about the
+                    MODEL, and the default here because that is what most of
+                    these call sites mean.
+      gate_defect   the harness could not run. Not scoreable in either
+                    direction -- failing the arm punishes it for the harness,
+                    dropping it silently rewards the bug.
+
+    See bench.stages.contract.Inapplicable, which is the same vocabulary for
+    gates that have been migrated onto the contract.
     """
-    return {"inapplicable": True, "reason": reason, "logs": reason}
+    return {"inapplicable": True, "reason": reason, "logs": reason,
+            "inapplicable_reason": reason_code}
 
 
 def run_lint(workspace: Path, stack: str) -> dict:
     """Run lint checks for the stack."""
     commands = LINT_COMMANDS.get(stack, [])
     if not commands:
-        return inapplicable(f"no lint commands for stack: {stack}")
+        return inapplicable(f"no lint commands for stack: {stack}", "gate_defect")
 
     results: list[str] = []
     all_passed = True
