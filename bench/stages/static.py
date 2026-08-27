@@ -837,13 +837,27 @@ def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
             results.append(f"ERR: {proc.stderr[:500]}")
         if proc.returncode != 0:
             passed = False
+        validated = _kubeconform_valid_count(proc.stdout)
     except subprocess.TimeoutExpired:
         results.append(f"TIMEOUT: kubeconform {build_out}")
-        passed = False
+        return False, True
     except FileNotFoundError:
         results.append("NOT FOUND: kubeconform")
         log.warning("Command not found: kubeconform")
-        passed = False
+        return False, True
+
+    # A pass that examined nothing is not a pass. `bare` has enforced this
+    # since #81; chant did not, and reported `Valid: 0 ... Skipped: 38` on
+    # every run ever recorded while its static column read PASS (#104). The
+    # guard is the general invariant: a verdict is only worth as much as the
+    # evidence behind it, so a gate that validated zero resources reports
+    # `inapplicable` rather than claiming the model got it right.
+    if passed and validated == 0:
+        results.append(
+            "no resource in the emitted manifests resolved to a known schema — "
+            "every kind was skipped, so nothing was validated (see #104)"
+        )
+        return passed, False
 
     passed = _chant_scenarios(workspace, results) and passed
     return passed, True
