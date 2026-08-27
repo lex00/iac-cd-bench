@@ -102,6 +102,34 @@ def _flux_kustomization_target(kfile: Path, workspace: Path) -> tuple[str, Path]
     return name, path
 
 
+FLUX_KUSTOMIZE_GROUP = "kustomize.toolkit.fluxcd.io"
+
+
+def _flux_kustomization_files(workspace: Path) -> list[Path]:
+    """Every YAML holding a Flux Kustomization, found by reading it (#101).
+
+    `kind: Kustomization` alone is ambiguous -- kustomize's own config file
+    uses `kustomize.config.k8s.io/v1beta1` for the same kind -- so the
+    apiVersion group is load-bearing, not decoration. A file that parses to
+    no Flux Kustomization is not returned at all, which is what keeps the
+    stem-derived-name fallback from ever firing.
+    """
+    hits: list[Path] = []
+    for f in sorted(workspace.rglob("*.y*ml")):
+        if "node_modules" in f.parts:
+            continue
+        try:
+            docs = yaml.safe_load_all(f.read_text())
+            if any(isinstance(d, dict)
+                   and d.get("kind") == "Kustomization"
+                   and str(d.get("apiVersion", "")).startswith(FLUX_KUSTOMIZE_GROUP)
+                   for d in docs):
+                hits.append(f)
+        except (OSError, yaml.YAMLError):
+            continue
+    return hits
+
+
 def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """Run kustomize build and flux build for knr-ops."""
     passed = True
@@ -137,9 +165,19 @@ def _knr_ops_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
             log.warning("Command not found: kustomize")
             passed = False
 
-    # Find flux kustomizations
-    flux_kustomizations = list(workspace.glob("**/kustomization_*.yaml")) + \
-                          list(workspace.glob("**/flux/kustomizations.yaml"))
+    # Find flux kustomizations by content, never by filename (#101).
+    #
+    # This used to glob `**/kustomization_*.yaml` and `**/flux/kustomizations.yaml`
+    # -- both of which encode the golden's own filenames. A model that wrote its
+    # Kustomization to `flux/logs-bucket-kustomization.yaml` matched neither, so
+    # correct work was silently never built; and a `flux/kustomizations.yaml`
+    # holding no Kustomization document still got built under a stem-derived
+    # name, producing `failed find kustomization with name 'kustomizations'` --
+    # a failure the harness invented, charged to the model.
+    #
+    # Third instance of this family, after crossplane's claims (#89) and the
+    # path-exact graders (#72). Rule 8: locate by content, never by path.
+    flux_kustomizations = _flux_kustomization_files(workspace)
     for kfile in flux_kustomizations:
         log.info("flux build kustomization %s", kfile)
         try:
@@ -299,20 +337,62 @@ def _crossplane_static(workspace: Path, results: list[str]) -> tuple[bool, bool]
 
 
 def _terraform_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
-    """Run terraform validate and plan for Terraform."""
+    """Init the workspace, then `terraform validate`.
+
+    The docstring used to say "validate and plan". There is no plan here and
+    there should not be: `terraform plan` is not hermetic. Even with a local
+    backend override the AWS provider demands credentials and fails with
+    "failed to refresh cached credentials, no EC2 IMDS role found", so a plan
+    gate would pass on a laptop with ~/.aws/credentials and fail in CI --
+    exactly the defect that makes the pulumi arms unrunnable there.
+
+    Two real problems fixed here:
+
+    `terraform init` was never run. validate needs the provider and module
+    tree installed, so in a fresh model workspace it fails for reasons that
+    have nothing to do with the model's HCL. `-backend=false` keeps it
+    offline: the golden declares an S3 backend, and initialising that would
+    need credentials.
+
+    stderr was never recorded. validate writes its errors there, so every
+    failure logged exactly `terraform validate: exit=1` and nothing else.
+    All six terraform static failures in coverage-v2 are undiagnosable for
+    this reason -- there is no way to tell a model's broken HCL from a
+    harness problem, which is the same ambiguity #84 was about.
+    """
     passed = True
 
-    # terraform validate
+    log.info("terraform init -backend=false")
+    try:
+        proc = subprocess.run(
+            ["terraform", "init", "-backend=false", "-input=false", "-no-color"],
+            capture_output=True, text=True, timeout=180,
+            cwd=str(workspace),
+        )
+        results.append(f"terraform init: exit={proc.returncode}")
+        if proc.returncode != 0:
+            results.append(f"ERR: {(proc.stderr or proc.stdout)[:500]}")
+            return False, True
+    except subprocess.TimeoutExpired:
+        results.append("TIMEOUT: terraform init")
+        return False, True
+    except FileNotFoundError:
+        results.append("NOT FOUND: terraform")
+        log.warning("Command not found: terraform")
+        return False, True
+
     log.info("terraform validate")
     try:
         proc = subprocess.run(
-            ["terraform", "validate"],
+            ["terraform", "validate", "-no-color"],
             capture_output=True, text=True, timeout=60,
             cwd=str(workspace),
         )
         results.append(f"terraform validate: exit={proc.returncode}")
         if proc.stdout:
             results.append(proc.stdout[:500])
+        if proc.stderr:
+            results.append(f"ERR: {proc.stderr[:500]}")
         if proc.returncode != 0:
             passed = False
     except subprocess.TimeoutExpired:
@@ -332,8 +412,35 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     Sets up a local filesystem backend for Pulumi and initializes the stack,
     so preview can run offline without requiring a Pulumi Cloud account.
     Installs Python dependencies from requirements.txt if present.
+
+    The workspace gets a `Pulumi.yaml` if it has none (#93). Without one there
+    is no project name, so pulumi cannot resolve a stack reference at all and
+    every invocation dies on
+
+        error: if you're using the --stack flag, pass the fully qualified
+        name (organization/project/stack)
+
+    before it reads a line of the model's program. That is what the whole
+    pulumi column of coverage-v2 recorded: 6 of 6 static FAILs on both arms,
+    none of which measured anything the model wrote. The golden passes only
+    because it ships its own Pulumi.yaml.
+
+    A project file is scaffolding, not an answer: the tasks ask for
+    infrastructure, and no prompt asks the model to author one. Supplying it
+    is the same call as symlinking node_modules for chant or running
+    `terraform init` before validate.
     """
     passed = True
+
+    if not any((workspace / n).exists() for n in ("Pulumi.yaml", "Pulumi.yml")):
+        runtime = "nodejs" if (workspace / "index.ts").exists() or any(
+            workspace.glob("*.ts")) else "python"
+        (workspace / "Pulumi.yaml").write_text(
+            f"name: iac-cd-bench-{runtime}\n"
+            f"runtime: {runtime}\n"
+            "description: project scaffold supplied by the benchmark harness\n"
+        )
+        results.append(f"scaffolded Pulumi.yaml (runtime: {runtime})")
 
     # Check if requirements.txt exists and install dependencies
     requirements_file = workspace / "requirements.txt"
@@ -428,7 +535,11 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     log.info("pulumi stack init dev with local backend")
     try:
         proc = subprocess.run(
-            ["pulumi", "stack", "init", "dev", "--no-select"],
+            # Selected, not --no-select: with a filestate backend an
+            # unqualified `-s dev` is not always a resolvable stack
+            # reference, and letting preview use the selected stack sidesteps
+            # having to reconstruct `organization/<project>/dev` by hand.
+            ["pulumi", "stack", "init", "dev"],
             capture_output=True, text=True, timeout=60,
             cwd=str(workspace),
             env=pulumi_env,
@@ -453,7 +564,7 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     log.info("pulumi preview")
     try:
         proc = subprocess.run(
-            ["pulumi", "preview", "-s", "dev", "--non-interactive", "--diff"],
+            ["pulumi", "preview", "--non-interactive", "--diff"],
             capture_output=True, text=True, timeout=120,
             cwd=str(workspace),
             env=pulumi_env,
