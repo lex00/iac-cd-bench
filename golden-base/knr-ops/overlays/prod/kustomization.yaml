@@ -32,6 +32,13 @@ patches:
         path: /spec/forProvider/multiAz
         value: true
   - target:
+      kind: Deployment
+      name: myapp
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 4
+  - target:
       kind: Bucket
       group: s3.aws.upbound.io
       name: myapp-assets-dev
@@ -39,6 +46,31 @@ patches:
       - op: replace
         path: /spec/forProvider/versioningConfiguration/status
         value: Enabled
+      - op: add
+        path: /spec/forProvider/replicationConfiguration
+        value:
+          role: arn:aws:iam::ACCOUNT:role/s3-replication
+          rules:
+            - id: replicate-to-west
+              status: Enabled
+              priority: 1
+              filter:
+                prefix: ''
+              destination:
+                bucket: arn:aws:s3:::myapp-assets-us-west-2
+                replicationTime:
+                  status: Enabled
+                  time:
+                    minutes: 15
+                metrics:
+                  status: Enabled
+                  eventThreshold:
+                    minutes: 15
+                storageClass: STANDARD
+              storageClass: STANDARD
+      - op: replace
+        path: /metadata/name
+        value: myapp-assets-dev
   - target:
       kind: MachineDeployment
       name: myapp-dev-workers
