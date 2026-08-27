@@ -22,6 +22,7 @@ log = logging.getLogger(__name__)
 # Vendored CRD JSON schemas (#83) live in bench.stages.lint, which this module
 # already imports; both gates validate against the same mirror.
 SCHEMA_DIR = lint_mod.SCHEMA_DIR
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def run_static(workspace: Path, stack: str) -> dict:
@@ -441,6 +442,17 @@ def _pulumi_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
             "description: project scaffold supplied by the benchmark harness\n"
         )
         results.append(f"scaffolded Pulumi.yaml (runtime: {runtime})")
+
+    # Same call, same reason: a python workspace with no requirements.txt gets
+    # no venv below, so `pulumi preview` runs against an interpreter with no
+    # pulumi SDK and dies on "No module named 'pulumi'" -- a failure about the
+    # workspace, not the model's program. The pins are the golden's own, so the
+    # SDK the answer is evaluated against is the SDK the arm was written for.
+    if not (workspace / "requirements.txt").exists() and not (workspace / "package.json").exists():
+        golden_reqs = ROOT / "golden-base" / "pulumi-python" / "requirements.txt"
+        if golden_reqs.exists() and not any(workspace.glob("*.ts")):
+            (workspace / "requirements.txt").write_text(golden_reqs.read_text())
+            results.append("scaffolded requirements.txt from the golden's pins")
 
     # Check if requirements.txt exists and install dependencies
     requirements_file = workspace / "requirements.txt"
