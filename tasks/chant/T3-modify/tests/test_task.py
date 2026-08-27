@@ -29,19 +29,48 @@ def _read(path_glob: str) -> str:
 
 
 def _blocks(text: str, call: str) -> list[str]:
-    blocks = []
-    for m in re.finditer(rf"{call}\(\s*\{{", text):
-        start = m.end() - 1
-        depth = 0
-        for i in range(start, len(text)):
-            if text[i] == "{":
-                depth += 1
-            elif text[i] == "}":
-                depth -= 1
-                if depth == 0:
-                    blocks.append(text[start : i + 1])
-                    break
-    return blocks
+    return _props_of_call(text, call)
+def _object_at(text: str, brace: int) -> str | None:
+    """The balanced {...} starting at index `brace`."""
+    depth = 0
+    for i in range(brace, len(text)):
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace:i + 1]
+    return None
+
+
+def _props_of_call(text: str, call: str) -> list[str]:
+    """Every props object passed to `call(...)`, inline or by reference.
+
+    `SecureBucket({...})` and
+
+        const props = {...};
+        SecureBucket(props);
+
+    are the same declaration. Requiring the first spelling failed correct
+    answers that used the second (#107) -- the same defect as #102's
+    file-referenced kustomize patches: one syntactic form of a right answer
+    recognised, the rest invisible.
+    """
+    out: list[str] = []
+    pattern = rf"\b{re.escape(call)}\s*\(\s*(?:(\{{)|([A-Za-z_$][\w$]*))"
+    for m in re.finditer(pattern, text):
+        if m.group(1):
+            block = _object_at(text, m.end() - 1)
+        else:
+            ident = m.group(2)
+            decl = re.search(
+                rf"(?:const|let|var)\s+{re.escape(ident)}\s*(?::[^=]+?)?=\s*\{{",
+                text)
+            block = _object_at(text, decl.end() - 1) if decl else None
+        if block:
+            out.append(block)
+    return out
+
 
 
 @pytest.fixture(scope="module")
