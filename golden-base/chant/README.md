@@ -460,8 +460,8 @@ emit — is resolved; see "Build output layout" above.
 
 | Piece | Version | Source |
 |---|---|---|
-| `@intentius/chant` | 0.46.0 (branch build) | `vendor/intentius-chant-0.46.0-bench.tgz` |
-| `@intentius/chant-lexicon-k8s` | 0.47.0 (branch build) | `vendor/intentius-chant-lexicon-k8s-0.47.0.tgz` |
+| `@intentius/chant` | 0.49.0 (main build) | `vendor/intentius-chant-0.49.0.tgz` |
+| `@intentius/chant-lexicon-k8s` | 0.49.0 (main build) | `vendor/intentius-chant-lexicon-k8s-0.49.0.tgz` |
 | `kubeconform` | 0.7.0 | system |
 | Node | 24.x (20.x per `mise.toml` also works) | system |
 
