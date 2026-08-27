@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 
+import bench.stages.gates  # noqa: F401  -- populates GATES via register()
 from bench.stages.contract import (
     GATES,
     Check,
