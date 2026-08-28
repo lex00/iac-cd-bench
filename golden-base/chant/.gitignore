@@ -1,4 +1,5 @@
 node_modules/
+.node_modules.lock
 dist/
 # bench/stages/static.py's chant static check (and the preflight gate that
 # reuses it against this directory) writes its build output here, distinct

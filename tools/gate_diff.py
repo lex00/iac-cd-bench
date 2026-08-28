@@ -48,6 +48,7 @@ import shutil
 import sys
 import tempfile
 from collections import Counter, defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -56,6 +57,7 @@ sys.path.insert(0, str(ROOT))
 
 import bench.stages.gates  # noqa: F401,E402 -- populates GATES via register()
 from bench.stages.contract import GATES  # noqa: E402
+from bench.stages import lint as lint_mod  # noqa: E402
 from bench.stages import static as static_mod  # noqa: E402
 from tools.regrade_offline import rematerialize  # noqa: E402
 
@@ -65,6 +67,37 @@ TASKS_DIR = ROOT / "tasks"
 # bootstrap by default because a semantic regrade does not need it; a static
 # gate does.
 NEEDS_NODE_MODULES = ("chant", "pulumi-typescript")
+
+# static.run_static now dispatches to GATES itself (#111), so "legacy" here
+# calls the pre-migration per-stack helpers directly -- the same dispatch
+# run_static used to do -- rather than through run_static, which would just
+# compare the contract to itself. Keeps this tool meaningful for whichever
+# gate gets touched next.
+_LEGACY_STATIC = {
+    "knr-ops": static_mod._knr_ops_static,
+    "crossplane": static_mod._crossplane_static,
+    "terraform": static_mod._terraform_static,
+    "chant": static_mod._chant_static,
+    "bare": static_mod._bare_static,
+}
+
+
+def _legacy_static(workspace: Path, stack: str) -> dict[str, Any]:
+    if stack in ("pulumi-python", "pulumi-typescript"):
+        fn = lambda ws, results: static_mod._pulumi_static(ws, results, stack)  # noqa: E731
+    else:
+        fn = _LEGACY_STATIC.get(stack)
+    if fn is None:
+        return lint_mod.inapplicable(
+            f"no static commands for stack: {stack}", "gate_defect")
+    results: list[str] = []
+    all_passed, acted = fn(workspace, results)
+    if not acted:
+        return lint_mod.inapplicable("\n".join(results) or "nothing to build in workspace")
+    return {
+        "passed": all_passed,
+        "logs": "\n".join(results) if results else "static validation passed",
+    }
 
 
 def verdict(stage: dict[str, Any] | None) -> str:
@@ -97,7 +130,7 @@ def _run_one(result: dict[str, Any], impl: str) -> dict[str, Any]:
         rematerialize(result, task_dir, workspace,
                       with_node_modules=stack in NEEDS_NODE_MODULES)
         if impl == "legacy":
-            return static_mod.run_static(workspace, stack)
+            return _legacy_static(workspace, stack)
         return GATES[stack].run(workspace).to_legacy()
     except Exception as exc:  # noqa: BLE001 -- a crash IS the finding
         return {"crashed": f"{type(exc).__name__}: {exc}"}
@@ -142,29 +175,39 @@ def main() -> int:
     ap.add_argument("--stacks", default="", help="comma-separated subset")
     ap.add_argument("--out", type=Path, default=None,
                     help="write the full comparison, disagreements included, as JSON")
+    ap.add_argument("--jobs", type=int, default=4,
+                    help="runs to gate concurrently (each pair gets its own "
+                         "tempdir per run, so this is safe to raise)")
     args = ap.parse_args()
 
     wanted = {s.strip() for s in args.stacks.split(",") if s.strip()}
-    paths = sorted(args.results_dir.glob("*/*/*run*.json"))
-    if not paths:
+    all_paths = sorted(args.results_dir.glob("*/*/*run*.json"))
+    if not all_paths:
         print(f"no runs under {args.results_dir}", file=sys.stderr)
         return 2
 
-    rows: list[dict[str, Any]] = []
-    for p in paths:
+    paths: list[Path] = []
+    for p in all_paths:
         try:
             peek = json.loads(p.read_text())
         except Exception:  # noqa: BLE001
             continue
         if wanted and peek.get("stack") not in wanted:
             continue
-        row = compare_run(p)
-        if row is None:
-            continue
-        rows.append(row)
-        flag = "ok " if row["agree"] else "DIFF"
-        print(f"  {flag} {row['stack']:<18} {row['task']:<14} {row['condition']:<5} "
-              f"legacy={row['legacy']:<26} contract={row['contract']}")
+        paths.append(p)
+
+    rows: list[dict[str, Any]] = []
+    with ThreadPoolExecutor(max_workers=max(1, args.jobs)) as pool:
+        futures = {pool.submit(compare_run, p): p for p in paths}
+        for fut in as_completed(futures):
+            row = fut.result()
+            if row is None:
+                continue
+            rows.append(row)
+            flag = "ok " if row["agree"] else "DIFF"
+            print(f"  {flag} {row['stack']:<18} {row['task']:<14} {row['condition']:<5} "
+                  f"legacy={row['legacy']:<26} contract={row['contract']}")
+    rows.sort(key=lambda r: (r["stack"], r["task"], r["condition"]))
 
     print()
     per_stack: dict[str, Counter] = defaultdict(Counter)

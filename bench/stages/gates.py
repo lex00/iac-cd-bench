@@ -290,12 +290,23 @@ class TerraformGate:
         proc = subprocess.run([resolved, *init_argv], capture_output=True,
                               text=True, timeout=180, cwd=str(workspace))
         if proc.returncode != 0:
-            # init failing is about the workspace, not the model's HCL.
-            return StageResult(
-                inapplicable=Inapplicable.GATE_DEFECT,
-                reason=f"terraform init failed: "
-                       f"{(proc.stderr or proc.stdout or '')[:300]}",
-            )
+            # init parses and loads the model's HCL before it does anything
+            # network-bound, so a bad module reference or an unsupported
+            # argument the model wrote fails right here -- the same thing
+            # validate would have caught if init had gotten that far. Coding
+            # every init failure as GATE_DEFECT was itself a #104-shaped bug:
+            # coverage-v9's six terraform init failures were all the model's
+            # broken HCL (an unreadable "./modules" source, an argument no
+            # module accepts) and every one silently left the correctness
+            # denominator instead of failing it. examined = the .tf files
+            # init actually loaded before choking on them.
+            tf_files = list(workspace.rglob("*.tf"))
+            result.checks.append(Check(
+                tool="terraform", argv=init_argv, exit_code=proc.returncode,
+                examined=len(tf_files), resolved_path=resolved,
+                detail=(proc.stderr or proc.stdout or "")[:500],
+            ))
+            return result
         result.checks.append(Check(
             tool="terraform", argv=init_argv, exit_code=0, examined=0,
             resolved_path=resolved, detail="init (setup, not evidence)",

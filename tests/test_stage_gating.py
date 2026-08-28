@@ -5,13 +5,17 @@ Tests for scored-run integrity fixes (issue #56):
    {"skipped": True, "reason": "disabled by spec"} instead of running a
    disabled stage; score.py's correctness axis excludes skipped stages from
    both numerator and denominator.
-2. lint.py / static.py set passed=False (with a loud log line) when a stage
-   tool binary is missing (FileNotFoundError), matching the timeout and
-   non-zero-exit branches instead of silently passing.
+2. lint.py sets passed=False (with a loud log line) when a stage tool binary
+   is missing (FileNotFoundError), matching the timeout and non-zero-exit
+   branches instead of silently passing. static.py's gates (bench.stages.gates,
+   #111) resolve the binary via shutil.which up front instead: a genuinely
+   missing tool is GATE_DEFECT (never scoreable), not a scored fail, because
+   the model did not cause it.
 """
 
 from __future__ import annotations
 
+import shutil
 import subprocess
 from pathlib import Path
 
@@ -142,29 +146,53 @@ def test_lint_missing_binary_sets_passed_false(tmp_path, monkeypatch, caplog):
     assert "NOT FOUND" in result["logs"]
 
 
-@pytest.mark.parametrize("stack,setup", [
-    ("terraform", lambda ws: None),
-    ("pulumi-python", lambda ws: None),
-])
-def test_static_missing_binary_sets_passed_false(tmp_path, monkeypatch, stack, setup):
-    setup(tmp_path)
+def test_static_terraform_missing_binary_is_gate_defect_not_a_fail(tmp_path, monkeypatch):
+    """TerraformGate resolves the binary via shutil.which before it runs
+    anything, so a genuinely missing tool never reaches subprocess.run at all
+    -- it is not scoreable in either direction (contract.Inapplicable.GATE_DEFECT),
+    not a fail the model gets charged for."""
+    (tmp_path / "main.tf").write_text('resource "x" "y" {}\n')
+    monkeypatch.setattr(shutil, "which", lambda name: None)
+    result = static.run_static(tmp_path, "terraform")
+    assert result.get("inapplicable") is True
+    assert result["inapplicable_reason"] == "gate_defect"
+    assert "passed" not in result
+
+
+def test_static_pulumi_python_missing_binary_is_gate_defect_not_a_fail(tmp_path, monkeypatch):
+    """PulumiPythonGate has no shutil.which check of its own -- it delegates
+    to the legacy _pulumi_static and classifies its log text, so a missing
+    binary surfaces as subprocess.run raising FileNotFoundError, same as
+    before the migration. The verdict is what changed: a preview that never
+    ran is GATE_DEFECT, not a scored fail."""
+    (tmp_path / "__main__.py").write_text("import pulumi\n")
     monkeypatch.setattr(subprocess, "run", _raise_not_found)
-    result = static.run_static(tmp_path, stack)
-    assert result["passed"] is False
-    assert "NOT FOUND" in result["logs"]
+    result = static.run_static(tmp_path, "pulumi-python")
+    assert result.get("inapplicable") is True
+    assert result["inapplicable_reason"] == "gate_defect"
+    assert "passed" not in result
 
 
-def test_static_bare_missing_kubectl_sets_passed_false(tmp_path, monkeypatch):
+def test_static_bare_missing_kubeconform_is_gate_defect_not_a_fail(tmp_path, monkeypatch):
     (tmp_path / "manifest.yaml").write_text("apiVersion: v1\nkind: ConfigMap\n")
-    monkeypatch.setattr(subprocess, "run", _raise_not_found)
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     result = static.run_static(tmp_path, "bare")
-    assert result["passed"] is False
+    assert result.get("inapplicable") is True
+    assert result["inapplicable_reason"] == "gate_defect"
+    assert "passed" not in result
 
 
-def test_static_chant_missing_binary_sets_passed_false(tmp_path, monkeypatch):
-    monkeypatch.setattr(subprocess, "run", _raise_not_found)
+def test_static_chant_missing_binary_is_gate_defect_not_a_fail(tmp_path, monkeypatch):
+    """ChantGate checks for TypeScript first (NO_ARTIFACT if none), so a .ts
+    file is needed to reach the node_modules check -- unbootstrapped here,
+    which is its own gate_defect, same as a missing binary would be."""
+    (tmp_path / "src" / "main.ts").parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "src" / "main.ts").write_text("export {};\n")
+    monkeypatch.setattr(shutil, "which", lambda name: None)
     result = static.run_static(tmp_path, "chant")
-    assert result["passed"] is False
+    assert result.get("inapplicable") is True
+    assert result["inapplicable_reason"] == "gate_defect"
+    assert "passed" not in result
 
 
 # ── chant tsc invocation honors a real tsconfig.json ────────────────────

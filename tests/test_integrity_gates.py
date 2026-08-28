@@ -187,10 +187,25 @@ def test_static_with_nothing_to_build_is_inapplicable_not_passed(tmp_path, monke
 
 
 def test_static_that_did_act_still_reports_a_verdict(tmp_path, monkeypatch):
-    """The guard must not swallow real runs: a workspace with a kustomization
-    is acted on, so the stage reports pass/fail as before."""
-    (tmp_path / "kustomization.yaml").write_text("resources: []\n")
-    monkeypatch.setattr(subprocess, "run", _ok_proc)
+    """The guard must not swallow real runs: a workspace whose kustomization
+    actually renders a resource is acted on, so the stage reports pass/fail
+    as before. `resources: []` would render nothing -- indistinguishable
+    from a no-op build under invariant 1 -- so this needs a real reference
+    and a build stub that echoes back real evidence (a `kind:` line), not
+    the bare `_ok_proc` other tests here use for a workspace with nothing
+    to build at all."""
+    (tmp_path / "configmap.yaml").write_text(
+        "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
+    (tmp_path / "kustomization.yaml").write_text("resources:\n  - configmap.yaml\n")
+
+    def _rendered_proc(*args, **kwargs):
+        class _Proc:
+            returncode = 0
+            stdout = "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n"
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "run", _rendered_proc)
     result = static.run_static(tmp_path, "knr-ops")
     assert result.get("inapplicable") is not True
     assert result["passed"] is True

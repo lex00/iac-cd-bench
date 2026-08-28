@@ -7,6 +7,7 @@ Requires --e2e flag to execute.
 
 from __future__ import annotations
 
+import fcntl
 import subprocess
 import tempfile
 import logging
@@ -339,6 +340,49 @@ def _e2e_bare(workspace: Path, results: list[str]) -> bool:
     return passed
 
 
+def _ensure_node_modules_locked(golden_dir: Path, markers: list[Path],
+                                install_argv: list[str], label: str) -> Path:
+    """Run `install_argv` in `golden_dir` at most once, serialized against
+    every other thread or process racing the same shared install.
+
+    A matrix run gates many stacks' tasks concurrently (bench.stages.gates
+    thread pool, or a parallel bench.runner sweep), and every one of them
+    lazily wants this same golden's node_modules the first time it is
+    touched. Without a real lock the check-then-install below is a classic
+    TOCTOU: two callers both see it missing, both start `npm install` into
+    the same directory, and one's writes race the other's — a workspace
+    symlinked mid-install can observe node_modules as transiently absent or
+    partial, which is indistinguishable from a genuinely broken gate.
+
+    `fcntl.flock` on a marker file next to node_modules serializes both
+    threads (each open() gets its own file description, so flock blocks
+    exactly like it would across processes) and separate `bench` invocations
+    sharing the same checkout.
+    """
+    if all(m.is_dir() for m in markers):
+        return golden_dir
+
+    lock_path = golden_dir / ".node_modules.lock"
+    with open(lock_path, "a+") as lock_file:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        try:
+            if all(m.is_dir() for m in markers):
+                return golden_dir
+            log.info("Installing %s node_modules (one-time, cached for the "
+                      "rest of this process)", label)
+            subprocess.run(
+                install_argv,
+                cwd=str(golden_dir),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        finally:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+    return golden_dir
+
+
 def ensure_chant_node_modules(golden_dir: Path | None = None) -> Path:
     """Install golden-base/chant's node_modules once (from its committed
     package-lock.json + vendor/*.tgz tarballs) and hand back the directory
@@ -358,22 +402,11 @@ def ensure_chant_node_modules(golden_dir: Path | None = None) -> Path:
     """
     golden_dir = golden_dir or (ROOT / "golden-base" / "chant")
     node_modules = golden_dir / "node_modules"
-    chant_pkg = node_modules / "@intentius" / "chant"
-    lexicon_pkg = node_modules / "@intentius" / "chant-lexicon-k8s"
-    if chant_pkg.is_dir() and lexicon_pkg.is_dir():
-        return golden_dir
-
-    log.info("Installing golden-base/chant node_modules (one-time, cached "
-              "for the rest of this process)")
-    subprocess.run(
-        ["npm", "install", "--no-audit", "--no-fund"],
-        cwd=str(golden_dir),
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    return golden_dir
+    markers = [node_modules / "@intentius" / "chant",
+               node_modules / "@intentius" / "chant-lexicon-k8s"]
+    return _ensure_node_modules_locked(
+        golden_dir, markers,
+        ["npm", "install", "--no-audit", "--no-fund"], "golden-base/chant")
 
 
 def ensure_pulumi_typescript_node_modules(golden_dir: Path | None = None) -> Path:
@@ -386,21 +419,10 @@ def ensure_pulumi_typescript_node_modules(golden_dir: Path | None = None) -> Pat
     """
     golden_dir = golden_dir or (ROOT / "golden-base" / "pulumi-typescript")
     node_modules = golden_dir / "node_modules"
-    aws_pkg = node_modules / "@pulumi" / "aws"
-    if aws_pkg.is_dir():
-        return golden_dir
-
-    log.info("Installing golden-base/pulumi-typescript node_modules (one-time, "
-             "cached for the rest of this process)")
-    subprocess.run(
-        ["npm", "ci", "--no-audit", "--no-fund"],
-        cwd=str(golden_dir),
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=300,
-    )
-    return golden_dir
+    markers = [node_modules / "@pulumi" / "aws"]
+    return _ensure_node_modules_locked(
+        golden_dir, markers,
+        ["npm", "ci", "--no-audit", "--no-fund"], "golden-base/pulumi-typescript")
 
 
 def preflight_chant_golden() -> dict:

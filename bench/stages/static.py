@@ -30,39 +30,37 @@ ROOT = Path(__file__).resolve().parents[2]
 def run_static(workspace: Path, stack: str) -> dict:
     """Run tool-native static validation for the stack.
 
-    Each per-stack helper returns `(passed, acted)`. `acted` is False when the
-    helper found nothing to build — no kustomization, no claim, no manifest —
-    in which case the stage is recorded `inapplicable` rather than passed. See
-    bench.stages.lint.inapplicable for why: a run that produced no artifacts
-    used to collect a free static pass, which flattered exactly the runs that
-    had failed hardest.
-    """
-    results: list[str] = []
+    Dispatches to the contract gate registry (bench.stages.gates) for every
+    stack migrated onto it -- as of #111 that is all seven. tools/gate_diff.py
+    is what earned this: it rebuilt each of coverage-v9's 84 stored workspaces
+    and ran both the legacy per-stack helpers below and the contract gate
+    against fresh copies, and the two disagreed in exactly the two ways that
+    mattered -- a chant node_modules race in the differential tool itself
+    (fixed by locking bench.stages.e2e.ensure_chant_node_modules) and
+    TerraformGate coding every `terraform init` failure as GATE_DEFECT when
+    six of coverage-v9's were the model's own broken HCL (fixed there). After
+    both fixes, every disagreement left was the contract correctly excluding
+    a legacy vacuous pass or a legacy hard-fail on no-artifact runs -- the
+    same class of bug #99 and #110 fixed elsewhere, so those are the contract
+    working as designed, not a discrepancy to chase.
 
-    if stack == "knr-ops":
-        all_passed, acted = _knr_ops_static(workspace, results)
-    elif stack == "crossplane":
-        all_passed, acted = _crossplane_static(workspace, results)
-    elif stack == "terraform":
-        all_passed, acted = _terraform_static(workspace, results)
-    elif stack in ("pulumi-python", "pulumi-typescript"):
-        all_passed, acted = _pulumi_static(workspace, results, stack)
-    elif stack == "chant":
-        all_passed, acted = _chant_static(workspace, results)
-    elif stack == "bare":
-        all_passed, acted = _bare_static(workspace, results)
-    else:
+    Import is deferred: bench.stages.gates imports _kubeconform_valid_count
+    from this module, so importing it at module scope here is a cycle.
+
+    The legacy `_knr_ops_static` / `_crossplane_static` / ... helpers below
+    stay in place -- tests/test_static_gates.py and tests/test_preflight.py
+    exercise them directly, and bench.stages.e2e still calls a couple for its
+    own preflight checks. They are dead code from run_static's perspective,
+    not deletable from the module's.
+    """
+    import bench.stages.gates  # noqa: F401 -- populates GATES via register()
+    from bench.stages.contract import GATES
+
+    gate = GATES.get(stack)
+    if gate is None:
         return lint_mod.inapplicable(
             f"no static commands for stack: {stack}", "gate_defect")
-
-    if not acted:
-        reason = "\n".join(results) or "nothing to build in workspace"
-        return lint_mod.inapplicable(reason)
-
-    return {
-        "passed": all_passed,
-        "logs": "\n".join(results) if results else "static validation passed",
-    }
+    return gate.run(workspace).to_legacy()
 
 
 def _kubeconform_valid_count(summary: str) -> int:
