@@ -14,6 +14,8 @@ comparable, so the count travels with the score.
 
 from __future__ import annotations
 
+import pytest
+
 from bench.score import compute_score, stage_gate_defect
 
 
@@ -124,3 +126,56 @@ def test_e2e_gate_defects_are_counted_too():
         "e2e": _abstain("gate_defect"),
     }))
     assert s["gate_defects"] == 1
+
+
+# --- safety must not be a free mark where it was never measured -------------
+
+
+def _rubric_run(idiom: float) -> dict:
+    """A rubric-only task: no stage ran, the judge returned a verdict, and the
+    semantic grader never produced a safety flag."""
+    return {"stages": {"lint": {"skipped": True}, "static": {"skipped": True},
+                       "semantic": {"skipped": True}},
+            "judge": {"idiom": idiom}}
+
+
+def test_safety_is_dropped_where_no_verdict_exists():
+    """T1-comprehend and T5-review have nothing to run a safety check against.
+
+    Safety used to default to 1.0 there while keeping weight 2 of a 3-weight
+    denominator, so those runs were floored at 0.667 however badly the model
+    did. Measured on coverage-v9: 28 of 84 runs are rubric tasks and NOT ONE
+    carried a safety verdict.
+    """
+    s = compute_score(_rubric_run(0.0))
+    assert "safety" not in s["applicable_axes"]
+    assert s["composite"] == 0.0, (
+        "a rubric task the judge scored 0 must score 0, not the 0.667 floor "
+        "safety's default used to guarantee"
+    )
+
+
+def test_a_rubric_run_scores_exactly_its_idiom_verdict():
+    for idiom in (0.25, 0.5, 0.75, 1.0):
+        s = compute_score(_rubric_run(idiom))
+        assert s["applicable_axes"] == ["idiom"]
+        assert s["composite"] == pytest.approx(idiom)
+
+
+def test_safety_still_counts_where_the_grader_produced_one():
+    """The four gated tasks all carry a real verdict; this must not move them."""
+    passed = compute_score({"stages": {"semantic": {
+        "passed": True, "passed_count": 2, "total_count": 2, "safety_pass": True}}})
+    failed = compute_score({"stages": {"semantic": {
+        "passed": True, "passed_count": 2, "total_count": 2, "safety_pass": False}}})
+    assert "safety" in passed["applicable_axes"]
+    assert passed["safety"] == 1.0 and failed["safety"] == 0.0
+    assert failed["composite"] < passed["composite"]
+
+
+def test_a_run_measured_on_nothing_does_not_divide_by_zero():
+    """Every axis is now droppable. Such a run is an absence, not a 0.0 — and
+    bench.validate rejects it — but the scorer must not raise on real input."""
+    s = compute_score({"stages": {"lint": {"skipped": True}}})
+    assert s["applicable_axes"] == []
+    assert s["composite"] == 0.0

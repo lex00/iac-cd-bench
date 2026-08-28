@@ -222,26 +222,46 @@ set (0.70-0.94). The number said "worst"; the evidence said "unmeasured".
 assertion was evaluated. A stage that ran and *failed* is a real zero and
 stays (`tests/test_score_regression.py` pins both directions).
 
-**This does not make composites comparable across archetypes.** Combined with
-the `idiom` axis being hardcoded 0.0 wherever the judge does not run (#7), the
-two groups of tasks are still scored on disjoint axes:
+`safety` was the last axis still holding a free mark, and it was the largest
+one. It defaulted to 1.0 whenever the semantic grader produced no verdict,
+while keeping its weight of 2 against a 3-weight denominator. Measured on
+coverage-v9: 28 of 84 runs are rubric tasks, not one of them carried a safety
+verdict, and every one was therefore floored at 0.667 however badly the model
+did — a third of each arm's runs with two thirds of the score handed over
+before anything was read.
 
-| task group | earns | cannot earn | practical ceiling |
-| --- | --- | --- | --- |
-| T1-comprehend, T5-review | idiom, safety | correctness, completeness | ~0.68 |
-| T2 / T3 / T4 | correctness, completeness | idiom | 0.778 |
+Dropping it had been tried before and deliberately reverted, on the grounds
+that a rubric-only task with `safety` gone too would score exactly 0.0 on every
+axis: "nothing was measured" rendered as "the model did terribly", the same
+misleading number pointing the other way. #7 is what made that reasoning stale.
+Idiom is now a real measurement on precisely the tasks safety cannot reach, so
+dropping safety leaves those runs scored on the judge's verdict rather than on
+nothing. The axis is now dropped unless the grader emitted `safety_pass`; the
+four gated tasks all emit one, so their scores are untouched.
 
-So a per-stack **mean composite is partly a function of that stack's archetype
-mix**, not only its performance. Compare like archetype with like archetype;
-treat a single averaged number per stack as a summary, not a measurement.
-Fixing that properly means #7 (implement the judge everywhere) rather than
-more axis bookkeeping.
+**This still does not make composites comparable across archetypes.** The two
+groups are scored on disjoint axes, and no amount of axis bookkeeping changes
+that:
 
-Historical effect: this moves stored composites *upward* for rubric-only runs,
-the opposite direction from the vacuous-pass guard. The `increased == 0`
-invariant in `test_score_regression.py` is scoped to that guard and is
-unaffected here, because `_historical_results()` filters out runs carrying
-`skipped` stages — which is precisely the rubric-only case.
+| task group | earns | cannot earn |
+| --- | --- | --- |
+| T1-comprehend, T5-review | idiom | correctness, completeness, safety |
+| T2 / T3 / T4 / T6 | correctness, completeness, safety | idiom |
+
+A rubric task's composite is now exactly its idiom score. That is a narrower
+measurement than a gated task's, not a weaker performance, and a per-stack
+**mean composite remains partly a function of that stack's archetype mix**.
+Compare like archetype with like; treat one averaged number per stack as a
+summary, not a measurement.
+
+Historical effect, measured by replaying every stored run: dropping
+`correctness` moves rubric-only composites *upward*, dropping `safety` moves
+them sharply *down*, and the second is much the larger. Per-arm means fell
+between 0.005 (bare) and 0.151 (pulumi-python), **and the ranking changed** —
+knr-ops and pulumi-typescript swap. The `increased == 0` invariant in
+`test_score_regression.py` is scoped to the vacuous-pass guard and is unaffected
+by either, because `_historical_results()` filters out runs carrying `skipped`
+stages, which is precisely the rubric-only case.
 
 ## Mechanism map
 
@@ -274,19 +294,17 @@ unaffected here, because `_historical_results()` filters out runs carrying
   but `comparability()` compares harness/toolchain/provider/effort only. Two
   sets run against different versions of the same task's `prompt.md` would
   compare cleanly.
-- **The `safety` axis still defaults to 1.0 when nothing ran.** It is the same
-  "nothing checked, full marks" shape the completeness axis just lost, and
-  dropping it was tried and deliberately reverted: with `safety` gone too, an
-  unjudged rubric-only task scores exactly 0.0 on every axis, which reads as
-  "the model did terribly" rather than "nothing was measured" — the same
-  misleading-number failure, pointing the other way. What contains it for now
-  is that runs where every enabled stage was *inapplicable* are rejected
-  outright and contribute no number at all. Note this does not cover runs
-  whose stages were *spec-disabled* (`skipped`): those are recorded
-  `no_stage_ran`, survive as `partial`, and are scored — see rule 10. The underlying heuristic
-  (`"safety" not in output.lower()` in `bench/stages/semantic.py`) is not a
-  real safety gate either, and both want replacing together with an
-  unmeasurable-composite sentinel rather than a 0.0.
+- **The `safety` heuristic is weak where it does run.** The free-mark half of
+  this is fixed (rule 10 — the axis is dropped where no verdict exists), but on
+  the four gated tasks the verdict itself comes from
+  `"safety" not in output.lower()` in `bench/stages/semantic.py`. That is a
+  string search, not a safety gate. An arm that passes it has not been shown to
+  be safe; it has been shown not to mention the word.
+- **A run measured on no axis at all scores 0.0 rather than nothing.** Every
+  axis is now droppable, so this shape is reachable in principle. `bench.validate`
+  rejects such runs and they contribute no number to any table, and
+  `compute_score` guards the division, but the honest value is a sentinel and
+  0.0 is not it.
 - **The pulumi arms' static gate needs real AWS credentials.** `pulumi preview`
   is not offline: the AWS provider validates against STS before previewing
   anything, dummy values do not satisfy it, and `skipCredentialsValidation` did
