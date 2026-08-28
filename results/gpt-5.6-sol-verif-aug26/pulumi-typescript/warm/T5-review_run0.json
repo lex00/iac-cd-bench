@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 292
+  },
+  "content": "Please provide the Pulumi preview JSON output; it was not included in the request.\n\nGenerate it with:\n\n```bash\npulumi preview --stack <stack> --json > preview.json\n```\n\nBefore sharing, redact any plaintext credentials, tokens, connection strings, or private keys while preserving the relevant field names and secret metadata.\n\nI\u2019ll specifically flag:\n\n- **Plaintext secrets**\n  - Database connection strings or credentials exposed in resource properties or stack outputs\n  - Values lacking Pulumi\u2019s secret marker\n  - Use of plain `config.require(...)` instead of `config.requireSecret(...)`\n\n- **Stateful replacements**\n  - `replace`, `create-replacement`, or `delete-replaced` operations affecting RDS, S3 buckets, EKS clusters/node groups, or other persistent resources\n  - Replacement reasons and likely data-loss/downtime impact\n\n- **Missing protection**\n  - Stateful production resources without Pulumi resource option `protect: true`\n  - Especially RDS and S3 resources\n  - Note: Pulumi `protect` is separate from AWS RDS `deletionProtection`; production RDS should generally have both\n\nI can also assess the preview against the listed acceptance criteria where the JSON exposes enough resource inputs and outputs."
+}

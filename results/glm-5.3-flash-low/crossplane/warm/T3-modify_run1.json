@@ -1,0 +1,37 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-afhxm4or/generated_5.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\nSummary: 7 resources found in 6 files - Valid: 0, Invalid: 0, Errors: 1, Skipped: 6\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 627,
+    "output": 1218
+  },
+  "content": "# Crossplane: Adding a Second Region (us-west-2)\n\nThe idea: regions live in **ProviderConfig** and composition **parameters**, never in claims. Existing claims keep referencing the same `XRC`/class and continue reconciling against `us-east-1`; we only add a second ProviderConfig plus a region parameter in the composition.\n\n## 1. Existing state (unchanged) \u2014 ProviderConfig for us-east-1\n\n```yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: default            # existing; do not touch\nspec:\n  region: us-east-1\n  credentials:\n    source: IRSA\n```\n\n## 2. New ProviderConfig for the additional region\n\n```yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: default-us-west-2\nspec:\n  region: us-west-2\n  credentials:\n    source: IRSA\n```\n\n## 3. Composition: make region a patched parameter\n\nResources in the composition select a ProviderConfig ref that is patched from environment config \u2014 no claim edits:\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: webapp-eks.aws.crossplane.io\nspec:\n  compositeTypeRef:\n    apiVersion: example.org/v1alpha1\n    kind: XWebApp\n  mode: Pipeline\n  pipeline:\n  - step: deploy-bucket\n    functionRef:\n      name: function-patch-and-transform\n    input:\n      apiVersion: pt.fn.crossplane.io/v1beta1\n      kind: Resources\n      resources:\n      - name: app-assets-bucket\n        base:\n          apiVersion: s3.aws.upbound.io/v1beta2\n          kind: Bucket\n          spec:\n            forProvider:\n              versioning:\n              - enabled: true\n              serverSideEncryptionConfiguration:\n              - rule:\n                - applyServerSideEncryptionByDefault:\n                    sseAlgorithm: AES256\n              publicAccessBlock:\n              - blockPublicAcls: true\n                blockPublicPolicy: true\n                ignorePublicAcls: true\n                restrictPublicBuckets: true\n        patches:\n        # Region flows from XR field (set by env-level defaults), not from the claim\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.region\n          toFieldPath: spec.forProvider.region\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.region\n          toFieldPath: spec.providerConfigRef.name\n          transforms:\n          - type: string\n            string:\n              type: Format\n              fmt: \"default-%s\"\n```\n\n(The same two patches are repeated for EKS, RDS, IAM, etc. \u2014 pattern is identical.)\n\n> For the prod S3 bucket's cross-region replication requirement, use the native `s3.aws.upbound.io/v1beta2` `Bucket` replication configuration (replica bucket deployed with `providerConfigRef: default-us-west-2`).\n\n## 4. Per-environment region via XRD defaults + Composite policy\n\nClaims/XRs don't mention regions. Environment isolation comes from where composites are created:\n\n```yaml\n# dev: stays on us-east-1 by default\napiVersion: example.org/v1alpha1\nkind: WebAppClaim         # UNCHANGED \u2014 zero diff in Git\nmetadata:\n  name: webapp-dev\n  namespace: dev\nspec:\n  compositionRef:\n    name: webapp-eks.aws.crossplane.io\n```\n\nThe region resolution happens with `function-go-templating` keyed off an environment label, or more idiomatically via an EnvironmentConfig:\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1alpha1\nkind: EnvironmentConfig\nmetadata:\n  name: prod-env\ndata:\n  region: us-west-2           # existing prod had none \u2192 falls back gracefully\n---\napiVersion: apiextensions.crossplane.io/v1alpha1\nkind: EnvironmentConfig\nmetadata:\n  name: dev-env\ndata:\n  region: us-east-1\n```\n\nAnd the composition reads it:\n\n```yaml\n- type: FromEnvironmentFieldPath\n  fromFieldPath: metadata.annotations['crossplane.io/environment-config'] # resolved region\n```\n\nOr simpler with go-templating:\n\n```yaml\n- step: render-region\n  functionRef:\n    name: function-go-templating\n  input:\n    apiVersion: gotemplating.fn.crossplane.io/v1beta1\n    kind: GoTemplate\n    source: Inline\n    inline:\n      template: |\n        {{ $region := getCompositeResource . .spec.region | default \"us-east-1\" }}\n```\n\n## Why nothing breaks\n\n| Concern | How it's handled |\n|---|---|\n| Dev/prod independence | Separate namespaces + per-env EnvironmentConfigs; prod changes never touch dev composite reconciliation |\n| No claim churn | Claims stay byte-for-byte identical; all diff lives in Composition + EnvConfigs |\n| us-east-1 continuity | Default fallback ensures existing composites keep their current region/resources |\n| Replica bucket (prod S3) | Deployed once into `us-west-2` under `default-us-west-2` ProviderConfig |\n\n**Summary:** adding `default-us-west-2` ProviderConfig + promoting region to a composition parameter (defaulting to `us-east-1`) means driftless rollout \u2014 `crossplane beta validate` / dry-run shows no resource updates for any existing claim.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-afhxm4or/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-afhxm4or/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-afhxm4or/generated_2.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-afhxm4or/generated_3.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-afhxm4or/generated_4.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-afhxm4or/generated_5.yaml"
+  ]
+}

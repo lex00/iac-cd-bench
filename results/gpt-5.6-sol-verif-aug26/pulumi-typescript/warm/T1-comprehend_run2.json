@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 591
+  },
+  "content": "1. **Replacement trigger:** Based on the scenario, the likely property is RDS `storageEncrypted` changing from `false`/unset in dev to `true` in prod. AWS cannot enable encryption in place, so Pulumi reports a replacement. Changes to `instanceClass` or `multiAz` are generally in-place modifications. The exact trigger can only be confirmed from the preview\u2019s property diff, since no program or preview output was included.\n\n2. **`pulumi up --target <URN>`:** Updates only the targeted resource and any dependencies Pulumi must process. It skips unrelated resources and, by default, resources that depend on the target. Use `--target-dependents` to include downstream dependents. Skipped resources are not reconciled with program changes during that update.\n\n3. **Secrets in outputs:** Pulumi marks secret-derived `Output`s as secret and propagates that marking through `apply` and interpolations. Secret values are encrypted in stack state using the stack\u2019s secrets provider and redacted in normal CLI output, typically as `[secret]`. They can be deliberately exposed with options such as `--show-secrets`, so access to state, keys, and privileged CLI output must still be controlled."
+}

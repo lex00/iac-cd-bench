@@ -1,0 +1,34 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-a1mrk69w/generated_2.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of type map[string]interface {}\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-a1mrk69w/generated_1.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal array into Go value of t"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 625,
+    "output": 1490
+  },
+  "content": "With Upbound\u2019s AWS provider, `ProviderConfig` selects credentials/account; the AWS region is still set on each managed resource. Add a distinctly named provider config for `us-west-2`, then reference it from the west-region resources. Existing claims do not need to change.\n\n```yaml\n# providers/aws-us-west-2.yaml\napiVersion: aws.upbound.io/v1beta1\nkind: ProviderConfig\nmetadata:\n  name: aws-us-west-2\nspec:\n  credentials:\n    source: Secret\n    secretRef:\n      namespace: crossplane-system\n      name: aws-credentials\n      key: credentials\n```\n\nDo not duplicate the credential Secret if both regions use the same AWS account. If separate accounts are required, point this config at a different secret.\n\nAdd the provider reference and explicit region to the production replica resources in the Composition:\n\n```yaml\n# Relevant Composition resource fragment\n- name: assets-replica-west\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: Bucket\n    metadata:\n      labels:\n        app.example.io/resource: assets-replica\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        forceDestroy: false\n      deletionPolicy: Orphan\n  patches:\n    - type: FromCompositeFieldPath\n      fromFieldPath: metadata.uid\n      toFieldPath: metadata.name\n      transforms:\n        - type: string\n          string:\n            type: Format\n            fmt: \"assets-replica-%s\"\n\n- name: assets-replica-west-versioning\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketVersioning\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.example.io/resource: assets-replica\n        versioningConfiguration:\n          - status: Enabled\n\n- name: assets-replica-west-encryption\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketServerSideEncryptionConfiguration\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.example.io/resource: assets-replica\n        rule:\n          - applyServerSideEncryptionByDefault:\n              - sseAlgorithm: AES256\n\n- name: assets-replica-west-public-access-block\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketPublicAccessBlock\n    spec:\n      providerConfigRef:\n        name: aws-us-west-2\n      forProvider:\n        region: us-west-2\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.example.io/resource: assets-replica\n        blockPublicAcls: true\n        blockPublicPolicy: true\n        ignorePublicAcls: true\n        restrictPublicBuckets: true\n```\n\nThe production source bucket\u2019s replication configuration must point to the west bucket and use a least-privilege replication role:\n\n```yaml\n- name: assets-replication\n  base:\n    apiVersion: s3.aws.upbound.io/v1beta1\n    kind: BucketReplicationConfiguration\n    spec:\n      providerConfigRef:\n        name: aws-us-east-1\n      forProvider:\n        region: us-east-1\n        bucketSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.example.io/resource: assets-primary\n        roleSelector:\n          matchControllerRef: true\n          matchLabels:\n            app.example.io/resource: assets-replication-role\n        rule:\n          - id: replicate-to-us-west-2\n            status: Enabled\n            destination:\n              - bucketSelector:\n                  matchControllerRef: true\n                  matchLabels:\n                    app.example.io/resource: assets-replica\n```\n\nEnsure these replica resources are emitted only for prod using the Composition\u2019s existing environment parameter, for example with a pipeline-mode composition/template condition:\n\n```gotemplate\n{{- if eq (index .observed.composite.resource.spec.parameters \"environment\") \"prod\" }}\n# west bucket, controls, IAM replication role/policy, and replication configuration\n{{- end }}\n```\n\nThis preserves existing claim manifests:\n\n- Dev continues using its existing provider config and does not receive replication resources.\n- Prod receives the `us-west-2` replica through the Composition.\n- No claim needs a new region or provider field.\n- Region isolation is explicit through `providerConfigRef` plus `forProvider.region`.\n\nApply the provider config before updating the Composition:\n\n```bash\nkubectl apply -f providers/aws-us-west-2.yaml\nkubectl apply -f compositions/webapp.yaml\n```\n\nIf Composition revisions use `revisionActivationPolicy: Manual`, create the new revision and select/activate it for prod only; otherwise an automatic Composition update may reconcile every existing composite using that Composition.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-a1mrk69w/generated_0.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-a1mrk69w/generated_1.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-a1mrk69w/generated_2.yaml"
+  ]
+}

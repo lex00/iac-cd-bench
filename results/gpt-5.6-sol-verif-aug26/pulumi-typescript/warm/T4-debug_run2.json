@@ -1,0 +1,33 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nnzby5ge/index.ts(1,25): error TS2307: Cannot find module '@pulumi/pulumi' or its corresponding type declarations.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nnzby5ge/index.ts(2,22): error TS2307: Cannot find module '@pulumi/aws' or its corresponding type declarations.\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n============================== 2 passed in 0.01s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1081,
+    "output": 1279
+  },
+  "content": "Replace `index.ts` with:\n\n```ts\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") ?? pulumi.getStack();\nconst region = config.get(\"region\") ?? \"us-east-1\";\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\nif (env !== \"dev\" && env !== \"prod\") {\n    throw new Error(`Unsupported environment \"${env}\"; expected \"dev\" or \"prod\".`);\n}\n\nconst isProd = env === \"prod\";\n\nconst provider = new aws.Provider(\"aws-provider\", {\n    region: region as aws.Region,\n});\n\nconst resourceOptions: pulumi.CustomResourceOptions = {\n    provider,\n};\n\n// S3 bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: {\n        enabled: true,\n    },\n    tags: {\n        Environment: env,\n        Project: \"myapp\",\n    },\n}, resourceOptions);\n\nnew aws.s3.BucketServerSideEncryptionConfigurationV2(\n    \"app-bucket-encryption\",\n    {\n        bucket: bucket.id,\n        rules: [{\n            applyServerSideEncryptionByDefault: {\n                sseAlgorithm: \"AES256\",\n            },\n        }],\n    },\n    resourceOptions,\n);\n\nnew aws.s3.BucketPublicAccessBlock(\"app-bucket-public-access-block\", {\n    bucket: bucket.id,\n    blockPublicAcls: true,\n    blockPublicPolicy: true,\n    ignorePublicAcls: true,\n    restrictPublicBuckets: true,\n}, resourceOptions);\n\n// Derive values from Outputs with apply/interpolate; never await an Output.\nconst bucketUrl: pulumi.Output<string> =\n    pulumi.interpolate`https://${bucket.bucket}.s3.${region}.amazonaws.com`;\n\n// RDS PostgreSQL\nconst db = new aws.rds.Instance(\"app-db\", {\n    identifier: `myapp-${env}`,\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16\",\n    allocatedStorage: 20,\n\n    dbName: \"appdb\",\n    username: \"app_user\",\n    password: dbPassword,\n\n    multiAz: isProd,\n    storageEncrypted: true,\n    publiclyAccessible: false,\n    deletionProtection: true,\n    backupRetentionPeriod: 7,\n\n    skipFinalSnapshot: false,\n    finalSnapshotIdentifier: `myapp-${env}-final`,\n}, resourceOptions);\n\nexport const bucketEndpoint = bucketUrl;\nexport const dbEndpoint = db.endpoint;\n```\n\nSet the password as an encrypted Pulumi stack secret rather than storing it in source:\n\n```bash\npulumi stack select dev\npulumi config set env dev\npulumi config set region us-east-1\npulumi config set --secret dbPassword 'replace-with-a-strong-password'\n\npulumi stack select prod\npulumi config set env prod\npulumi config set region us-east-1\npulumi config set --secret dbPassword 'replace-with-a-different-strong-password'\n```\n\nThe key fixes are:\n\n- `pulumi.Output` values are transformed with `pulumi.interpolate` or `.apply()`, not `await`.\n- `config.requireSecret(\"dbPassword\")` returns a secret `Output<string>` and keeps the password encrypted in stack configuration.\n- `bucketEndpoint` is now an `Output<string>`, not a `Promise`.\n- The bucket name\u2014not its ARN\u2014is used to construct the S3 URL.\n- Bucket encryption/public-access blocking and the required RDS protection settings are enabled.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-nnzby5ge/index.ts"
+  ]
+}

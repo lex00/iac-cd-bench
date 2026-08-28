@@ -1,0 +1,34 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[validate CRDs] kubeconform: exit=0\nSummary: 2 resources found in 2 files - Valid: 0, Invalid: 0, Errors: 0, Skipped: 2\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "\\n          toFieldPath: spec.forProvider.instanceClass\\n\\n        - type: FromCompositeFieldPath\\n          fromFieldPath: spec.parameters.deletionProtection\\n          toFieldPath: spec.forProvider.deletionProtection\\n\\n      readinessChecks:\\n        - type: MatchCondition\\n          matchCondition:\\n            type: Ready\\n            status: \"True\"\\n' or 'checkType' in 'apiVersion: apiextensions.crossplane.io/v1\\nkind: Composition\\nmetadata:\\n  name: aws-web-service\\n  labels:\\n    crossplane.io/xrd: xawswebservices.app.example.com\\nspec:\\n  group: app.example.com\\n  mode: Resources\\n  resources:\\n    - name: rds-instance\\n      base:\\n        apiVersion: database.aws.upbound.io/v1beta1\\n        kind: Instance\\n        spec:\\n          forProvider:\\n            region: us-east-1\\n            engine: postgres\\n            engineVersion: \"16.1\"\\n            allocatedStorage: 20\\n            backupRetentionPeriod: 7\\n            deletionProtection: true\\n            publiclyAccessible: false\\n          providerConfigRef:\\n            name: default\\n\\n      patches:\\n        - type: FromCompositeFieldPath\\n          fromFieldPath: spec.parameters.instanceClass\\n          toFieldPath: spec.forProvider.instanceClass\\n\\n        - type: FromCompositeFieldPath\\n          fromFieldPath: spec.parameters.deletionProtection\\n          toFieldPath: spec.forProvider.deletionProtection\\n\\n      readinessChecks:\\n        - type: MatchCondition\\n          matchCondition:\\n            type: Ready\\n            status: \"True\"\\n'))\n/Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py:15: AssertionError: Composition should have ReadinessChecks defined\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/crossplane/T4-debug/tests/test_task.py::test_composition_has_readiness_checks\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1122,
+    "output": 1603
+  },
+  "content": "Updated manifests fix the field path, align the XRD schema, add an explicit RDS readiness check, and use Resources composition mode because the composition uses `spec.resources`.\n\n### `composition.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: Composition\nmetadata:\n  name: aws-web-service\n  labels:\n    crossplane.io/xrd: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n  mode: Resources\n  resources:\n    - name: rds-instance\n      base:\n        apiVersion: database.aws.upbound.io/v1beta1\n        kind: Instance\n        spec:\n          forProvider:\n            region: us-east-1\n            engine: postgres\n            engineVersion: \"16.1\"\n            allocatedStorage: 20\n            backupRetentionPeriod: 7\n            deletionProtection: true\n            publiclyAccessible: false\n          providerConfigRef:\n            name: default\n\n      patches:\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.instanceClass\n          toFieldPath: spec.forProvider.instanceClass\n\n        - type: FromCompositeFieldPath\n          fromFieldPath: spec.parameters.deletionProtection\n          toFieldPath: spec.forProvider.deletionProtection\n\n      readinessChecks:\n        - type: MatchCondition\n          matchCondition:\n            type: Ready\n            status: \"True\"\n```\n\n### `xrd.yaml`\n\n```yaml\napiVersion: apiextensions.crossplane.io/v1\nkind: CompositeResourceDefinition\nmetadata:\n  name: xawswebservices.app.example.com\nspec:\n  group: app.example.com\n\n  versions:\n    - name: v1alpha1\n      served: true\n      referenceable: true\n      schema:\n        openAPIV3Schema:\n          type: object\n          properties:\n            spec:\n              type: object\n              properties:\n                parameters:\n                  type: object\n                  properties:\n                    instanceClass:\n                      type: string\n                      description: RDS instance class.\n                      default: db.t3.medium\n                      enum:\n                        - db.t3.micro\n                        - db.t3.medium\n                    deletionProtection:\n                      type: boolean\n                      description: Enables RDS deletion protection.\n                      default: true\n                  required:\n                    - instanceClass\n              required:\n                - parameters\n\n  claimNames:\n    kind: AWSWebService\n    plural: awswebservices\n```\n\nThe important readiness behavior is:\n\n```yaml\nreadinessChecks:\n  - type: MatchCondition\n    matchCondition:\n      type: Ready\n      status: \"True\"\n```\n\nThis causes the composed RDS resource to be considered ready only after its managed-resource `Ready=True` condition is reported.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-fph_wjck/composition.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-fph_wjck/xrd.yaml"
+  ]
+}

@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+import bench.runner as runner
+from bench.grounding import SchemaCache
+
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "tasks"
 RESULTS_DIR = ROOT / "results"
@@ -27,6 +30,283 @@ def test_runner_executes():
     )
     assert result.returncode == 0
     assert "IaC/CD Benchmark Runner" in result.stdout
+    assert "--grounding" in result.stdout
+
+
+def test_grounding_validation_accepts_only_supported_stacks():
+    runner.validate_grounding_stacks(
+        ["knr-ops", "crossplane"], grounding=True, condition="cold", results_tag="grounded"
+    )
+
+    with pytest.raises(ValueError, match="supports knr-ops and crossplane only"):
+        runner.validate_grounding_stacks(
+            ["terraform"], grounding=True, condition="cold", results_tag="grounded"
+        )
+
+
+def test_grounding_validation_rejects_all_when_it_contains_unsupported_stacks():
+    with pytest.raises(ValueError, match="unsupported stack.*pulumi-python"):
+        runner.validate_grounding_stacks(
+            runner.ALL_STACKS, grounding=True, condition="cold", results_tag="grounded"
+        )
+
+
+def test_grounding_validation_requires_cold_condition():
+    with pytest.raises(ValueError, match="--grounding requires --condition cold"):
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="warm", results_tag="grounded"
+        )
+
+    runner.validate_grounding_stacks(
+        ["knr-ops"], grounding=True, condition="cold", results_tag="grounded"
+    )
+
+
+def test_grounding_validation_requires_non_empty_results_tag():
+    with pytest.raises(ValueError, match="--grounding requires a non-empty --results-tag"):
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="cold", results_tag=None
+        )
+
+    with pytest.raises(ValueError, match="--grounding requires a non-empty --results-tag"):
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="cold", results_tag=""
+        )
+
+    with pytest.raises(ValueError, match="--grounding requires a non-empty --results-tag"):
+        runner.validate_grounding_stacks(
+            ["knr-ops"], grounding=True, condition="cold", results_tag="   "
+        )
+
+
+def test_non_grounded_validation_preserves_warm_condition():
+    runner.validate_grounding_stacks(["terraform"], grounding=False, condition="warm")
+
+
+def test_non_grounded_validation_preserves_optional_results_tag():
+    runner.validate_grounding_stacks(["terraform"], grounding=False, results_tag=None)
+
+
+def test_cli_rejects_grounding_with_warm_condition():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-m",
+            "bench.runner",
+            "--model",
+            "fake",
+            "--stack",
+            "knr-ops",
+            "--grounding",
+            "--condition",
+            "warm",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+
+    assert result.returncode == 2
+    assert "--grounding requires --condition cold" in result.stderr
+
+
+class CapturingAdapter(runner.ModelAdapter):
+    def __init__(self):
+        self.prompts = []
+
+    @property
+    def name(self):
+        return "fake"
+
+    def complete(self, prompt, files):
+        self.prompts.append(prompt)
+        return {"content": "No generated files.", "input_tokens": 1, "output_tokens": 1}
+
+
+class FakeGroundingClient:
+    def __init__(self, schema='{"type": "object"}'):
+        self.schema = schema
+        self.calls = []
+
+    def get_schema(self, kind, api_version):
+        self.calls.append((kind, api_version))
+        return self.schema
+
+
+def _grounded_task(tmp_path):
+    task_dir = tmp_path / "T-grounded"
+    (task_dir / "seed").mkdir(parents=True)
+    (task_dir / "spec.yaml").write_text("id: T-grounded\nstack: knr-ops\n")
+    (task_dir / "prompt.md").write_text("Write the manifest.\n")
+    (task_dir / "seed" / "resource.yaml").write_text(
+        "apiVersion: example.org/v1\nkind: Widget\nspec: {}\n"
+    )
+    return task_dir
+
+
+def test_run_task_appends_grounding_prompt_and_records_metadata(tmp_path, monkeypatch):
+    task_dir = _grounded_task(tmp_path)
+    adapter = CapturingAdapter()
+    client = FakeGroundingClient()
+    cache = SchemaCache(tmp_path / "cache")
+    monkeypatch.setattr(runner.lint, "run_lint", lambda *_: {"passed": True})
+    monkeypatch.setattr(runner.static, "run_static", lambda *_: {"passed": True})
+    monkeypatch.setattr(runner.semantic, "run_semantic", lambda *_: {"passed": True})
+
+    results = runner.run_task(
+        task_dir,
+        adapter,
+        1,
+        False,
+        "warm",
+        grounding=True,
+        grounding_client=client,
+        grounding_cache=cache,
+    )
+
+    assert len(adapter.prompts) == 1
+    assert "### Reference schemas" in adapter.prompts[0]
+    assert '"type": "object"' in adapter.prompts[0]
+    assert client.calls == [("Widget", "example.org/v1")]
+    assert results[0]["grounding"]["discovered_kinds"] == ["example.org/v1/Widget"]
+    assert results[0]["grounding"]["resolved_kinds"] == ["example.org/v1/Widget"]
+    assert results[0]["grounding"]["unavailable_kinds"] == []
+    section = "### Reference schemas" + adapter.prompts[0].split("### Reference schemas", 1)[1]
+    assert results[0]["grounding"]["section_chars"] == len(section)
+    assert "error" not in results[0]
+
+
+def test_run_task_records_grounding_failure_without_invoking_model(tmp_path, monkeypatch):
+    task_dir = _grounded_task(tmp_path)
+    adapter = CapturingAdapter()
+
+    class FailingClient:
+        def get_schema(self, kind, api_version):
+            raise RuntimeError("catalog unavailable")
+
+    monkeypatch.setattr(runner.lint, "run_lint", lambda *_: {"passed": True})
+
+    results = runner.run_task(
+        task_dir,
+        adapter,
+        1,
+        False,
+        "warm",
+        grounding=True,
+        grounding_client=FailingClient(),
+        grounding_cache=SchemaCache(tmp_path / "cache"),
+    )
+
+    assert adapter.prompts == []
+    assert results[0]["error"] == (
+        "grounding schema coverage failed: example.org/v1/Widget: catalog unavailable"
+    )
+    assert results[0]["grounding"] == {
+        "discovered_kinds": ["example.org/v1/Widget"],
+        "resolved_kinds": [],
+        "unavailable_kinds": [
+            {"pair": "example.org/v1/Widget", "error": "catalog unavailable"}
+        ],
+        "section_chars": 0,
+    }
+    assert results[0]["stages"]["lint"]["passed"] is False
+
+
+def test_run_task_reports_all_unavailable_grounding_kinds_before_model(tmp_path):
+    task_dir = _grounded_task(tmp_path)
+    (task_dir / "seed" / "missing.yaml").write_text(
+        "apiVersion: z.example.org/v1\nkind: Missing\nspec: {}\n"
+    )
+    adapter = CapturingAdapter()
+
+    class PartiallyAvailableClient:
+        def __init__(self):
+            self.calls = []
+
+        def get_schema(self, kind, api_version):
+            self.calls.append((kind, api_version))
+            if kind == "Missing":
+                raise RuntimeError("catalog unavailable")
+            return '{"type": "object"}'
+
+    client = PartiallyAvailableClient()
+    results = runner.run_task(
+        task_dir,
+        adapter,
+        1,
+        False,
+        "warm",
+        grounding=True,
+        grounding_client=client,
+        grounding_cache=SchemaCache(tmp_path / "cache"),
+    )
+
+    assert client.calls == [
+        ("Widget", "example.org/v1"),
+        ("Missing", "z.example.org/v1"),
+    ]
+    assert adapter.prompts == []
+    assert results[0]["grounding"] == {
+        "discovered_kinds": ["example.org/v1/Widget", "z.example.org/v1/Missing"],
+        "resolved_kinds": ["example.org/v1/Widget"],
+        "unavailable_kinds": [
+            {"pair": "z.example.org/v1/Missing", "error": "catalog unavailable"}
+        ],
+        "section_chars": 0,
+    }
+    assert results[0]["error"] == (
+        "grounding schema coverage failed: "
+        "z.example.org/v1/Missing: catalog unavailable"
+    )
+    assert results[0]["stages"]["lint"]["passed"] is False
+
+
+def _schema_less_task(tmp_path):
+    task_dir = tmp_path / "T-plain"
+    (task_dir / "seed").mkdir(parents=True)
+    (task_dir / "spec.yaml").write_text("id: T-plain\nstack: knr-ops\n")
+    (task_dir / "prompt.md").write_text("Write the manifest.\n")
+    (task_dir / "seed" / "notes.md").write_text("No Kubernetes YAML here.\n")
+    return task_dir
+
+
+def test_run_task_skips_grounding_section_when_no_kinds_discovered(tmp_path, monkeypatch):
+    task_dir = _schema_less_task(tmp_path)
+    monkeypatch.setattr(runner.lint, "run_lint", lambda *_: {"passed": True})
+
+    grounded_adapter = CapturingAdapter()
+    client = FakeGroundingClient()
+    grounded = runner.run_task(
+        task_dir,
+        grounded_adapter,
+        1,
+        False,
+        "cold",
+        grounding=True,
+        grounding_client=client,
+        grounding_cache=SchemaCache(tmp_path / "cache"),
+    )
+
+    ungrounded_adapter = CapturingAdapter()
+    runner.run_task(task_dir, ungrounded_adapter, 1, False, "cold")
+
+    assert client.calls == []
+    assert grounded_adapter.prompts == ungrounded_adapter.prompts
+    assert "### Reference schemas" not in grounded_adapter.prompts[0]
+    assert grounded[0]["grounding"] == {
+        "discovered_kinds": [],
+        "resolved_kinds": [],
+        "unavailable_kinds": [],
+        "section_chars": 0,
+    }
+    assert "error" not in grounded[0]
+
+
+def test_openai_compat_default_api_key_is_ascii():
+    # httpx encodes header values as ascii; a non-ascii default key crashes
+    # header construction before any request is attempted.
+    adapter = runner.OpenAICompatAdapter("m", "http://localhost:8000")
+    adapter.api_key.encode("ascii")
 
 
 def test_task_dirs_exist():

@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 635,
+    "output": 414
+  },
+  "content": "Please provide the Pulumi preview JSON output\u2014ideally generated with:\n\n```bash\npulumi preview --json > preview.json\n```\n\nI\u2019ll inspect it for:\n\n1. **Plaintext secrets**\n   - Database connection strings, passwords, tokens, or access keys in `outputs`, `config`, or resource inputs.\n   - Values lacking Pulumi\u2019s secret marker, such as:\n     ```json\n     { \"4dabf18193072939515e22adb298388d\": \"1b47061264138c4ac30d75fd1eb44270\" }\n     ```\n   - Accidental exposure caused by string interpolation or `pulumi.unsecret`.\n\n2. **Replacement of stateful resources**\n   - `replace`, `create-replacement`, or `delete-replaced` operations affecting RDS instances, S3 buckets, or other persistent resources.\n   - Replacement reasons such as changed names, regions, identifiers, encryption settings, or immutable properties.\n\n3. **Missing protection**\n   - Stateful production resources whose resource options do not show `protect: true`.\n   - In particular, RDS and production asset buckets.\n   - Note that Pulumi preview JSON may not always expose the effective `protect` option clearly; when absent or ambiguous, the TypeScript resource declaration or exported deployment JSON may also be needed.\n\nI\u2019ll also flag acceptance-criteria violations visible in the preview, including missing RDS deletion protection/backups, public access, missing bucket encryption/versioning, wildcard production IAM permissions, and incorrect EKS node sizing. You may redact unrelated identifiers, but do not replace suspected secret values before review unless you clearly mark where they occurred.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-i0a2j341/generated_0.json"
+  ]
+}

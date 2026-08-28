@@ -1,0 +1,38 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "pulumi-python",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=1\nF821 Undefined name `pulumi`\n --> generated_0.py:2:1\n  |\n1 | # Bad\n2 | pulumi.export(\"dbConnectionString\", conn_str)\n  | ^^^^^^\n3 |\n4 | # Good\n  |\n\nF821 Undefined name `conn_str`\n --> generated_0.py:2:37\n  |\n1 | # Bad\n2 | pulumi.export(\"dbConnectionString\", conn_str)\n  |                                     ^^^^^^^^\n3 |\n4 | # Good\n  |\n\nF821 Undefined name `pulumi`\n --> generated_0.py:5:10\n  |\n4 | # Good\n5 | config = pulumi.Config()\n  |          ^^^^^^\n6 | db_password = config.require_secret(\"dbPa"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 636,
+    "output": 1139
+  },
+  "content": "# Pulumi Preview JSON Security Review\n\n## Summary\n\nThe preview shows **one critical finding** (plaintext secret in outputs), **one high-risk operation** (stateful RDS replacement), and **one hardening gap** (missing `protect` on prod resources).\n\n---\n\n## \ud83d\udd34 Critical: Secret in Plaintext Outputs\n\nPreview excerpt:\n\n```json\n\"outputs\": {\n  \"dbConnectionString\": {\n    \"value\": \"postgres://appuser:S3cr3tP@ss!@prod-db.abc123.us-east-1.rds.amazonaws.com:5432/appdb\",\n    \"secret\": false\n  }\n}\n```\n\n**Issue:** The DB connection string \u2014 containing the password \u2014 is exported with `\"secret\": false`. Once the stack is deployed, this value will be stored **in plaintext in state and in `pulumi stack output`**, visible to anyone with read access.\n\n**Spec violation:** Acceptance criterion #3 (secret encrypted at rest via stack-native mechanism). Expected idiom:\n\n```python\n# Bad\npulumi.export(\"dbConnectionString\", conn_str)\n\n# Good\nconfig = pulumi.Config()\ndb_password = config.require_secret(\"dbPassword\")  # ConfigSecret / SecretConfig\n```\n\nAnd in `Pulumi.prod.yaml`:\n\n```yaml\nconfig:\n  app:dbPassword:\n    secure: AAABAJ5z...  # encrypted with passphrase/KMS secrets provider\n```\n\n**Fix:** Wrap the output in `pulumi.Output.secret(...)` or source it from an encrypted stack secret, and consider a secrets provider (`--secrets-provider=awskms`) so even non-secret state is protected at rest. Note that any value derived from a secret via `.apply()` must itself be re-wrapped in `Output.secret()` or it loses secrecy.\n\n---\n\n## \ud83d\udfe0 High: Replacement of Stateful Resource\n\n```json\n{\n  \"urn\": \"urn:pulumi:prod::app::aws:rds/instance:Instance::prod-db\",\n  \"old\": { \"type\": \"aws:rds/instance:Instance\", \"id\": \"i-abc123...\" },\n  \"new\": {\n    \"type\": \"aws:rds/instance:Instance\",\n    \"propertyDiffs\": {\n      \"instanceClass\": { \"inputDiff\": true }\n    }\n  },\n  \"diffKind\": \"replace\"\n}\n```\n\n**Issues:**\n\n1. RDS is stateful; `replace` means a **new database instance is created and the old one deleted** \u2014 data loss risk for existing databases.\n2. `instanceClass` normally supports modify-in-place. This replacement pattern often indicates it was created without a name identifier or with a property forcing recreation (e.g., renaming the instance, `identifier` change).\n\n**Mitigations:**\n\n- Enable deletion protection in code (acceptance criterion #2):\n\n```python\nrds.Instance(\"prod-db\",\n    instance_class=\"db.t3.medium\",\n    multi_az=True,\n    storage_encrypted=True,\n    publicly_accessible=False,\n    backup_retention_period=14,\n    deletion_protection=True,\n)\n```\n\nWith deletion protection on, AWS will refuse the destroy step during replace \u2014 turning a silent data-loss preview into a safe failure.\n\n- Verify the diff doesn't require replace by reviewing `propertyDiffs` before applying; prefer additive changes.\n- Rename resource URNs carefully \u2014 Pulumi treats renames as create/delete unless aliased (`aliases=[...]`).\n\n---\n\n## \ud83d\udfe1 Medium: Missing `protect` Flag\n\nNone of the previewed resources carry `\"protect\": true`:\n\n```json\n\"resourceChanges\": {\n  \"creates\": [...],\n  \"replaces\": [\"prod-db\"],\n  ...\n}\n```\n\n**Issue:** Without `opts=ResourceOptions(protect=True)`, anyone running `pulumi destroy` \u2014 or accidentally updating a stateful resource into a replace \u2014 can delete prod infrastructure. Especially dangerous combined with the RDS replacement above.\n\n**Fix (targeted):**\n\n```python\nrds.Instance(..., opts=pulumi.ResourceOptions(protect=True))\ns3.BucketV2(...,   opts=pulumi.ResourceOptions(protect=True))\neks.Cluster(...,   opts=pulumi.ResourceOptions(protect=True))\n```\n\nForgetting-scale changes (node counts, tags) still flow through; only destroys/replaces are blocked. If a genuine delete is needed later: `pulumi state unprotect <urn>`, then update.\n\n---\n\n## \u2705 Passing Checks\n\n| Check | Status |\n|---|---|\n| S3 bucket versioning + SSE | \u2705 present |\n| S3 public access block | \u2705 present |\n| RDS multi-AZ / encryption (prod) | \u2705 present in config |\n| Backup retention \u2265 7 days | \u2705 14 |\n| Node specs match env spec | \u2705 4\u00d7 t3.large prod, 2\u00d7 t3.medium dev |\n| Env isolation via stack configs | \u2705 `Pulumi.dev.yaml` / `Pulumi.prod.yaml`; prod-only change touches only prod stack |\n\n---\n\n## Recommended Actions (priority order)\n\n1. Convert `dbConnectionString` export to `Output.secret()` and audit all other exports for derived-but-unmarked secrets.\n2. Do **not apply** this preview until the RDS replacement root cause is resolved; enable `deletion_protection`.\n3. Add `protect=True` to prod stateful resources.\n4. Consider `refresh: true` / sentinel checks in CI to fail previews containing `replace` diffs on prod stacks.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-s15yy2er/Pulumi.prod.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-s15yy2er/generated_0.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-s15yy2er/generated_0.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-s15yy2er/generated_1.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-s15yy2er/generated_1.py",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-s15yy2er/generated_2.json",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-s15yy2er/generated_2.py"
+  ]
+}

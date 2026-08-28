@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 478
+  },
+  "content": "# PR Review: Security Issues\n\n## Findings\n\n### \ud83d\udd34 Critical\n\n**1. S3 bucket policy grants public read access**\n- Violates acceptance criteria #1 (\"no public access\") outright.\n- Public read on an application assets bucket risks data exposure, and is exactly what `aws.S3.PublicAccessBlock` configs and org-level SCPs are meant to prevent.\n- **Fix:** Remove the policy statement (or the entire policy document if it only exists for this). Ensure `block_public_acls`, `ignore_public_acls`, `block_public_policy`, `restrict_public_buckets` are all true.\n\n**2. Plaintext password in deployment env vars**\n- Violates criteria #3. Once merged, the credential lives in Git history forever, and kustomize would render it into any manifest output.\n- **Fix:** Do not merge with this. Replace with a SOPS-encrypted Secret (matching the existing dev/prod secret pattern), decrypt via KMS at apply time (e.g., via `ksops` / Flux decryption), and **rotate the exposed password** \u2014 treat it as compromised since it's in the diff.\n\n### \ud83d\udfe1 Warning\n\n**3. Missing resource limits on containers**\n- Not a direct confidentiality issue, but a security/reliability risk: unbounded containers enable noisy-neighbor and resource-exhaustion scenarios (accidental or exploited).\n- **Fix:** Add `resources.limits` (and `requests`) for CPU/memory in the base manifests, sized per environment.\n\n### \ud83d\udd35 Info\n\n**4. RDS instance class change** \u2014 No security impact on its own. However, worth confirming in review:\n   - If prod: still `multi-AZ`, storage encrypted, `publicly_accessible = false` per spec\n   - Deletion protection + backup retention \u2265 7 days unchanged\n\n## Required before merge\n\n1. Revert/remove the public-read bucket policy; verify Public Access Block is enabled.\n2. Replace plaintext env var with SOPS-encrypted Secret reference; rotate the leaked credential.\n3. Add container resource limits.\n4. Sanity-check the RDS change against prod spec (encryption, multi-AZ, no public access).\n\nItems 1 and 2 are blocking \u2014 request changes. Items 3\u20134 can be resolved in follow-up commits within the same PR."
+}

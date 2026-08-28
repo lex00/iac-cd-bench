@@ -1,0 +1,30 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T6-semantics",
+  "stack": "terraform",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mInitializing provider plugins found in the configuration...\u001b[0m\n- Finding hashicorp/aws versions matching \"~> 5.0\"...\n- Installing hashicorp/aws v5.100.0...\n- Installed hashicorp/aws v5.100.0 (signed by HashiCorp)\n\n\n\nTerraform has created a lock file \u001b[1m.terraform.lock.hcl\u001b[0m to record the provider\nselections it made above. Include this file in your version control repository\nso that Terraform can guarantee to make the same selections by default when\nyou run \"terraform init\" in the fut\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 7 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q1_prevent_destroy_errors PASSED [ 14%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q2_count_shrink_destroys_highest_index PASSED [ 28%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q3_count_to_foreach_recreates PASSED [ 42%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q4_ignore_changes_suppresses_config_drift PASSED [ 57%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q5_ignore_changes_suppresses_remote_drift PASSED [ 71%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q6_instance_class_updates_in_place PASSED [ 85%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/terraform/T6-semantics/tests/test_task.py::test_q7_destroy_blocked_by_prevent_destroy PASSED [100%]\n\n============================== 7 passed in 0.01s ===============================\n",
+      "passed_count": 7,
+      "total_count": 7,
+      "pass_threshold": 0.6,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1660,
+    "output": 404
+  },
+  "content": "```json\n{\n  \"q1\": \"error\",\n  \"q2\": [\"aws_subnet.private[2]\"],\n  \"q3\": \"destroy-and-recreate-all\",\n  \"q4\": \"no-change\",\n  \"q5\": \"no-change\",\n  \"q6\": \"update-in-place\",\n  \"q7\": {\n    \"completes\": false,\n    \"blocking_resource\": \"aws_s3_bucket.artifacts\"\n  }\n}\n```"
+}

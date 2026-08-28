@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "terraform",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[init] terraform: exit=0\n\u001b[0m\u001b[1mTerraform initialized in an empty directory!\u001b[0m\n\nThe directory has no Terraform configuration files. You may begin working\nwith Terraform immediately by creating Terraform configuration files.\u001b[0m\n\n[validate] terraform: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "terraform validate: exit=0\n\u001b[32m\u001b[1mSuccess!\u001b[0m The configuration is valid.\n\u001b[0m\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 916,
+    "output": 1045
+  },
+  "content": "Assuming the flipped variable changes an environment-specific value such as `dev` to `prod` or changes the RDS instance class:\n\n1. **Next `terraform plan`**\n   - Terraform refreshes resources it knows from state, evaluates the new configuration, and displays the difference.\n   - Typical symbols:\n     - `~` update in place\n     - `+` create\n     - `-` destroy\n     - `-/+` replace\n   - An RDS class change such as `db.t3.micro` \u2192 `db.t3.medium` normally appears as:\n     ```text\n     ~ resource \"aws_db_instance\" \"app\" {\n         instance_class = \"db.t3.micro\" -> \"db.t3.medium\"\n       }\n     ```\n   - If an environment selector is changed from dev to prod **in the same workspace/state**, Terraform will try to transform the resources tracked as dev into the prod configuration. That may include EKS sizing, RDS settings, S3 replication, IAM, and HTTPS changes; some may require replacement.\n   - Idiomatically, dev and prod should use separate workspaces/backends or otherwise separate state. In that design, changing prod variables affects only the prod plan and state.\n\n   The exact actions cannot be known from a variable flip alone; they depend on which resource arguments use that variable and whether the provider marks those arguments as replace-on-change.\n\n2. **If the state file is deleted**\n   - Terraform does not automatically discover and reconnect configuration addresses to existing cloud resources.\n   - With no state, the next plan generally shows all configured resources as new:\n     ```text\n     Plan: N to add, 0 to change, 0 to destroy.\n     ```\n   - Existing AWS resources remain running; deleting state does **not** delete them.\n   - Apply may then fail because names or identifiers already exist, or it may create duplicates where AWS permits them.\n   - Recovery should use a state backup, restore the remote backend object, or `terraform import`/import blocks\u2014not apply the empty-state plan.\n   - If a remote backend is configured and only a stray local file is deleted, Terraform may simply reload the intact remote state.\n\n3. **RDS instance class change**\n   - AWS and the Terraform AWS provider normally support changing `instance_class` in place; Terraform generally does not destroy and recreate the database.\n   - AWS performs a DB instance modification, which can cause a restart or downtime:\n     - `apply_immediately = true`: AWS attempts the modification promptly.\n     - `apply_immediately = false`: the modification is generally deferred to the maintenance window.\n   - Unsupported class/engine combinations can fail validation. Other simultaneous RDS changes may independently require replacement\u2014for example, enabling storage encryption on an existing unencrypted instance generally cannot be done as a simple in-place class modification.\n   - Deletion protection protects against deletion but does not prevent an allowed in-place class change.\n\n4. **State versus configuration**\n   - **Configuration (`.tf`, variables, modules):** the desired infrastructure and dependency graph.\n   - **State (`terraform.tfstate`):** Terraform\u2019s mapping between configuration addresses and real provider objects, including resource IDs and observed attributes.\n   - **Plan:** reconciliation among configuration, prior state, and\u2014after refresh\u2014the provider\u2019s current remote values.\n\nState is not the infrastructure itself and is not merely a disposable cache. It is required to know that, for example, `aws_db_instance.app` corresponds to a particular AWS DB identifier. State can also contain sensitive values even when marked `sensitive`, so it should be stored in an encrypted, access-controlled remote backend with locking and versioning."
+}

@@ -83,10 +83,10 @@ SAMPLED_HISTORICAL_JSONS = [
 # `skipped` flags. Pinned so a later change to VACUOUS_LOG_MARKERS, or a
 # stage runner quietly changing a log body, shows up as a test failure
 # rather than as a moved leaderboard.
-EXPECTED_TOTAL_RUNS = 1416
-EXPECTED_VACUOUS_RUNS = 795
-EXPECTED_FULLY_VACUOUS_RUNS = 127
-EXPECTED_CHANGED_COMPOSITES = 512
+EXPECTED_TOTAL_RUNS = 1758
+EXPECTED_VACUOUS_RUNS = 949
+EXPECTED_FULLY_VACUOUS_RUNS = 158
+EXPECTED_CHANGED_COMPOSITES = 587
 
 
 def _old_composite(stages: dict) -> float:

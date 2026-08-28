@@ -1,0 +1,36 @@
+{
+  "model": "glm-5.3",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\nresources:\n  - ../../base\npatches:\n  # 1. App deployment: 2 -> 4 replicas\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n  # 2 & 3. RDS: db.t3.medium + multi-AZ\n  # (adjust Group/Kind to your actual RDS CRD, e.g. rds.aws.crossplane.io/v1beta1 RDSInstance)\n  - target:\n      group: \n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-alfsv3kk/overlays/prod: exit=1\nERR: Error: accumulating resources: accumulation err='accumulating resources from '../../base': evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-alfsv3kk/base' : lstat /private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-alfsv3kk/base: no such file or directory': must build at directory: not a valid directory: evalsymlink failure on '/private/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-alfsv3kk/base' : lstat /private/va"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [],
+    "section_chars": 151
+  },
+  "tokens": {
+    "input": 827,
+    "output": 656
+  },
+  "content": "# Prod Overlay Changes \u2014 knr-ops\n\nI can only modify `overlays/prod/kustomization.yaml`, so all changes go in as inline patches in that one file.\n\n```yaml\n# overlays/prod/kustomization.yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\nresources:\n  - ../../base\n\npatches:\n  # 1. App deployment: 2 -> 4 replicas\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  # 2 & 3. RDS: db.t3.medium + multi-AZ\n  # (adjust Group/Kind to your actual RDS CRD, e.g. rds.aws.crossplane.io/v1beta1 RDSInstance)\n  - target:\n      group: rds.aws.crossplane.io\n      version: v1beta1\n      kind: RDSInstance\n      name: app-db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstanceClass\n        value: db.t3.medium\n      - op: replace\n        path: /spec/forProvider/multiAZ\n        value: true\n\n  # 4. S3: cross-region replication to us-west-2\n  - target:\n      group: s3.aws.crossplane.io\n      version: v1beta2\n      kind: Bucket\n      name: app-assets\n    patch: |-\n      - op: add\n        path: /spec/forProvider/replicationConfiguration\n        value:\n          role: arn:aws:iam::ACCOUNT_ID:role/app-s3-replication\n          rules:\n            - status: Enabled\n              destination:\n                bucket: arn:aws:s3:::app-assets-replica-us-west-2\n                storageClass: STANDARD\n```\n\n### Notes / adjustments you may need\n\n- **CRD group/version/kind**: The spec doesn't pin the exact RDS/S3 CRDs. If you're using the AWS provider via Crossplane, the fields above (`dbInstanceClass`, `multiAZ`, `replicationConfiguration.rules[].destination.bucket`) match upstream schemas. If RDS is managed via Terraform controller, swap the target for the corresponding `Terraform`/`configmap` object and patch the tfvars instead.\n- **Replication destination bucket**: us-west-2 replica bucket must already exist with versioning enabled \u2014 create it as a separate resource if needed (but here we're constrained to the prod overlay only).\n- **Dev isolation**: All patches are namespaced within `overlays/prod/`; `overlays/dev/kustomization.yaml` is untouched, so `kustomize build overlays/dev` output is unchanged.\n\nVerify with:\n```bash\nkustomize build overlays/dev  | sha256sum   # before & after must match\nkustomize build overlays/prod | kubectl apply --dry-run=client -f -\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-alfsv3kk/overlays/prod/kustomization.yaml"
+  ]
+}

@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 585
+  },
+  "content": "# PR Review: Security Findings\n\n## Critical \u2014 block merge\n\n### 1. S3 bucket policy grants public read access\n**Violates:** Acceptance Criterion 1 (\"no public access\")\n\nAny policy statement with `\"Principal\": \"*\"` / `Allow` + public `s3:Get*` exposes assets to the internet. This can also leak data and incur surprise egress costs.\n\n**Fix required:**\n- Remove the public-read statement entirely.\n- Ensure a corresponding block-public-access configuration is present on the bucket.\n- If assets genuinely need public reads, serve them via CloudFront with Origin Access Control (OAC) instead.\n\n### 2. Plaintext password in deployment env vars\n```yaml\nenv:\n  - name: DB_PASSWORD\n    value: \"super-secret-password\"   # \u274c\n```\n**Violates:** Acceptance Criterion 3 (secrets never in plaintext in Git; use SOPS-encrypted secrets via knr-ops).\n\nOnce committed, the secret is permanently in Git history even if removed later, and visible to anyone with repo read access.\n\n**Fix required:**\n- Move the value into a Secret encrypted with **SOPS** (as used elsewhere in this repo) and reference it:\n```yaml\nenv:\n  - name: DB_PASSWORD\n    valueFrom:\n      secretKeyRef:\n        name: db-credentials\n        key: password\n```\n- **Rotate/revoke the exposed credential immediately** \u2014 treat it as compromised regardless of merge status.\n\n## Warning\n\n### 3. Missing resource limits on containers\nNot a direct vulnerability, but a security/stability risk: without limits, a misbehaving or compromised container can exhaust node memory/CPU (DoS on co-located workloads).\n\n**Fix required:**\n```yaml\nresources:\n  requests: { cpu: \"250m\", memory: \"256Mi\" }\n  limits:   { cpu: \"500m\", memory: \"512Mi\" }\n```\n\n## Info\n\n### 4. RDS instance class change\nClass/size changes alone are fine (matches expected dev/prod sizing). Worth verifying while you're here that dev/prod overlays still satisfy the spec (deletion protection, backup retention \u2265 7 days, not publicly accessible, prod multi-AZ + encryption), since it's an infra-adjacent PR.\n\n---\n\n## Verdict\n\n\u274c **Request changes. Do not merge.**\n\nPre-merge checklist:\n1. Remove public-read bucket policy (+ confirm block-public-access settings)\n2. Replace plaintext env var with SOPS-encrypted Secret reference; **rotate the leaked credential**\n3. Add resource requests/limits\n4. Confirm RDS safety settings intact after class change\n\nItems 1\u20132 are hard blockers; item 3 should be fixed in this PR or tracked as an immediate follow-up."
+}

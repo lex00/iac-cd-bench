@@ -24,13 +24,49 @@ from bench import preflight as preflight_mod
 from bench import provenance as prov_mod
 from bench import validity as validity_mod
 from bench.validity import check_run_validity
+from bench.grounding import MCPClient, SchemaCache, build_grounding_section, discover_kinds
+from bench.agentic import run_agentic_completion
 from bench.stages import lint, static, semantic, e2e
 
 ROOT = Path(__file__).resolve().parent.parent
 TASKS_DIR = ROOT / "tasks"
 RESULTS_DIR = ROOT / "results"
+ALL_STACKS = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant", "bare"]
+GROUNDING_STACKS = frozenset({"knr-ops", "crossplane"})
 
 log = logging.getLogger(__name__)
+
+
+class GroundingCoverageError(RuntimeError):
+    """Raised when one or more discovered kinds have no usable schema."""
+
+
+def _concise_grounding_error(error: Exception) -> str:
+    """Flatten an unavailable-schema error for result metadata and messages."""
+    message = " ".join(str(error).split())
+    return message or error.__class__.__name__
+
+
+def validate_grounding_stacks(
+    stacks: list[str],
+    grounding: bool = False,
+    condition: str = "warm",
+    results_tag: str | None = None,
+) -> None:
+    """Validate grounding's cold condition, result isolation, and supported stacks."""
+    if not grounding:
+        return
+    if condition != "cold":
+        raise ValueError("--grounding requires --condition cold")
+    if not results_tag or not results_tag.strip():
+        raise ValueError("--grounding requires a non-empty --results-tag")
+    unsupported = sorted(set(stacks) - GROUNDING_STACKS)
+    if unsupported:
+        names = ", ".join(unsupported)
+        raise ValueError(
+            "--grounding supports knr-ops and crossplane only; "
+            f"unsupported stack(s): {names}"
+        )
 
 
 # ──────────────────────────────────────────────────────────────────────────
@@ -442,6 +478,19 @@ class ModelAdapter:
     def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
         raise NotImplementedError
 
+    def request(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """Send a raw message list, optionally with tool definitions.
+
+        Adapters that do not support tools should raise NotImplementedError;
+        the default implementation flattens to the legacy complete() shape
+        (no tool results can be represented).
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support raw message requests"
+        )
+
     @property
     def name(self) -> str:
         return "base"
@@ -449,6 +498,8 @@ class ModelAdapter:
 
 class AnthropicAdapter(ModelAdapter):
     """Anthropic API adapter via httpx."""
+
+    tool_schema_style = "anthropic"
 
     def __init__(self, model: str, api_key: str, reasoning_effort: str | None = None,
                  temperature: float | None = None):
@@ -464,24 +515,15 @@ class AnthropicAdapter(ModelAdapter):
     def name(self) -> str:
         return self.model
 
-    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+    def request(
+        self, messages: list[dict[str, Any]], tools: list[dict[str, Any]] | None = None
+    ) -> dict[str, Any]:
+        """Send raw Anthropic messages, optionally with tool definitions.
+
+        Returns {"content_blocks", "stop_reason", "input_tokens",
+        "output_tokens"}; complete() flattens this to text-only.
+        """
         import httpx
-
-        extra_content: list[dict[str, str]] = []
-        for f in files:
-            if f.is_file() and f.stat().st_size < 50000:
-                extra_content.append({
-                    "type": "text",
-                    "text": f"File: {f.name}\n{f.read_text()}",
-                })
-
-        messages: list[dict[str, Any]] = [{
-            "role": "user",
-            "content": [
-                {"type": "text", "text": prompt},
-                *extra_content,
-            ],
-        }]
 
         payload: dict[str, Any] = {
             "model": self.model,
@@ -490,6 +532,8 @@ class AnthropicAdapter(ModelAdapter):
         }
         if self.temperature is not None:
             payload["temperature"] = self.temperature
+        if tools:
+            payload["tools"] = tools
 
         # Opus 5.x and Opus 4.8 use adaptive thinking with output_config.effort
         # (4.8 rejects legacy budget_tokens with a 400 pointing at adaptive).
@@ -547,20 +591,45 @@ class AnthropicAdapter(ModelAdapter):
             log.error("Anthropic API error %s: %s", resp.status_code, resp.text[:1000])
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
+        return {
+            "content_blocks": data["content"],
+            "stop_reason": data.get("stop_reason"),
+            "input_tokens": data.get("usage", {}).get("input_tokens", 0),
+            "output_tokens": data.get("usage", {}).get("output_tokens", 0),
+        }
+
+    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+        extra_content: list[dict[str, str]] = []
+        for f in files:
+            if f.is_file() and f.stat().st_size < 50000:
+                extra_content.append({
+                    "type": "text",
+                    "text": f"File: {f.name}\n{f.read_text()}",
+                })
+
+        messages: list[dict[str, Any]] = [{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": prompt},
+                *extra_content,
+            ],
+        }]
+
+        data = self.request(messages)
         content = "".join(
-            c["text"] for c in data["content"] if c["type"] == "text"
+            c["text"] for c in data["content_blocks"] if c["type"] == "text"
         )
         return {
             "content": content,
-            "input_tokens": data.get("usage", {}).get("input_tokens", 0),
-            "output_tokens": data.get("usage", {}).get("output_tokens", 0),
+            "input_tokens": data["input_tokens"],
+            "output_tokens": data["output_tokens"],
         }
 
 
 class OpenAICompatAdapter(ModelAdapter):
     """OpenAI-compatible adapter (works with vLLM, LM Studio, any compatible server)."""
 
-    def __init__(self, model: str, base_url: str, api_key: str = "«redacted:sk-…»", reasoning_effort: str | None = None):
+    def __init__(self, model: str, base_url: str, api_key: str = "EMPTY", reasoning_effort: str | None = None):
         self.model = model
         self.base_url = base_url.rstrip("/")
         # Preserve the version segment (/v1 OpenAI-style, /v4 Zhipu/GLM-style);
@@ -579,28 +648,24 @@ class OpenAICompatAdapter(ModelAdapter):
     def name(self) -> str:
         return self.model
 
-    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+    def request(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None = None,
+    ) -> dict[str, Any]:
+        """Send raw chat messages, optionally with OpenAI-style tool defs.
+
+        Returns {"message", "finish_reason", "input_tokens",
+        "output_tokens"}; complete() flattens this to text-only.
+        """
         import httpx
 
-        # Append workspace files to the prompt (parity with AnthropicAdapter,
-        # which sends them as extra content blocks).
-        file_sections: list[str] = []
-        for f in files:
-            if f.is_file() and f.stat().st_size < 50000:
-                try:
-                    file_sections.append(f"File: {f.name}\n{f.read_text()}")
-                except (UnicodeDecodeError, OSError):
-                    continue
-        full_prompt = prompt
-        if file_sections:
-            full_prompt = prompt + "\n\n### Workspace files\n\n" + "\n\n".join(file_sections)
-
-        messages: list[dict[str, str]] = [{"role": "user", "content": full_prompt}]
-
-        payload = {
+        payload: dict[str, Any] = {
             "model": self.model,
             "messages": messages,
         }
+        if tools:
+            payload["tools"] = tools
         # gpt-5+ models use max_completion_tokens instead of max_tokens
         if self.model.startswith("gpt-5"):
             payload["max_completion_tokens"] = 8192
@@ -668,12 +733,37 @@ class OpenAICompatAdapter(ModelAdapter):
             raise RuntimeError(f"HTTP {resp.status_code if resp else 'none'} after 10 retries")
         resp.raise_for_status()
         data: dict[str, Any] = resp.json()
-        msg = data["choices"][0]["message"]
+        message = data["choices"][0]["message"]
+        return {
+            "message": message,
+            "finish_reason": data["choices"][0].get("finish_reason"),
+            "input_tokens": data.get("usage", {}).get("prompt_tokens", 0),
+            "output_tokens": data.get("usage", {}).get("completion_tokens", 0),
+        }
+
+    def complete(self, prompt: str, files: list[Path]) -> dict[str, Any]:
+        # Append workspace files to the prompt (parity with AnthropicAdapter,
+        # which sends them as extra content blocks).
+        file_sections: list[str] = []
+        for f in files:
+            if f.is_file() and f.stat().st_size < 50000:
+                try:
+                    file_sections.append(f"File: {f.name}\n{f.read_text()}")
+                except (UnicodeDecodeError, OSError):
+                    continue
+        full_prompt = prompt
+        if file_sections:
+            full_prompt = prompt + "\n\n### Workspace files\n\n" + "\n\n".join(file_sections)
+
+        messages: list[dict[str, str]] = [{"role": "user", "content": full_prompt}]
+
+        data = self.request(messages)
+        msg = data["message"]
         content = msg.get("content") or msg.get("reasoning") or ""
         return {
             "content": content,
-            "input_tokens": data.get("usage", {}).get("prompt_tokens", 0),
-            "output_tokens": data.get("usage", {}).get("completion_tokens", 0),
+            "input_tokens": data["input_tokens"],
+            "output_tokens": data["output_tokens"],
         }
 
 
@@ -837,6 +927,9 @@ def _stage_enabled(spec: dict[str, Any], name: str) -> bool:
     return bool(stage_spec.get("enabled", True))
 
 
+GROUNDING_MODES = ("one-shot", "agentic")
+
+
 def run_task(
     task_dir: Path,
     adapter: ModelAdapter,
@@ -845,6 +938,11 @@ def run_task(
     condition: str = "warm",
     judge: Any = None,
     provenance: dict[str, Any] | None = None,
+    grounding: bool = False,
+    *,
+    grounding_client: MCPClient | None = None,
+    grounding_cache: SchemaCache | None = None,
+    grounding_mode: str = "one-shot",
 ) -> list[dict[str, Any]]:
     """Run a single task k times, return results.
 
@@ -877,6 +975,16 @@ def run_task(
 
     import time
 
+    # Reuse one client and cache for every run in this invocation.  ``main``
+    # passes these objects across tasks as well, so a benchmark matrix shares
+    # both the HTTP connection and on-disk schema results.
+    if grounding:
+        if grounding_client is None:
+            grounding_client = MCPClient()
+        if grounding_cache is None:
+            grounding_cache = SchemaCache(ROOT / ".cache" / "schemas")
+        assert grounding_client is not None
+
     for run_idx in range(k):
         # Delay between runs to avoid rate limiting
         if run_idx > 0:
@@ -899,11 +1007,21 @@ def run_task(
             "provenance": run_provenance,
             "stages": {},
         }
+        if grounding and grounding_mode == "one-shot":
+            result["grounding"] = {
+                "discovered_kinds": [],
+                "resolved_kinds": [],
+                "unavailable_kinds": [],
+                "section_chars": 0,
+            }
 
         # Materialize task, invoke model, run validation stages. Wrapped in
         # one try/except so a materialization failure (e.g. the chant
         # node_modules bootstrap's npm install) is recorded on this run's
-        # result instead of crashing the whole matrix.
+        # result instead of crashing the whole matrix. grounding_complete is
+        # set before the try so the except block below always has it defined,
+        # even when materialize_task itself is what failed.
+        grounding_complete = not grounding or grounding_mode == "agentic"
         try:
             task_info = materialize_task(task_dir, workspace, condition)
             prompt = task_info["prompt"]
@@ -920,7 +1038,65 @@ def run_task(
                     continue
                 workspace_files.append(f)
 
-            completion = adapter.complete(prompt, workspace_files)
+            # Invoke model
+            if grounding and grounding_mode == "one-shot":
+                assert grounding_client is not None
+                assert grounding_cache is not None
+                client = grounding_client
+                cache = grounding_cache
+                pairs = discover_kinds(workspace)
+                discovered_kinds = [
+                    f"{api_version}/{kind}" for api_version, kind in pairs
+                ]
+                schemas: dict[tuple[str, str], str] = {}
+                resolved_kinds: list[str] = []
+                unavailable_kinds: list[dict[str, str]] = []
+                for api_version, kind in pairs:
+                    pair = f"{api_version}/{kind}"
+                    try:
+                        schema = cache.get(
+                            kind, api_version, client.get_schema
+                        )
+                    except Exception as exc:
+                        unavailable_kinds.append(
+                            {"pair": pair, "error": _concise_grounding_error(exc)}
+                        )
+                    else:
+                        schemas[(api_version, kind)] = schema
+                        resolved_kinds.append(pair)
+
+                result["grounding"] = {
+                    "discovered_kinds": discovered_kinds,
+                    "resolved_kinds": resolved_kinds,
+                    "unavailable_kinds": unavailable_kinds,
+                    "section_chars": 0,
+                }
+                if unavailable_kinds:
+                    details = "; ".join(
+                        f"{item['pair']}: {item['error']}" for item in unavailable_kinds
+                    )
+                    raise GroundingCoverageError(
+                        f"grounding schema coverage failed: {details}"
+                    )
+
+                if schemas:
+                    section = build_grounding_section(schemas)
+                    prompt = prompt + "\n\n" + section
+                    result["grounding"]["section_chars"] = len(section)
+                grounding_complete = True
+
+            if grounding and grounding_mode == "agentic":
+                assert grounding_client is not None
+                completion = run_agentic_completion(
+                    adapter,
+                    prompt,
+                    workspace_files,
+                    grounding_client,
+                    grounding_cache,
+                )
+                result["agentic"] = completion["agentic"]
+            else:
+                completion = adapter.complete(prompt, workspace_files)
             result["tokens"] = {
                 "input": completion["input_tokens"],
                 "output": completion["output_tokens"],
@@ -1009,8 +1185,19 @@ def run_task(
                     log.warning("Judge failed for %s: %s", task_id, je)
                     result["judge_error"] = str(je)
 
-        except Exception as e:
+        except GroundingCoverageError as e:
             result["error"] = str(e)
+            result["stages"]["lint"] = {"passed": False, "logs": str(e)}
+            result.setdefault("validity", {
+                "valid": False,
+                "reason": "runner_error",
+                "content_length": None,
+                "verdict": "invalid",
+                "reasons": [f"runner_error: {e}"],
+                "checks": {},
+            })
+        except Exception as e:
+            result["error"] = str(e) if grounding_complete else f"grounding failed: {e}"
             result["stages"]["lint"] = {"passed": False, "logs": str(e)}
             result.setdefault("validity", {
                 "valid": False,
@@ -1029,7 +1216,7 @@ def run_task(
     return results
 
 
-def main() -> None:
+def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="IaC/CD Benchmark Runner")
     parser.add_argument("--model", required=True, help="Model identifier")
     parser.add_argument("--model-provider", default="anthropic",
@@ -1041,6 +1228,11 @@ def main() -> None:
     parser.add_argument("--task", help="Single task shortcut")
     parser.add_argument("-k", type=int, default=3, help="Runs per task")
     parser.add_argument("--e2e", action="store_true", help="Include e2e validation tier")
+    parser.add_argument("--grounding", action="store_true",
+                        help="Append upstream schemas to prompts (knr-ops and crossplane only)")
+    parser.add_argument("--grounding-mode", default="one-shot", choices=list(GROUNDING_MODES),
+                        help="Grounding arm: one-shot appends seed schemas to the prompt; "
+                             "agentic lets the model fetch schemas via tools mid-generation")
     parser.add_argument("--condition", default="warm", choices=["warm", "cold"])
     parser.add_argument("--api-key", default=None, help="API key (defaults to env ANTHROPIC_API_KEY)")
     parser.add_argument("--reasoning-effort", default=None,
@@ -1063,13 +1255,23 @@ def main() -> None:
     parser.add_argument("--results-tag", default=None,
                         help="Suffix tag for the results directory (e.g. 'low' -> results/<model>-low/). "
                              "Prevents re-runs with different settings from overwriting prior runs.")
+    return parser
+
+
+def main() -> None:
+    parser = build_parser()
 
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
     # Parse stacks
-    all_stacks = ["knr-ops", "crossplane", "terraform", "pulumi-python", "pulumi-typescript", "chant", "bare"]
-    stacks = [args.stack] if args.stack else (all_stacks if args.stacks == "all" else args.stacks.split(","))
+    stacks = [args.stack] if args.stack else (ALL_STACKS if args.stacks == "all" else args.stacks.split(","))
+    if args.grounding_mode != "one-shot" and not args.grounding:
+        parser.error("--grounding-mode agentic requires --grounding")
+    try:
+        validate_grounding_stacks(stacks, args.grounding, args.condition, args.results_tag)
+    except ValueError as exc:
+        parser.error(str(exc))
 
     # Tooling-health preflight, before a single token is spent. A stage whose
     # binary is absent cannot tell a correct answer from an unchecked one, and
@@ -1132,6 +1334,9 @@ def main() -> None:
         prov_mod.toolchain_fingerprint(preflight_report["toolchain"]),
     )
 
+    grounding_client = MCPClient() if args.grounding else None
+    grounding_cache = SchemaCache(ROOT / ".cache" / "schemas") if args.grounding else None
+
     # Discover tasks
     all_results: list[dict[str, Any]] = []
     for stack in stacks:
@@ -1179,8 +1384,19 @@ def main() -> None:
                 time.sleep(10)
 
             log.info("Running %s/%s (condition=%s)", stack, task_dir.name, args.condition)
-            results = run_task(task_dir, adapter, args.k, args.e2e, args.condition,
-                               judge=rubric_judge, provenance=run_set_provenance)
+            results = run_task(
+                task_dir,
+                adapter,
+                args.k,
+                args.e2e,
+                args.condition,
+                judge=rubric_judge,
+                provenance=run_set_provenance,
+                grounding=args.grounding,
+                grounding_client=grounding_client,
+                grounding_cache=grounding_cache,
+                grounding_mode=args.grounding_mode,
+            )
             all_results.extend(results)
 
             # Write results

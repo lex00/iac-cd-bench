@@ -1,0 +1,38 @@
+{
+  "model": "glm-5.3",
+  "task": "T4-debug",
+  "stack": "knr-ops",
+  "run": 1,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=0\n# SEED REPO: .sops.yaml with WRONG age key (defect)\n# The correct age key is in age-key.txt but this file references a different key\ncreation_rules:\n  - path: '*.yaml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n  - path: '*.yml'\n    age: age1wr0ngk3y1234567890abcdefghijklmnop\n---\n# SEED REPO: knr-ops with SOPS age key defect\n# The defect: .sops.yaml references a different age key than the one in age-key.txt\n# This causes Flux kustomizations to fail to decrypt\n\napiVersion: v1\nkind: Secret\nme\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6uuabzqp/.sops.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 3 resources found in 3 files - Valid: 2, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [
+      "v1/Secret"
+    ],
+    "section_chars": 20062
+  },
+  "tokens": {
+    "input": 5112,
+    "output": 588
+  },
+  "content": "# Fix: SOPS age key reference + kustomize patch target\n\n## 1. Identify the SOPS configuration issue\n\nCheck `.sops.yaml` \u2014 the creation rules point to an age recipient that doesn't match the key in `age-key.txt`:\n\n```yaml\n# .sops.yaml (defective)\ncreation_rules:\n  - path_regex: .*\\.yaml$\n    encrypted_regex: ^(data|stringData)$\n    age: age1WRONGKEY...   # \u2190 doesn't match age-key.txt\n```\n\n## 2. Fix the age key reference\n\n```yaml\n# .sops.yaml (fixed)\ncreation_rules:\n  - path_regex: overlays/.*\\.yaml$\n    encrypted_regex: ^(data|stringData)$\n    age: age1mmngvhy2xuyjd49hdmzg0n6fum5l83u38w5npdd6jpwsuey7fy9svrhspg\n```\n\nThen re-encrypt the secret so its `sops.age` metadata matches:\n\n```bash\nexport SOPS_AGE_KEY_FILE=age-key.txt\nsops --rotate --in-place secret.yaml   # or re-encrypt: sops -e after editing\n```\n\n## 3. Fix the kustomize patch target\n\nThe patch in `overlays/dev/patch.yaml` (and `overlays/prod/`) targets an old resource name. Update its `target` selector to the renamed resource, e.g.:\n\n```yaml\n# overlays/dev/kustomization.yaml\npatches:\n  - path: patch.yaml\n    target:\n      kind: Secret\n      name: db-password        # \u2190 was e.g. \"db-credentials\" (old name)\n```\n\nOr in the patch file itself:\n\n```yaml\napiVersion: v1\nkind: Secret\nmetadata:\n  name: db-password-dev   # must match base/secret.yaml\n  namespace: infra\n```\n\n## 4. Verify\n\n```bash\nexport SOPS_AGE_KEY_FILE=age-key.txt\nkustomize build --enable-alpha-plugins overlays/dev    # or:\nkubectl kustomize overlays/dev | kubectl apply --dry-run=client -f -\n\n# confirm decryption works\nsops --decrypt secret.yaml\n```\n\n**Root cause summary:** the `yaml: line 1: did not find expected key` error occurs because kustomize receives SOPS's *error output / undecrypted ENCM block* instead of valid YAML \u2014 Flux's `kustomization` decrypts with the configured age key first; when decryption fails or returns mangled content, the merge produces invalid YAML. Fixing the age recipient in `.sops.yaml`, re-encrypting the secret, and correcting the patch target makes `kustomize build` succeed and both Flux kustomizations reconcile.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-6uuabzqp/overlays/dev/patch.yaml"
+  ]
+}

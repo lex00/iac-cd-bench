@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1345,
+    "output": 1064
+  },
+  "content": "1. **What reconciles, and in what order?**\n\nAfter merge:\n\n1. Flux\u2019s `GitRepository` source detects/fetches the new commit.\n2. Flux reconciles each affected `Kustomization`.\n3. Kustomize renders the relevant base plus environment overlay.\n4. Flux applies the rendered Kubernetes resources.\n5. ACK controllers observe changes to their custom resources and reconcile AWS asynchronously:\n   - RDS ACK updates the DB instance class.\n   - S3 ACK creates the new bucket.\n6. The Deployment controller scales the prod application to four replicas.\n\nThe exact ordering between RDS, S3, and the application cannot be determined from the repository summary alone. Kubernetes apply order is not a guarantee that AWS provisioning has completed. A deterministic order exists only where the Flux `Kustomization` objects in `flux/kustomizations.yaml` declare `dependsOn` relationships.\n\nFor example, if the graph is cluster \u2192 infrastructure \u2192 application, Flux waits for the cluster kustomization to be Ready before reconciling infrastructure, and for infrastructure to be Ready before reconciling the application. Even then, whether \u201cinfrastructure Ready\u201d means the AWS resource is fully ready depends on ACK status/health checks and the Flux health-check configuration.\n\nEnvironment isolation means the prod replica patch affects only the prod rendering; it does not alter dev.\n\n2. **Does the RDS instance get recreated?**\n\nNormally, **no**. Changing `instanceClass` from `db.t3.micro` to `db.t3.medium` maps to an RDS `ModifyDBInstance` operation. ACK updates the existing AWS DB instance rather than deleting and recreating it.\n\nThe modification may cause a restart or service interruption and may be applied immediately or during the maintenance window, depending on fields such as `applyImmediately` and RDS behavior.\n\nRecreation would only be expected if the changed field were immutable or unsupported for in-place modification, or if the controller could not adopt/update the existing instance. `deletionProtection` protects against deletion, but it is not what makes an instance-class change in-place.\n\n3. **What happens if the S3 manifest is deleted from Git?**\n\nIf the owning Flux `Kustomization` has `prune: true`, Flux deletes the S3 `Bucket` custom resource from Kubernetes. ACK then handles deletion of the corresponding AWS bucket according to its deletion policy:\n\n- With the default delete behavior, ACK attempts to delete the AWS bucket.\n- With an ACK retain/orphan deletion policy, the Kubernetes object is removed but the AWS bucket remains.\n- Bucket deletion can fail if the bucket is non-empty, especially when versioning leaves object versions or delete markers.\n\nThus, Git deletion does **not unconditionally guarantee** successful deletion of the physical bucket. If Flux pruning is disabled, removing the manifest from Git leaves the Kubernetes custom resource\u2014and therefore normally the AWS bucket\u2014untouched.\n\n4. **How does Flux handle the prod-only replica change?**\n\nFlux builds the prod overlay and applies the patch to the app Deployment in that rendered output:\n\n```yaml\nspec:\n  replicas: 4\n```\n\nThe prod Deployment is updated, and Kubernetes scales it to four replicas. The dev overlay is rendered independently and remains at its dev replica count.\n\nFlux continually enforces this desired state. A manual change to the prod Deployment\u2019s replica count will generally be reverted on a later reconciliation, subject to field ownership and any configured drift-handling behavior. If an HPA also manages `spec.replicas`, that ownership interaction would need separate consideration.\n\n5. **What does `dependsOn` do?**\n\n`dependsOn` defines a readiness/reconciliation graph between Flux `Kustomization` objects. It is commonly used to ensure, for example:\n\n- cluster/API prerequisites before workload resources,\n- CRDs and ACK controllers before ACK custom resources,\n- infrastructure before applications.\n\nA dependent kustomization is not reconciled until its dependencies report Ready. If a dependency fails, the dependent reconciliation is blocked and retried later.\n\nIt does **not** by itself:\n\n- order individual resources within one rendered kustomization,\n- create transactional behavior across resources,\n- guarantee that an AWS service is operational unless readiness is reflected in Kubernetes status and included in Flux health checks,\n- force dev and prod to depend on one another.\n\nTherefore, the precise PR delivery order can only be stated after examining the actual `Kustomization.spec.dependsOn`, `healthChecks`/readiness configuration, and `prune` settings in `flux/kustomizations.yaml`."
+}

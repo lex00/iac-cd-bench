@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 658,
+    "output": 649
+  },
+  "content": "1. **Property triggering the DB replacement:**  \n   This cannot be determined from the scenario alone; the Pulumi preview diff or TypeScript/config values are required. In the preview, look under the RDS resource for the property marked as requiring replacement. A common cause here is changing `storageEncrypted` from `false` to `true`, because AWS cannot enable encryption in place. Changes to fields such as `engine`, `identifier`, or some storage settings can also require replacement.\n\n2. **What `pulumi up --target <URN>` skips:**  \n   It applies changes only to the targeted resource(s). Unrelated resources\u2014and dependent resources unless explicitly included or allowed with `--target-dependents`\u2014are not updated, even if the full preview shows changes for them. This can leave the stack temporarily inconsistent, so a subsequent full `pulumi up` is recommended.\n\n3. **Secrets in outputs:**  \n   Pulumi tracks secret values through `Output` propagation. Outputs derived from a secret remain secret, are encrypted in stack state using the stack\u2019s secrets provider, and are redacted in normal CLI output, typically as `[secret]`. They can be deliberately revealed with options such as `pulumi stack output --show-secrets`; authorized deployment code may also receive the plaintext when needed to configure a provider or resource."
+}

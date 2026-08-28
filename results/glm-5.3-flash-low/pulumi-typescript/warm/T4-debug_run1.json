@@ -1,0 +1,35 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T4-debug",
+  "stack": "pulumi-typescript",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[tsc check] tsc: exit=1\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-igq9bwzm/generated_1.ts(1,1): error TS2304: Cannot find name 'bucket'.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-igq9bwzm/generated_1.ts(1,18): error TS7006: Parameter 'arn' implicitly has an 'any' type.\n../../../../../../../var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-igq9bwzm/index.ts(1,25): error TS2307: Cannot find module '"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "============================= test session starts ==============================\nplatform darwin -- Python 3.14.6, pytest-9.1.1, pluggy-1.6.0 -- /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python\nmetadata: {'Python': '3.14.6', 'Platform': 'macOS-26.5.2-arm64-arm-64bit-Mach-O', 'Packages': {'pytest': '9.1.1', 'pluggy': '1.6.0'}, 'Plugins': {'json-report': '1.5.0', 'metadata': '3.1.1', 'anyio': '4.14.2'}}\nrootdir: /Users/shrinedogg/Code/iac-cd-bench\nconfigfile: pyproject.toml\nplugins: json-report-1.5.0, metadata-3.1.1, anyio-4.14.2\ncollecting ... collected 2 items\n\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_no_async_in_index PASSED [ 50%]\n../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-typescript/T4-debug/tests/test_task.py::test_proper_output_handling PASSED [100%]\n\n============================== 2 passed in 0.01s ===============================\n",
+      "passed_count": 2,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1079,
+    "output": 726
+  },
+  "content": "## Fixed `index.ts`\n\n```typescript\nimport * as pulumi from \"@pulumi/pulumi\";\nimport * as aws from \"@pulumi/aws\";\n\nconst config = new pulumi.Config();\nconst env = config.get(\"env\") || \"dev\";\nconst region = config.get(\"region\") || \"us-east-1\";\n\n// S3 Bucket\nconst bucket = new aws.s3.Bucket(\"app-bucket\", {\n    bucket: `myapp-assets-${env}`,\n    versioning: { enabled: true },\n    tags: { Environment: env, Project: \"myapp\" },\n});\n\nexport const bucketUrl = bucket.arn.apply(arn =>\n    `https://s3.${region}.amazonaws.com/${arn}`\n);\n\n// FIX Defect 2: no pulumi.output() wrapping a plaintext literal.\n// Use a stack secret; Pulumi encrypts it in state and never prints it.\nconst dbPassword = config.requireSecret(\"dbPassword\");\n\nconst isProd = env === \"prod\";\n\nconst db = new aws.rds.Instance(\"app-db\", {\n    instanceClass: isProd ? \"db.t3.medium\" : \"db.t3.micro\",\n    engine: \"postgres\",\n    engineVersion: \"16.1\",\n    allocatedStorage: 20,\n    dbName: \"appdb\",\n    username: \"app-user\",\n    password: dbPassword,\n    skipFinalSnapshot: !isProd,\n    deletionProtection: true,\n    multiAz: isProd,\n    storageEncrypted: true,\n    publiclyAccessible: false,\n    backupRetentionPeriod: 7,\n});\n\nexport const dbEndpoint = db.endpoint;\n```\n\n### What was fixed\n\n**Defect 1 \u2014 async misuse (preview crash):**\n- `await` on a `pulumi.Output<string>` doesn't work at preview time \u2014 the value isn't known yet, so awaiting yields unusable intermediate objects/crashes.\n- Replaced `async function getBucketUrl(...)` with `.apply()`, which schedules transformation of the Output correctly for both preview and update:\n\n```typescript\nbucket.arn.apply(arn => `https://.../${arn}`)\n```\n\n- The function returned a raw `Promise`, which was then exported as `bucketEndpoint`. Pulumi's engine only understands Outputs for exports \u2014 Promises are dropped/misserialized. Now the export is a proper Output.\n\n**Defect 2 \u2014 wrong `pulumi.output()` wrapping:**\n- `pulumi.output(\"plain-text-password\")` wraps a *plaintext literal*, giving none of Pulumi's secret protection \u2014 it embeds the password unencrypted in state and prints it in preview diffs.\n- Replaced with `config.requireSecret(\"dbPassword\")`, read from `Pulumi.dev.yaml` / `Pulumi.prod.yaml` where the value is encrypted by the stack's passphrase/KMS secrets provider:\n\n```yaml\n# Pulumi.dev.yaml\nconfig:\n  myproject:dev:dbPassword:\n    secure: AAABAK9... # encrypted\n```\n\n**Bonus fixes to satisfy the acceptance criteria** (spec required, seed violated):\n- `deletionProtection: true`, `backupRetentionPeriod: 7`, `publiclyAccessible: false`, `storageEncrypted: true`\n- Env-differentiated instance class (`db.t3.micro` dev / `db.t3.medium` prod) via stack config values, keeping dev/prod independently deployable (`env === \"prod\"` gates prod-only sizing since both stacks share this program).",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-igq9bwzm/index.ts",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-igq9bwzm/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-igq9bwzm/generated_1.ts"
+  ]
+}

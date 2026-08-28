@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "pulumi-python",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n\nERR: warning: No Python files found under the given path(s)\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 989,
+    "output": 769
+  },
+  "content": "# Pulumi Preview Behavior Analysis\n\n## 1. Which property triggered the replace?\n\nFor RDS PostgreSQL, the preview shows `replace` when a **force-new property** changes \u2014 i.e., one that AWS cannot modify in place. In this scenario, going from dev \u2192 prod sizing, likely culprits:\n\n- `instance_class`: `db.t3.micro` \u2192 `db.t3.medium` \u2014 actually **in-place** for RDS (modify)\n- Most common genuine triggers:\n  - `engine_version` major change (e.g., Postgres 14 \u2192 16) \u2192 replace\n  - `multi_az`? No \u2014 that's a modify, and here it's going single-AZ \u2192 multi-AZ (in-place)\n  - `storage_type`, `allocated_storage` decrease, or\n  - **`backup_retention_period` from 0 \u2192 7** \u2014 modify, not replace\n\nThe classic forced replacement for this scenario is **`availability_zone` / subnet group change**, but most typically for environment promotion it's:\n\n```\n~ aws.rds.Instance: db.t3.micro -> db.t3.medium ... plus engine version bump => REPLACE\n```\n\nThe preview output disambiguates:\n\n- `[replace: urn...::Instance]` diff line shows `~ engineVersion: \"14\" => output<16>` with `(forces replacement)` annotation.\n\nIn the Pulumi Python program, this traces to a config-driven property read via `config.get(\"dbEngineVersion\")` differing between `dev.yaml`/`prod.yaml`. **Check the `.yaml` stack config value feeding the resource's force-new argument \u2014 that's what triggered it.**\n\n## 2. What does `pulumi up --target` skip?\n\n```bash\npulumi up --target urn:pulumi:dev::app::aws:rds/instance:Instance::db\n```\n\n- Only resources whose URNs match the target (and are *dependencies* of it, per `--target-dependents`) are updated.\n- **Everything else is skipped**: the S3 bucket, EKS cluster, IAM user/role, CloudFront distribution, etc. remain at their current state \u2014 no diffs even if they would otherwise need changes.\n- Outputs are still computed/exported, but unaffected resources' operations (`update`, `replace`) are not performed.\n- Warning: skipping a parent/component means skipped children aren't touched either; use exact URNs shown by `pulumi stack`.\n\n## 3. How does Pulumi handle secrets in outputs?\n\nFor the DB connection string (`pulumi.Config.require_secret(\"dbPassword\")`):\n\n1. **State encryption**: Secret values stored in state are encrypted at rest with the stack's secrets provider (Pulumi Cloud managed keys, or passphrase/KMS/GCP KMS). Plaintext never lands in state.\n2. **Export**: `pulumi.export(\"dbConnStr\", db_connection_string.apply(f=lambda s: Output.secret(s)))` \u2014 or any secret-typed Output flows through encrypted.\n3. **CLI behavior**: `pulumi stack output dbConnStr` requires `--show-secrets` to display; otherwise shows `[secret]`.\n4. **Diff redaction**: preview/up output masks secret values as `[secret]`, so the connection string in the DB instance's `master_password` doesn't leak to logs.\n5. **Propagation**: wrapping an output with `Output.secret(...)` marks it secret throughout downstream `.apply()` chains and providers receiving it as input.\n\nKey pitfall (per docs): reading via `config.get()` instead of `config.require_secret()` puts the plaintext into state unencrypted \u2014 exactly what acceptance criterion #3 forbids.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-9zkwsz78/generated_0.txt"
+  ]
+}

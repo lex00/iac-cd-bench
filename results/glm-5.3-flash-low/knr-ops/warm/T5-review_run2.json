@@ -1,0 +1,29 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 762,
+    "output": 577
+  },
+  "content": "# Security Review: PR Diff\n\n## Issues Found\n\n### \ud83d\udd34 CRITICAL \u2014 Public read access on S3 bucket policy\n```json\n{ \"Effect\": \"Allow\", \"Principal\": \"*\", \"Action\": \"s3:GetObject\", \"Resource\": \"arn:aws:s3:::app-assets-prod/*\" }\n```\n- Violates acceptance criterion #1 (\"no public access\").\n- Potential data exposure of application assets; possible compliance impact if any PII/credentials end up in the bucket.\n- **Fix:** Remove the statement. If public assets are genuinely required, serve via CloudFront with Origin Access Control (OAC) and keep the bucket private.\n\n### \ud83d\udd34 CRITICAL \u2014 Plaintext DB password in Deployment env var\n```yaml\nenv:\n- name: DB_PASSWORD\n  value: \"hunter2-production\"\n```\n- Secret committed to Git in plaintext \u2014 violates criterion #3.\n- Once merged, the secret must be considered leaked: rotate credentials even after removal (history persists).\n- **Fix:** SOPS-encrypt the secret (`overlays/prod/secret.enc.yaml`), decrypt via KMS in the Flux KS Source-controller/Kustomize-controller flow, and reference it via `secretKeyRef`. Set `kustomize.config.k8s.io/behavior: create` appropriately or use `configMapGenerator`/`secretGenerator` with SOPS.\n\n### \ud83d\udfe1 WARNING \u2014 Missing container resource limits\n- No requests/limits on app containers \u2192 risk of noisy-neighbor, node OOM evictions affecting other tenants, and no capacity planning.\n- **Fix:** Add `resources.requests` + `resources.limits` to all containers. Dev/prod can differ per overlay.\n\n## Ranking\n\n| Severity | Issue | Blocker? |\n|---|---|---|\n| Critical | S3 public access policy | \u2705 Must fix |\n| Critical | Plaintext password in Git | \u2705 Must fix |\n| Warning | Missing resource limits | Fix before merge (low effort) |\n| Info | RDS instance class change | None \u2014 matches spec |\n\nNote: RDS config looks fine (encrypted multi-AZ is unchanged); verify deletion protection & backup retention weren't touched \u2014 they're not in this diff, which is acceptable.\n\n## Required Before Merge\n\n1. Delete the public-read bucket policy statement; confirm `blockPublicAcls`/`restrictPublicBuckets` remain set.\n2. Replace plaintext env var with SOPS-encrypted secret referenced via `valueFrom.secretKeyRef`, and **rotate the exposed credential**.\n3. Add resource requests/limits to the deployment.\n4. Re-run render/diff validation through konflate so `base` vs `overlays/prod` output is confirmed clean before approval.\n\n**Verdict:** Request changes \u2014 two critical blockers."
+}

@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 529
+  },
+  "content": "## Review: changes requested\n\n### 1. **[Critical] Bucket versioning removal violates the specification**\nThe bucket must remain versioned in both dev and prod. Dropping the versioning configuration will cause Crossplane/AWS to suspend or disable versioning during reconciliation.\n\nThis also weakens recovery from accidental overwrite/deletion and prevents the production cross-region replication requirement from functioning correctly, because S3 replication requires versioning on both source and destination buckets.\n\n**Required fix:** restore explicit versioning on the source buckets and on the production replication destination, for example:\n\n```yaml\nforProvider:\n  versioningConfiguration:\n    - status: Enabled\n```\n\nEnsure the exact field shape matches the installed AWS provider resource version.\n\n---\n\n### 2. **[High] Provider-wide `deletionPolicy: Delete` creates destructive production behavior**\nApplying `deletionPolicy: Delete` to all composed managed resources means deleting or replacing a claim/XR can delete stateful production resources, including the RDS instance and S3 buckets. This conflicts with the RDS deletion-protection requirement and makes a claim/composition migration potentially destructive.\n\nEven where AWS-side deletion protection blocks deletion, Crossplane may remain stuck attempting to remove the resource. For buckets, deletion behavior may also become inconsistent because non-empty/versioned buckets generally cannot be removed without additional cleanup.\n\n**Required fix:** set deletion behavior per resource according to lifecycle risk rather than provider-wide:\n\n- RDS: `deletionPolicy: Orphan`\n- Primary and replication S3 buckets: preferably `deletionPolicy: Orphan`\n- Stateless/reconstructible resources: `Delete` may be appropriate\n- Keep AWS RDS `deletionProtection: true` independently; Crossplane deletion policy is not a substitute\n\nIf the intent is to use `Delete` for dev and `Orphan` for prod, expose this as a constrained composition parameter or use separate environment-specific compositions, with a safe production default.\n\n---\n\nThese are blocking issues: bucket versioning directly fails acceptance criterion 1 and production replication, while blanket deletion introduces unacceptable blast radius for persistent resources."
+}

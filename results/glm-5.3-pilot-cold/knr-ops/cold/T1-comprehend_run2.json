@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[parse all YAML] yq: exit=1\nGitRepository (new commit) \u2192 infra Kustomization (S3, RDS, IAM)\n\nERR: Error: bad file '/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-5wdzls3a/flux/kustomizations.yaml': yaml: line 2, column 3: did not find expected <document start>\n\n[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-5wdzls3a/flux/kustomizations.yaml - failed validation: error unmarshalling resource: error unmarshaling JSON: while decoding JSON: json: cannot unmarshal string into Go value of type map[string]interface {}\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": false,
+      "logs": "flux build kustomizations.yaml: exit=1\nERR: \u2717 invalid resource path \"\"\n"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 961,
+    "output": 1143
+  },
+  "content": "# PR #42 Delivery Behavior Analysis (knr-ops / Flux + kustomize + ACK)\n\n## 1. What reconciles, and in what order?\n\nOn merge, Flux's source-controller polls Git (or receives a webhook), detects the new commit, and updates the `GitRepository` artifact. Every `Kustomization` that watches that source gets an enqueue. Typical ordering per the `flux/kustomizations.yaml` dependency graph:\n\n```\nGitRepository (new commit)\n  \u2192 infra Kustomization (S3, RDS, IAM)     # dependsOn: cluster/CAPI\n  \u2192 app Kustomization (overlays base)      # dependsOn: infra\n```\n\n1. `clusters/eksa` (CAPI) reconciles first if anything changed there \u2014 here it doesn't.\n2. The infra `Kustomization` builds its kustomize target, sees:\n   - modified `infra/rds/instance.yaml` (db.t3.micro \u2192 db.t3.medium)\n   - new `infra/s3/*.yaml`\n   and applies via server-side apply. ACK controllers (`ack-s3-controller`, `ack-rds-controller`) then act on the resulting CRs asynchronously.\n3. The app `Kustomization` for prod rebuilds `overlays/prod` with the new replica patch and patches the Deployment.\n\nNote the *double-hop async*: Flux reconciles CRs into the cluster quickly, but actual AWS resource mutation (RDS resize, bucket creation) happens when the ACK controllers process the CRs \u2014 check `ACK` CR status conditions, not just Flux's \"ReconciliationSucceeded\".\n\n## 2. Does the RDS instance get recreated?\n\n**No \u2014 it's modified in place.** `instanceClass` (DBInstanceClass) maps to an ACK mutable field. The `DBInstance` CR's name/identifier is unchanged, so ACK issues a `ModifyDBInstance` API call, which:\n\n- Triggers an **immediate (or next window) reboot/resize** of the RDS instance\n- Causes a brief outage (single-AZ resize) or a failover (multi-AZ prod \u2014 the spec says prod is multi-AZ, so it fails over rather than drops)\n\nRecreation would only occur if the CR's immutable identity fields changed (e.g., new `dbInstanceIdentifier`, engine change), or the CR were deleted with a deletion policy of `Delete` and recreated. Also note: with the spec's **deletion protection on**, even an explicit delete attempt is blocked at the AWS layer.\n\n## 3. What happens if the S3 bucket manifest is deleted from Git?\n\nDepends on the `deletionPolicy` / finalizer configuration in the ACK `Bucket` CR (or Flux deletion behavior):\n\n- **Default Flux + ACK `Delete` policy:** removing the manifest removes the CR; ACK's finalizer then calls `DeleteBucket` on AWS. It will fail if the bucket is **non-empty** (versioned buckets with objects \u2014 including delete markers \u2014 return `BucketNotEmpty`), leaving the CR stuck in `Terminating` with a finalizer. This is a classic wedge state.\n- **ACK `Retain` policy (`deletionPolicy: Retain`):** CR is removed, AWS bucket persists untouched.\n- GitOps best practice for stateful infra: set `deletionPolicy: Retain` on buckets/RDS so an accidental Git deletion doesn't cascade into data loss.\n\n## 4. How does Flux handle the prod-only replica change?\n\nFlux doesn't deploy \"prod\" directly \u2014 the overlay scoping does it. Presumably there are per-environment Kustomizations (`apps-dev`, `apps-prod`), each pointing at its overlay:\n\n```yaml\npath: ./overlays/dev    # dev KS \u2014 no change, no drift triggered\npath: ./overlays/prod   # prod KS \u2014 new patch: replicas: 4\n```\n\nWhen prod's `Kustomization` builds `overlays/prod`, kustomize merges the patch over `infra/app/deployment.yaml`, producing `replicas: 4`. Flux server-side-applies it; the Deployment controller scales up. Dev is untouched \u2014 it reconciles, sees no diff (manifest hash unchanged), and is a no-op. This satisfies the environment-isolation acceptance criterion: **changing prod does not modify dev state**.\n\n## 5. Role of `dependsOn`\n\n`dependsOn` chains reconciliation ordering at the **Kustomization level**, not the resource level:\n\n- Guarantees CAPI cluster exists and is `Ready` before infra Kustomizations apply ACK CRs (otherwise CRs sit un-reconciled or fail if ACK controllers live in the workload cluster).\n- Guarantees S3/IAM/RDS CRs are applied (ideally `Ready`) before the app Deployment, so the app doesn't start referencing a nonexistent bucket/IAM role.\n- If an upstream Kustomization is unhealthy/failed, Flux **suspends** downstream reconciliation \u2014 a health gate that prevents the app rollout (replicas: 4) if, e.g., the RDS modify is failing.\n\nCaveat: `dependsOn` only gates on the Kustomization's `Ready` health; if ACK CR readiness isn't included in the Kustomization's `healthChecks`, Flux may consider infra healthy before AWS resources actually exist. Idiomatic repos add `healthChecks` referencing the ACK CRs (or rely on CR readiness via policy) to close that gap.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-5wdzls3a/flux/kustomizations.yaml"
+  ]
+}

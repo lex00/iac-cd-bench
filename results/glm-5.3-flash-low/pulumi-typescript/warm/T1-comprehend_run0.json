@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 757
+  },
+  "content": "# Pulumi Preview Behavior \u2014 Q&A\n\n## 1. Which property triggered the replace?\n\nIn a preview, replace-triggering properties are shown explicitly:\n\n```\n~ aws:rds:Instance: app-db (update) [diff: ~instanceType, engineVersion]\n    +-aws:rds:Instance: app-db (replace) [diff: instanceClass]\n```\n\nPulumi annotates the diff with `[diff: <props>]` for the line that causes replacement, and marks it `+-` (create-and-delete). To see exactly why:\n\n```bash\npulumi up --diff            # or preview --diff\npulumi stack export         # inspect raw state + provider metadata\n```\n\n**Key points:**\n- Each resource schema declares which properties are `ForceNew` (in Terraform-bridged providers). Changing one of these triggers replace; others trigger in-place update.\n- In this scenario, likely candidates on RDS: `engine`, `engineVersion` (major), `instanceClass`/`instanceType`, `dbSubnetGroupName`, `identifier`, `multiAz` differences per environment. E.g., changing dev from `db.t3.micro` to another **class** replaces; changing storage or `backupRetentionPeriod` does not.\n- Sensitive/unknown-at-preview values (`pulumi.output(...)`) don't cause replacements themselves.\n\nYou can also use custom timeouts / protection to guard against unwanted replaces (`protect: true`, `retentionPolicy`).\n\n## 2. What does `pulumi up --target` skip?\n\n`--target urn:pulumi:dev::app::aws:rds/instance:Instance::app-db` deploys **only** the named resources. Everything else is skipped:\n\n- No reads, no diffs, no updates performed on non-target resources.\n- However, Pulumi **still evaluates the program top-to-bottom** and may create *new* resources that appear as outputs (it will include any newly registered resources even if not targeted).\n- The target must still be initialized in the state \u2014 you can't target a resource never created.\n- Dependencies of the target: existing URNs referenced as inputs can be passed via `--target-dependents` to also process downstream dependents (not upstream dependencies).\n\nSo in the scenario: targeting only the DB skips the bucket, cluster, IAM, etc.; their current live config might drift with no detection because those resources aren't touched.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- Marked via `pulumi.Output.create(v)` wrapped in `secret` \u2014 e.g., `const dbConn = pulumi.secret(connString)` or `new random.RandomPassword(...).result`.\n- Serialized into state with **encryption**: envelope encryption using the stack's secrets provider (default: cloud-hosted key, e.g., AWS KMS for Pulumi Cloud backend; passphrase for local backends).\n- CLI output displays `ciphertext` / `[secret]`; plaintext only inside encrypted state, retrievable with explicit `pulumi stack output --show-secrets dbPassword` or `pulumi config get --secret`.\n- Secrets **propagate**: applying functions, `.apply()`, and passing into other resources preserves secrecy automatically through Outputs.\n- The DB connection string secret here would follow acceptance criteria #3: defined as `ConfigSecret` / `pulumi.config.getSecret(\"dbConnectionString\")` in `dev.yaml`/`prod.yaml`, encrypted by the configured secrets provider, and consumed as an Output so it never appears in logs or plain state.\n- Turning off requires `pulumi config set --plaintext` or exporting and hand-editing \u2014 secrets are checked as opaque blobs when serializing policy/resource registrations too.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-9ved5b5d/generated_0.txt"
+  ]
+}

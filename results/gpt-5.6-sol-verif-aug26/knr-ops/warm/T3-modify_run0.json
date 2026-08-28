@@ -1,0 +1,32 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T3-modify",
+  "stack": "knr-ops",
+  "run": 0,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[parse all YAML] yq: exit=0\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n# Keep the existing prod resources/components here.\nresources:\n# ...existing entries...\npatches:\n  # Scale only the prod application deployment.\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n  # Crossplane AWS RDS example.\n  - target:\n      group: database.aws.crossplane.io\n      version: v1beta1\n      kind: RDSIn\n[validate CRDs] kubeconform: exit=0\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 0, Skipped: 1\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "kustomize build /var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-t9cutquw/overlays/prod: exit=0"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 796,
+    "output": 1200
+  },
+  "content": "Because the actual resource names, API versions, and CRD schemas are not provided, a buildable patch cannot be written exactly. In particular, S3 replication requires a destination bucket ARN and an IAM replication role, not only a region.\n\nAssuming the base contains:\n\n- `Deployment/app`\n- Crossplane `RDSInstance/app-db`\n- An S3 resource whose schema exposes replication configuration\n- An existing destination bucket and replication IAM role\n\nadd inline patches only to `overlays/prod/kustomization.yaml`, preserving its existing `resources` and other settings:\n\n```yaml\napiVersion: kustomize.config.k8s.io/v1beta1\nkind: Kustomization\n\n# Keep the existing prod resources/components here.\nresources:\n  # ...existing entries...\n\npatches:\n  # Scale only the prod application deployment.\n  - target:\n      group: apps\n      version: v1\n      kind: Deployment\n      name: app\n    patch: |-\n      - op: replace\n        path: /spec/replicas\n        value: 4\n\n  # Crossplane AWS RDS example.\n  - target:\n      group: database.aws.crossplane.io\n      version: v1beta1\n      kind: RDSInstance\n      name: app-db\n    patch: |-\n      - op: replace\n        path: /spec/forProvider/dbInstanceClass\n        value: db.t3.medium\n      - op: replace\n        path: /spec/forProvider/multiAZ\n        value: true\n\n  # Example for a bucket CRD that stores replication on the Bucket resource.\n  # Adjust the API group/version and field paths to the repository's S3 CRD.\n  - target:\n      group: storage.aws.crossplane.io\n      version: v1alpha3\n      kind: Bucket\n      name: app-assets\n    patch: |-\n      - op: add\n        path: /spec/forProvider/replicationConfiguration\n        value:\n          role: arn:aws:iam::<AWS_ACCOUNT_ID>:role/prod-s3-replication\n          rules:\n            - id: replicate-to-us-west-2\n              status: Enabled\n              priority: 1\n              destination:\n                bucketArn: arn:aws:s3:::<PROD_REPLICA_BUCKET_US_WEST_2>\n                region: us-west-2\n```\n\nNotes:\n\n- If a field may not already exist, use `add` rather than `replace`; JSON Patch `replace` fails when the path is absent.\n- Current Upbound AWS providers model replication as a separate `BucketReplicationConfiguration` resource. If that is the repository\u2019s schema, an existing replication resource must be patched. A patch cannot create a missing resource, and the \u201cmodify only `kustomization.yaml`\u201d restriction prevents adding a new manifest.\n- Replace the names, API versions, field paths, role ARN, and destination bucket ARN with those actually present in `clusters/` or `infra/`.\n- Since these patches exist only in `overlays/prod/kustomization.yaml`, rendering `overlays/dev` will remain unchanged. Verify with:\n\n```sh\nkustomize build overlays/dev > /tmp/dev.yaml\nkustomize build overlays/prod > /tmp/prod.yaml\n```",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-knr-ops-t9cutquw/overlays/prod/kustomization.yaml"
+  ]
+}

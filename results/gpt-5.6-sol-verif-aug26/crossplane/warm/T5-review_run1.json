@@ -1,0 +1,29 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 630,
+    "output": 681
+  },
+  "content": "## Review findings\n\n### **Blocker \u2014 Bucket versioning no longer satisfies the specification**\nDropping the bucket versioning configuration means newly created dev and prod buckets may be unversioned. This directly violates Acceptance Criterion 1 and also prevents prod cross-region replication, since S3 replication requires versioning on both source and destination buckets.\n\nRestore an explicit versioning configuration, for example:\n\n```yaml\nspec:\n  forProvider:\n    versioningConfiguration:\n      status: Enabled\n```\n\nEnsure this is applied to:\n\n- Dev assets bucket\n- Prod assets bucket\n- Prod replication destination bucket in `us-west-2`\n\nDo not rely on late initialization or the current state of an existing bucket; claims must produce compliant infrastructure from a fresh deployment.\n\n### **High \u2014 Provider-wide `deletionPolicy: Delete` creates unsafe lifecycle behavior**\nApplying `deletionPolicy: Delete` to every composed managed resource means deleting a claim, composition revision, or environment can delete external production infrastructure, including buckets and databases.\n\nIt also conflicts operationally with required protections:\n\n- RDS deletion protection will cause Crossplane deletion to remain stuck rather than safely orphaning the database.\n- Versioned/non-empty S3 buckets commonly cannot be deleted until all object versions and delete markers are removed, leaving managed resources stuck terminating.\n- A composition refactor that removes a resource can become a destructive infrastructure operation.\n\nUse lifecycle policy per resource rather than provider-wide. Persistent/data-bearing resources should generally be retained:\n\n```yaml\nspec:\n  deletionPolicy: Orphan\n```\n\nAt minimum, use `Orphan` for production RDS instances and S3 buckets. `Delete` can remain explicit for replaceable resources where destruction is intentional. If supported by the installed provider/API version, prefer `managementPolicies` for more precise lifecycle control.\n\n## Verdict\n\n**Request changes.** Restore explicit bucket versioning and avoid applying `deletionPolicy: Delete` indiscriminately to persistent production resources."
+}

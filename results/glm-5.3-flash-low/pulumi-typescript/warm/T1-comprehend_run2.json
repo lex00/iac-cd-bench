@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T1-comprehend",
+  "stack": "pulumi-typescript",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no TypeScript files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 659,
+    "output": 954
+  },
+  "content": "# Pulumi Preview: Replace on the DB\n\n## 1. Which property triggered the replace?\n\nEach AWS resource has specific **ForceNew** properties \u2014 changing them forces replacement rather than an in-place update. In this scenario, likely candidates on the RDS instance:\n\n- **`instanceClass`** \u2014 e.g. dev `db.t3.micro` \u2192 prod-config drift or stack switch. Most common cause.\n- **`engine` / `engineVersion`** (major version changes) \u2014 always replaces.\n- **`dbSubnetGroupName`**, **`availabilityZone`**, or **`storageType`/`allocatedStorage` below minimum** \u2014 replace.\n- Also, in Pulumi specifically, a change to the **auto-naming input** (e.g. resource name string) replaces because the physical name changes.\n\nWhat does *not* trigger replace:\n- `multiAz` \u2014 in-place modification\n- `backupRetentionPeriod`, `deletionProtection` \u2014 in-place\n- `storageEncrypted` \u2014 \u26a0\ufe0f tricky: **cannot be changed after creation**, so flipping it from `false`\u2192`true` forces replace (and existing storage can't be encrypted in place; you'd need a snapshot-copy migration). If prod has `storageEncrypted: true` and it was toggled, that's your replacer.\n- Tags, parameter group association \u2014 in-place.\n\n**How to confirm:** run `pulumi preview --diff` (or check the preview output):\n```\n~ aws:rds/instance:Instance: (replace)\n    [id=prod-db]\n    [urn=...Instance::appDb]\n  ~ instanceClass: \"db.t3.micro\" => \"db.t3.medium\" (forces replacement)\n```\nThe `(replace)` marker plus the explicit *\"forces replacement\"* annotation identifies the exact property. Multiple forcing changes collapse into one replace of the same resource.\n\n## 2. What does `pulumi up --target` skip?\n\n- Only resources matching the given URNs are processed; **everything else is skipped entirely** \u2014 no diffing, no updating, even if drifted.\n- Children are included when you target a parent URN (`--target-references` includes dependents/depends-on resources; add `--target-dependents` for downstream).\n- Skipped means: no new resources created, no pending replaces executed, outputs not recomputed for skipped resources.\n- Caveats:\n  - The targeted resource's dependencies must already exist in state; if you target something whose dependency also needs an update, you must target both explicitly.\n  - `--target` doesn't bypass a pending replacement \u2014 targeting a resource slated for replacement will still perform the replace (destructively unless `--replace` semantics/durability protections apply). Note `preview` supports `--target` too so you can dry-run first.\n  - State continues to record reality only for touched resources; plan fencing (`pulumi deploy --continue-on-error` off by default) keeps untargeted drift out of the deployment.\n\nSo e.g. `pulumi up --target urn:pulumi:prod::spine::aws:rds/instance:Instance::appDb` updates only the DB and skips cluster, bucket, IAM, CloudFront \u2014 even those depending on DB output values won't be re-rendered.\n\n## 3. How does Pulumi handle secrets in outputs?\n\n- Wrap with `pulumi.secret()` or set config via `pulumi config set --secret`; export as `{ secret: pulumi.secret(connString) }`.\n- Any property resolved from a secret-typed input propagates automatically \u2014 outputs are **secret-tracking**: a computed value derived from a secret stays secret without re-wrapping.\n- In state/stack exports the value is stored encrypted (AES-256-GCM with the stack's encryption key, or KMS/secrets provider); CLI displays `ciphertext` or `[secret]`, never plaintext in `pulumi stack output`.\n- Secrets propagate through SDKs to logs/preview diffs as redacted `[secret]` markers.\n- Programmatic consumers: `Output.apply` still sees plaintext in-process (value available to code), but any exported/serialized form remains encrypted.\n- Watch out: interpolating a secret into a non-secret template (`printf`) with a literal prefix can leak the non-secret part into plaintext logs; secretsconfig passphrase mode stores salt locally \u2014 use a managed secrets provider (KMS) for teams.\n\nIn this spec: DB connection string should flow via `pulumi.secret()` config or a generated secret resource, referenced by the app, never committed to `dev.yaml`/`prod.yaml` in plaintext.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-typescript-cve35a9c/generated_0.txt"
+  ]
+}

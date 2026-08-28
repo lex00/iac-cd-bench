@@ -1,0 +1,32 @@
+{
+  "model": "glm-5.3-flash",
+  "task": "T5-review",
+  "stack": "crossplane",
+  "run": 1,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": false,
+      "logs": "[validate CRDs] kubeconform: exit=1\n/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-iksod9te/generated_0.yaml - failed validation: error while parsing: missing 'kind' key\nSummary: 1 resource found in 1 file - Valid: 0, Invalid: 0, Errors: 1, Skipped: 0\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 632,
+    "output": 673
+  },
+  "content": "# Crossplane Composition Diff Review\n\n## Verdict: **Request changes** \u2014 two blocking regressions.\n\n---\n\n## 1. \ud83d\udea8 `deletionPolicy: Delete` added provider-wide\n\n**Severity:** Blocker\n\nSetting `deletionPolicy: Delete` across composed resources changes claim deletion semantics: deleting a Claim will now cascade-delete the underlying managed resources instead of the default `Orphan` (or per-resource `Observe`-first behavior) you'd want for durable infra.\n\nConcrete impact:\n- An accidental `kubectl delete claim` or GitOps-managed claim removal now destroys **RDS and S3 in prod**, not just the Kubernetes object.\n- This directly undermines AC #2's intent (deletion protection as defense-in-depth) \u2014 Crossplane-side behavior should complement RDS `deletionProtection`, not bypass it.\n\n**Recommendation:**\n```yaml\n# Per-resource, intentional only where safe\nresources:\n  - name: bucket-assets\n    base:\n      apiVersion: s3.aws.upbound.io/v1beta2\n      kind: Bucket\n    deletionPolicy: Orphan   # keep data-tier resources on claim delete\n```\nIf someone added this to \"clean up test environments,\" scope it to dev-only via composition patch or environment-specific CompositionRef, never provider-wide.\n\n---\n\n## 2. \ud83d\udea8 Bucket versioning dropped\n\n**Severity:** Blocker \u2014 violates AC #1.\n\nCheck what happened:\n- If removed from the **base resource**: prod *and* dev lose versioning \u2192 no protection against overwrite/deletes, replication (prod cross-region to us-west-2) silently breaks \u2014 S3 CRR requires versioning enabled on both source and destination.\n- If it was moved to an environment overlay: confirm it exists in **both** overlays; a partial move is worse than an explicit rollback because drift is invisible until a restore is needed.\n\n**Fix:**\n```yaml\nversioningConfiguration:\n  status: Enabled\n```\n\n---\n\n## Minor / confirm-while-here\n\n| Item | Check |\n|---|---|\n| Encryption | Still `SSEAlgorithm: AES256`/KMS present? Versioning diffs often touch the same block. |\n| Public access block | Unchanged (`blockPublicAcls/bucketPolicy` all true)? |\n| Env isolation | DeletionPolicy change confirms composition parameters differ per env \u2014 verify dev/prod use separate CompositeResource claims so prod mutation can't affect dev (AC #7). |\n| Diff hygiene | Is `deletionPolicy` change bundled with something innocuous-looking? Commit message should justify it; this one likely got swept into an unrelated PR. |\n\n## Suggested next steps\n\n1. Revert `deletionPolicy: Delete`; re-add per-resource `Orphan` explicitly where data retention matters.\n2. Restore bucket versioning in base (or assert presence in both env patches).\n3. Add a policy check (e.g., Crossplane trace/assertion or CI Rego policy) enforcing `versioning=Enabled`, `deletionProtection=true`, `publicAccessBlock=all-true` on RDS/S3 composites \u2014 so these regressions fail CI rather than review.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-crossplane-iksod9te/generated_0.yaml"
+  ]
+}

@@ -1,0 +1,33 @@
+{
+  "model": "glm-5.3",
+  "task": "T1-comprehend",
+  "stack": "knr-ops",
+  "run": 2,
+  "condition": "cold",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "no YAML files in workspace"
+    },
+    "static": {
+      "passed": true,
+      "logs": "static validation passed"
+    },
+    "semantic": {
+      "passed": true,
+      "logs": "no semantic tests",
+      "passed_count": 0,
+      "total_count": 0,
+      "safety_pass": true
+    }
+  },
+  "grounding": {
+    "kinds": [],
+    "section_chars": 151
+  },
+  "tokens": {
+    "input": 987,
+    "output": 876
+  },
+  "content": "## 1. Reconciliation order after PR #42 merges\n\nFlux watches the repo (via `GitRepository` source). On merge, it snapshots the new revision, then reconciles Kustomizations in dependency order \u2014 driven by `dependsOn` \u2014 typically:\n\n1. **SourceController** fetches the new Git commit \u2192 artifact updated.\n2. **CAPI/CAPA cluster kustomization** (`clusters/eksa`) \u2014 reconciles first if others depend on it (clusters must exist for ACK to run).\n3. **Infra kustomizations** \u2014 `infra/iam`, `infra/s3` (existing + new bucket), `infra/rds` \u2014 usually after cluster. Within a kustomization, apply order among resources is not guaranteed by Flux beyond ownership/namespace ordering; ACK controllers then act asynchronously.\n4. **App/overlay kustomizations** (`overlays/dev`, `overlays/prod`) \u2014 last, since the app depends on infra.\n\nDev and prod kustomizations reconcile independently; only prod's applies the replica patch.\n\n## 2. Does the RDS instance get recreated?\n\n**No.** ACK's RDS controller performs an in-place **modify** of the DB instance. `instanceClass` (DBInstanceClass) maps to a mutable field \u2014 the controller calls the ModifyDBInstance API, causing a brief failover/outage window (multi-AZ: failover; single-AZ: restart). Recreation only happens if an immutable field changed (e.g., engine, storage type on older versions, or `deletionProtection`/finalizer-driven delete). Note: because the manifest is shared, if dev uses the same base file, dev also gets resized unless the overlay patches it \u2014 a common gotcha here.\n\n## 3. What happens if the S3 bucket manifest is deleted from Git?\n\nWith default Flux/ACK behavior, **nothing** \u2014 the bucket is orphaned. Flux/GitOps is not \"garbage collection\": removing a manifest from Git just stops reconciling it. The resource is only deleted if:\n\n- `prune: true` is set on the Kustomization (Flux then deletes the object from the cluster), **and**\n- the ACK controller's finalizer triggers deletion of the cloud resource.\n\nSince the spec requires deletion protection/versioned buckets, and ACK S3 deletion fails if the bucket is non-empty, you'd typically want `prune` enabled carefully, or bucket policies preventing accidental teardown. Deleted-from-Git + `prune: false` (common for stateful infra) = drift: the bucket lives on unmanaged.\n\n## 4. How Flux handles the prod-only replica change\n\nFlux doesn't do selective logic \u2014 kustomize does. The `overlays/prod/kustomization.yaml` includes the base deployment plus a strategic-merge patch setting `replicas: 4`. When Flux reconciles the **prod** Kustomization, kustomize builds base + prod patch and applies a Deployment with `replicas: 4`; kube-controller-manager scales the ReplicaSet. The **dev** Kustomization builds base + dev patch (no such patch), so dev replicas are untouched \u2014 satisfying environment isolation. Caveat: if an HPA manages replicas on the same deployment, there will be a flapping fight between Flux and the HPA.\n\n## 5. Role of `dependsOn`\n\n`dependsOn` in Flux Kustomizations establishes **reconciliation ordering** (not apply-time blocking): a Kustomization only reconciles after its dependencies have a `Ready` condition with the observed revision. Here it ensures:\n\n- infra Kustomizations wait until the CAPI cluster Kustomization is ready (ACK controllers installed/running on the target),\n- app overlays wait until S3/RDS/IAM are ready before deploying the app that consumes the DB secret and bucket.\n\nImportant nuances: it checks Kustomization readiness, **not** the readiness of individual ACK resources (the RDS instance may take 10+ minutes to become available after the Kustomization reports ready); and it does not propagate the dependency's revision freshness \u2014 use `dependsOn` with health checks (`spec.healthChecks` on ACK DBInstance etc.) for true gating."
+}

@@ -1,0 +1,34 @@
+{
+  "model": "gpt-5.6-sol",
+  "task": "T4-debug",
+  "stack": "pulumi-python",
+  "run": 2,
+  "condition": "warm",
+  "stages": {
+    "lint": {
+      "passed": true,
+      "logs": "[ruff check] /Users/shrinedogg/Code/iac-cd-bench/.venv/bin/python: exit=0\nAll checks passed!\n"
+    },
+    "static": {
+      "passed": true,
+      "logs": "NOT FOUND: pulumi"
+    },
+    "semantic": {
+      "passed": false,
+      "logs": "ilt-in method count of str object at 0x783390000>('.apply(')\n     +    where <built-in method count of str object at 0x783390000> = 'import pulumi\\nimport pulumi_aws as aws\\n\\n# SEED REPO: Pulumi Python with secret read as plain string + .apply() misuse\\n# Defect 1: Secret read as plain string (should use config.Secret)\\n# Defect 2: .apply() result used where Output expected\\n\\nconfig = pulumi.Config()\\nenv = config.get(\"env\")\\nregion = config.get(\"region\", \"us-east-1\")\\n\\n# DESTRUCTIVE CHANGE: password read as plain string instead of Secret\\n# Should be: db_password = config.require_secret(\"dbPassword\")\\ndb_password = config.get(\"dbPassword\")  # DEFECT: plain string, not a Secret\\n\\n# S3 Bucket\\nbucket = aws.s3.Bucket(\\n    \"app-bucket\",\\n    bucket=f\"myapp-assets-{env}\",\\n    versioning=aws.s3.BucketVersioningArgs(enabled=True),\\n    tags={\"Environment\": env, \"Project\": \"myapp\"},\\n)\\n\\n# DEFECT: .apply() result used where Output<string> expected\\n# This crashes because .apply() returns None, not a string\\nbucket_url = bucket.arn.apply(lambda arn: f\"https://s3.{region}.amazonaws.com/{arn}\")\\n\\n# RDS Instance\\ndb = aws.rds.Instance(\\n    \"app-db\",\\n    instance_class=\"db.t3.medium\",\\n    engine=\"postgres\",\\n    engine_version=\"16.1\",\\n    allocated_storage=20,\\n    db_name=\"appdb\",\\n    username=\"app-user\",\\n    password=db_password,\\n    skip_final_snapshot=True,\\n    deletion_protection=False,  # Should be True for prod\\n)\\n\\n# Output\\npulumi.export(\"bucketUrl\", bucket_url)\\npulumi.export(\"dbEndpoint\", db.endpoint)\\n'.count\n/Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py:17: AssertionError: Should not overuse .apply() on Output values\n=========================== short test summary info ============================\nFAILED ../../../../../../../Users/shrinedogg/Code/iac-cd-bench/tasks/pulumi-python/T4-debug/tests/test_task.py::test_apply_not_on_output\n========================= 1 failed, 1 passed in 0.01s ==========================\n",
+      "passed_count": 1,
+      "total_count": 2,
+      "pass_threshold": null,
+      "safety_pass": true
+    }
+  },
+  "tokens": {
+    "input": 1005,
+    "output": 1273
+  },
+  "content": "The password must be read with `require_secret()`, which returns an `Output[str]` marked secret. Also, `.apply()` itself returns an `Output`; the shown lambda does return a value, so that specific line would not return `None`. Prefer using the bucket\u2019s regional domain name with `Output.format()` rather than constructing a URL from its ARN.\n\n```python\nimport pulumi\nimport pulumi_aws as aws\n\nconfig = pulumi.Config()\n\nenv = config.require(\"env\")\nif env not in (\"dev\", \"prod\"):\n    raise ValueError(\"env must be either 'dev' or 'prod'\")\n\n# Returns a secret Output[str]. The plaintext value is not exposed to the program.\ndb_password = config.require_secret(\"dbPassword\")\n\ndb_instance_class = \"db.t3.micro\" if env == \"dev\" else \"db.t3.medium\"\n\n# S3 bucket\nbucket = aws.s3.Bucket(\n    \"app-bucket\",\n    bucket=f\"myapp-assets-{env}\",\n    versioning=aws.s3.BucketVersioningArgs(\n        enabled=True,\n    ),\n    server_side_encryption_configuration=(\n        aws.s3.BucketServerSideEncryptionConfigurationArgs(\n            rule=aws.s3.BucketServerSideEncryptionConfigurationRuleArgs(\n                apply_server_side_encryption_by_default=(\n                    aws.s3.BucketServerSideEncryptionConfigurationRuleApplyServerSideEncryptionByDefaultArgs(\n                        sse_algorithm=\"AES256\",\n                    )\n                ),\n            ),\n        )\n    ),\n    tags={\n        \"Environment\": env,\n        \"Project\": \"myapp\",\n    },\n)\n\naws.s3.BucketPublicAccessBlock(\n    \"app-bucket-public-access-block\",\n    bucket=bucket.id,\n    block_public_acls=True,\n    ignore_public_acls=True,\n    block_public_policy=True,\n    restrict_public_buckets=True,\n)\n\n# Output.format preserves Pulumi's asynchronous Output dependency tracking.\nbucket_url = pulumi.Output.format(\n    \"https://{}\",\n    bucket.bucket_regional_domain_name,\n)\n\n# RDS PostgreSQL\ndb = aws.rds.Instance(\n    \"app-db\",\n    instance_class=db_instance_class,\n    engine=\"postgres\",\n    engine_version=\"16.1\",\n    allocated_storage=20,\n    db_name=\"appdb\",\n    username=\"app_user\",\n    password=db_password,\n    multi_az=env == \"prod\",\n    storage_encrypted=True,\n    backup_retention_period=7,\n    publicly_accessible=False,\n    deletion_protection=True,\n    skip_final_snapshot=True,\n    tags={\n        \"Environment\": env,\n        \"Project\": \"myapp\",\n    },\n)\n\npulumi.export(\"bucketUrl\", bucket_url)\npulumi.export(\"dbEndpoint\", db.endpoint)\n```\n\nSet each stack independently:\n\n```bash\npulumi stack select dev\npulumi config set env dev\npulumi config set aws:region us-east-1\npulumi config set dbPassword 'dev-password' --secret\n\npulumi stack select prod\npulumi config set env prod\npulumi config set aws:region us-east-1\npulumi config set dbPassword 'prod-password' --secret\n```\n\nThis stores `dbPassword` as encrypted `secure:` data in `Pulumi.dev.yaml` and `Pulumi.prod.yaml`. Do not use `pulumi config set dbPassword ...` without `--secret`.\n\nIf `.apply()` is needed elsewhere, the callback must return its transformed value:\n\n```python\nbucket_url = bucket.bucket_regional_domain_name.apply(\n    lambda hostname: f\"https://{hostname}\"\n)\n```\n\nThat expression is also an `Output[str]`; it is not a plain string and should not be converted with `str(...)`. Secret values passed through `apply`, `Output.format`, or `Output.concat` remain secret.",
+  "extracted_files": [
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-m4p5qrg1/Pulumi.dev.yaml",
+    "/var/folders/9k/7l8wf7fn55z_jvpwx8rzfyfw0000gn/T/bench-pulumi-python-m4p5qrg1/generated_0.py"
+  ]
+}
