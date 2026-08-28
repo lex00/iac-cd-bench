@@ -46,7 +46,14 @@ def workspace_bin(workspace: Path, name: str) -> str:
     Falls back to the bare name when the workspace has no local install, so an
     ephemeral task workspace still runs rather than failing to launch.
     """
-    local = workspace / "node_modules" / ".bin" / name
+    # Absolute, always. Callers run the binary with `cwd=workspace`, so a
+    # relative path here resolves against the workspace instead of the caller's
+    # directory and the binary is simply not found -- silently, as
+    # "NOT FOUND: <tool>", which reads like a missing toolchain rather than a
+    # path bug. Real runs use absolute temp workspaces so it never surfaced;
+    # anything passing a relative path (a test, a probe, a parallel worker with
+    # its own root) hits it immediately.
+    local = (workspace / "node_modules" / ".bin" / name).resolve()
     return str(local) if local.exists() else name
 
 

@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
+import tempfile
 import logging
 from pathlib import Path
 
@@ -917,7 +919,20 @@ def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
     """
     passed = True
 
-    build_out = workspace / "build" / "manifests.yaml"
+    # Build into a private temp dir, never into the workspace.
+    #
+    # `preflight_chant_golden` runs this gate against `golden-base/chant`
+    # ITSELF, so writing to `<workspace>/build/manifests.yaml` meant writing
+    # into the golden — a shared path every concurrent runner would target at
+    # once. That is the one true race blocking parallel execution: two workers
+    # start, both build, and one reads what the other is mid-write.
+    #
+    # Nothing outside this function reads the artifact; the kubeconform call
+    # below is its only consumer. So a temp dir is strictly better, and it also
+    # stops task workspaces accumulating build output that later stages then
+    # have to ignore.
+    _build_tmp = tempfile.mkdtemp(prefix="chant-build-")
+    build_out = Path(_build_tmp) / "manifests.yaml"
 
     log.info("chant build -f yaml")
     try:
@@ -983,6 +998,7 @@ def _chant_static(workspace: Path, results: list[str]) -> tuple[bool, bool]:
         )
         return passed, False
 
+    shutil.rmtree(_build_tmp, ignore_errors=True)
     passed = _chant_scenarios(workspace, results) and passed
     return passed, True
 
