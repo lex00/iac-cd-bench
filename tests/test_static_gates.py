@@ -268,3 +268,59 @@ def test_chant_gates_never_invoke_a_bare_chant():
             f"{rel} invokes a bare `chant`, which resolves to the global "
             "install rather than the workspace's vendored pin"
         )
+
+
+# --- isolation: nothing may write into a shared path ------------------------
+
+
+def test_no_gate_builds_into_its_workspace():
+    """chant's build artifact must land in a temp dir, not the workspace.
+
+    `preflight_chant_golden` runs the static gate against `golden-base/chant`
+    ITSELF, so `workspace / "build" / "manifests.yaml"` meant writing into the
+    golden — the one genuinely shared mutable path in the harness, and the
+    thing that makes two concurrent runners unsafe: both build, and one reads
+    what the other is mid-write.
+
+    Nothing outside the gate consumes that artifact, so a temp dir costs
+    nothing. `_e2e_chant` had the identical line and was never caught because
+    e2e has never run on any arm (#112).
+    """
+    root = Path(__file__).resolve().parent.parent
+    for rel in ("bench/stages/static.py", "bench/stages/e2e.py"):
+        src = (root / rel).read_text()
+        assert 'workspace / "build"' not in src, (
+            f"{rel} builds into the workspace. When the gate runs against "
+            "golden-base (the preflight does exactly that) this is a write to "
+            "a shared path, and concurrent runners race on it."
+        )
+
+
+def test_node_binaries_are_resolved_out_of_the_workspace():
+    """Neither gate may shell out to a bare `chant` (#106).
+
+    A global @intentius/chant reporting the same version as the vendored one
+    had a different command surface, and provenance recorded the vendored
+    version while the global one executed — indistinguishable after the fact.
+    """
+    root = Path(__file__).resolve().parent.parent
+    for rel in ("bench/stages/static.py", "bench/stages/e2e.py"):
+        src = (root / rel).read_text()
+        assert '["chant"' not in src and "['chant'" not in src, (
+            f"{rel} invokes a bare `chant`, which resolves through PATH to "
+            "whatever is globally installed rather than the vendored pin"
+        )
+
+
+def test_workspace_bin_returns_an_absolute_path(tmp_path):
+    """Callers run the binary with `cwd=workspace`, so a relative path
+    resolves against the workspace instead of the caller and the binary is
+    simply not found — surfacing as `NOT FOUND: <tool>`, which reads as a
+    missing toolchain rather than a path bug."""
+    from bench.stages.lint import workspace_bin
+
+    binp = tmp_path / "node_modules" / ".bin"
+    binp.mkdir(parents=True)
+    (binp / "chant").write_text("#!/bin/sh\n")
+    resolved = workspace_bin(tmp_path, "chant")
+    assert Path(resolved).is_absolute(), f"not absolute: {resolved}"

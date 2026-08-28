@@ -8,9 +8,15 @@ Requires --e2e flag to execute.
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import logging
 import time
 from pathlib import Path
+
+# Module level, not inside a function: `_e2e_chant` needs workspace_bin to
+# resolve the vendored binary rather than PATH (#106). Safe direction — lint
+# imports e2e only lazily, inside a function, so this is not a cycle.
+from bench.stages import lint as lint_mod
 
 log = logging.getLogger(__name__)
 
@@ -253,13 +259,26 @@ def _e2e_chant(workspace: Path, results: list[str]) -> bool:
     cluster (mirrors the knr-ops apply path)."""
     passed = True
 
-    build_out = workspace / "build" / "manifests.yaml"
+    # Both of these are the bugs fixed in _chant_static, which this path
+    # duplicated and which never fired because e2e has never run on any arm
+    # (#112). Fixed here rather than left as a trap for whoever wires it up:
+    #
+    #   * build into a private temp dir, not the workspace. The static gate's
+    #     equivalent wrote into golden-base/chant whenever the preflight ran
+    #     the gate against the golden -- the one shared mutable path in the
+    #     harness, and what makes concurrent runners unsafe.
+    #   * resolve `chant` out of the workspace, never PATH (#106). A global
+    #     @intentius/chant reporting the same version as the vendored one had
+    #     a different command surface, and provenance could not tell them
+    #     apart.
+    build_tmp = tempfile.mkdtemp(prefix="chant-e2e-build-")
+    build_out = Path(build_tmp) / "manifests.yaml"
 
     results.append("Building chant workspace...")
     try:
-        build_out.parent.mkdir(parents=True, exist_ok=True)
         proc = subprocess.run(
-            ["chant", "build", ".", "-f", "yaml", "-o", str(build_out)],
+            [lint_mod.workspace_bin(workspace, "chant"),
+             "build", ".", "-f", "yaml", "-o", str(build_out)],
             capture_output=True, text=True, timeout=60,
             cwd=str(workspace),
         )
