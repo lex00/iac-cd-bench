@@ -1,6 +1,6 @@
 # IaC/CD Understanding Benchmark
 
-Measures how well AI models understand continuous-delivery workflows across five infrastructure-as-code stacks:
+Measures how well AI models understand continuous-delivery workflows across seven infrastructure-as-code stacks:
 
 | Stack | Delivery model | Paradigm |
 |---|---|---|
@@ -9,6 +9,8 @@ Measures how well AI models understand continuous-delivery workflows across five
 | **Terraform** | plan/apply lifecycle + state files | Declarative HCL with state |
 | **Pulumi (Python)** | preview/stack + native Python | General-purpose language + state |
 | **Pulumi (TypeScript)** | preview/stack + native TS | General-purpose language + state |
+| **bare** | plain Kubernetes manifests, kubectl apply only | Plain YAML, kubeconform-validated |
+| **chant** | typed TypeScript compiled to manifests (`chant build`) | TypeScript DSL over Kubernetes kinds |
 
 ## Task Archetypes
 
@@ -21,7 +23,7 @@ Measures how well AI models understand continuous-delivery workflows across five
 
 ## Design
 
-- **One scenario, five stacks**: all stacks implement the same infrastructure spec so results compare tools, not problems.
+- **One scenario, seven stacks**: all stacks implement the same infrastructure spec so results compare tools, not problems.
 - **Four-stage validation ladder**: lint → tool-native static check → structural pytest assertions → live e2e (kind + LocalStack)
 - **knr-ops cold/warm**: tasks run without docs (cold) and with README slices (warm) to measure documentation-driven generalization vs training-data recall
 - **k=3, variance measured rather than assumed**: `temperature=0` is sent only where the adapter's target API accepts it (the OpenAI-compatible adapter's generic and GLM code paths). Anthropic's Claude models never receive an explicit `temperature` — current Claude models reject any value other than the default once extended/adaptive thinking is enabled, so the adapter omits it entirely rather than pass a value some requests would reject. gpt-5+ and kimi/qwen models likewise reject `temperature` and use `reasoning_effort` instead. Since temperature 0 isn't achievable across the whole model matrix, each task runs k=3 times and the **consistency axis** (pass@1 vs pass@3 agreement) reports the actual output variance directly instead of assuming determinism.
@@ -75,8 +77,13 @@ rejected run gets no number anywhere. The rules, and which chant-bench /
 aws-bench mechanism each was ported from, are in
 [docs/result-integrity.md](docs/result-integrity.md).
 
-Every result set under `results/` predates these gates and fails validation
-today. Their numbers should be re-run rather than quoted.
+Of the 29 result sets under `results/`, 19 are refused because they predate the
+provenance stamp (reason `no_provenance`: harness commit, prompt hash, and
+toolchain versions are unrecoverable). The other 10 are publishable but none is
+clean. Each carries partial runs for T1-comprehend and T5-review, where every
+stage is disabled by spec and the run scores on the rubric judge alone.
+Refused sets should be re-run rather than quoted. Use
+`python3 -m bench.validate results/<set> --verbose` to see per-run reasons.
 
 ## Results
 

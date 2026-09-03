@@ -287,8 +287,15 @@ class TerraformGate:
         # model workspace fails for reasons unrelated to its HCL without this.
         # -backend=false keeps it offline: the golden declares an S3 backend.
         init_argv = ("init", "-backend=false", "-input=false", "-no-color")
-        proc = subprocess.run([resolved, *init_argv], capture_output=True,
-                              text=True, timeout=180, cwd=str(workspace))
+        try:
+            proc = subprocess.run([resolved, *init_argv], capture_output=True,
+                                  text=True, timeout=180, cwd=str(workspace))
+        except subprocess.TimeoutExpired:
+            result.checks.append(Check(
+                tool="terraform", argv=init_argv, exit_code=124, examined=0,
+                resolved_path=resolved, detail="timed out",
+            ))
+            return result
         if proc.returncode != 0:
             # init parses and loads the model's HCL before it does anything
             # network-bound, so a bad module reference or an unsupported
@@ -313,8 +320,15 @@ class TerraformGate:
         ))
 
         argv = ("validate", "-no-color")
-        proc = subprocess.run([resolved, *argv], capture_output=True,
-                              text=True, timeout=60, cwd=str(workspace))
+        try:
+            proc = subprocess.run([resolved, *argv], capture_output=True,
+                                  text=True, timeout=60, cwd=str(workspace))
+        except subprocess.TimeoutExpired:
+            result.checks.append(Check(
+                tool="terraform", argv=argv, exit_code=124, examined=0,
+                resolved_path=resolved, detail="timed out",
+            ))
+            return result
         result.checks.append(Check(
             tool="terraform", argv=argv, exit_code=proc.returncode,
             # Files validate() actually parsed. `terraform validate` reports no
@@ -560,8 +574,15 @@ class ChantGate:
             return StageResult(inapplicable=Inapplicable.GATE_DEFECT,
                                reason="kubeconform is not on PATH")
         kargv = ("-summary", *lint_mod.kubeconform_schema_args(), str(build_out))
-        proc = subprocess.run([kubeconform, *kargv], capture_output=True,
-                              text=True, timeout=TIMEOUT)
+        try:
+            proc = subprocess.run([kubeconform, *kargv], capture_output=True,
+                                  text=True, timeout=TIMEOUT)
+        except subprocess.TimeoutExpired:
+            result.checks.append(Check(
+                tool="kubeconform", argv=kargv, exit_code=124, examined=0,
+                resolved_path=kubeconform, detail="timed out",
+            ))
+            return result
         result.checks.append(Check(
             tool="kubeconform", argv=kargv, exit_code=proc.returncode,
             examined=_kubeconform_valid_count(proc.stdout),

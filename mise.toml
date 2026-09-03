@@ -65,18 +65,18 @@ kind = "0.26.0"
 # with "Cannot find package '@intentius/chant-lexicon-k8s'" against
 # golden-base/chant (which has its own node_modules/@intentius/chant-lexicon-k8s
 # already installed), while the *same version* installed as a normal flat
-# global npm package (`npm install -g @intentius/chant@0.46.0`) resolves it
+# global npm package (`npm install -g @intentius/chant@0.49.0`) resolves it
 # without issue. Every actual chant-stack invocation in this codebase
 # (bench/stages/lint.py, bench/stages/static.py, and the per-run node_modules
 # bootstrap in bench/runner.py/bench/stages/e2e.py) shells out to a bare
 # `chant` on PATH with cwd set to the workspace - it depends on whichever
-# `chant` resolves there being able to see that workspace's node_modules, so
-# only a flat global install (or the project-local
-# node_modules/.bin/chant golden-base/chant's own npm install produces)
-# satisfies that. Fall back to a flat global npm install instead:
-# `npm install -g @intentius/chant@0.46.0` (this worktree already has one at
-# that exact version, resolved via nvm's global npm - see the toolchain
-# verification in the #40 re-run report for the confirmed-working path).
+# `chant` resolves there being able to see that workspace's node_modules. The
+# vendored tarballs under golden-base/chant/vendor/ are the source of truth
+# for the measured version; gates resolve `chant` through the workspace's
+# node_modules via `workspace_bin()`. A global
+# `npm install -g @intentius/chant@0.49.0` is only the fallback for when the
+# bootstrap has not run, and a global 0.46.0 would be measured silently through
+# that fallback.
 
 [python.environments]
 default = { require_internet = false }

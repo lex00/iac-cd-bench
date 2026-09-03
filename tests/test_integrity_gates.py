@@ -194,6 +194,8 @@ def test_static_that_did_act_still_reports_a_verdict(tmp_path, monkeypatch):
     and a build stub that echoes back real evidence (a `kind:` line), not
     the bare `_ok_proc` other tests here use for a workspace with nothing
     to build at all."""
+    import shutil
+
     (tmp_path / "configmap.yaml").write_text(
         "apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
     (tmp_path / "kustomization.yaml").write_text("resources:\n  - configmap.yaml\n")
@@ -205,7 +207,13 @@ def test_static_that_did_act_still_reports_a_verdict(tmp_path, monkeypatch):
             stderr = ""
         return _Proc()
 
+    def _fake_which(name):
+        if name in ("kustomize", "flux"):
+            return f"/fake/bin/{name}"
+        return None
+
     monkeypatch.setattr(subprocess, "run", _rendered_proc)
+    monkeypatch.setattr(shutil, "which", _fake_which)
     result = static.run_static(tmp_path, "knr-ops")
     assert result.get("inapplicable") is not True
     assert result["passed"] is True

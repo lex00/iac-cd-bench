@@ -223,3 +223,130 @@ def test_registry_is_documented_as_incomplete():
 
     unmigrated = sorted(set(STACKS) - set(GATES))
     assert len(unmigrated) <= len(STACKS), "registry cannot exceed known stacks"
+
+
+# --- timeout regression tests ------------------------------------------------
+
+
+def test_terraform_gate_init_timeout_recorded_as_check(tmp_path, monkeypatch):
+    """TimeoutExpired on terraform init records a check with exit_code 124
+    instead of raising."""
+    import subprocess
+    import shutil
+    from bench.stages.gates import TerraformGate
+
+    ws = tmp_path / "terraform-ws"
+    ws.mkdir()
+    (ws / "main.tf").write_text(
+        'terraform {\n'
+        '  required_providers {\n'
+        '    aws = { source = "hashicorp/aws", version = "~> 5.0" }\n'
+        '  }\n'
+        '}\n'
+    )
+
+    monkeypatch.setattr(shutil, "which", lambda name: f"/fake/bin/{name}" if name == "terraform" else None)
+
+    def timeout_run(*args, **kwargs):
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(subprocess, "run", timeout_run)
+
+    gate = TerraformGate()
+    result = gate.run(ws)
+
+    assert result.verdict() == "fail"
+    assert len(result.checks) == 1
+    assert result.checks[0].tool == "terraform"
+    assert result.checks[0].exit_code == 124
+    assert result.checks[0].examined == 0
+    assert result.checks[0].argv == ("init", "-backend=false", "-input=false", "-no-color")
+
+
+def test_terraform_gate_validate_timeout_recorded_as_check(tmp_path, monkeypatch):
+    """TimeoutExpired on terraform validate records a check with exit_code 124
+    and preserves the init check."""
+    import subprocess
+    import shutil
+    from bench.stages.gates import TerraformGate
+
+    ws = tmp_path / "terraform-ws"
+    ws.mkdir()
+    (ws / "main.tf").write_text(
+        'terraform {\n'
+        '  required_providers {\n'
+        '    aws = { source = "hashicorp/aws", version = "~> 5.0" }\n'
+        '  }\n'
+        '}\n'
+    )
+
+    monkeypatch.setattr(shutil, "which", lambda name: f"/fake/bin/{name}" if name == "terraform" else None)
+
+    def selective_timeout_run(*args, **kwargs):
+        if "validate" in args[0]:
+            raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout"))
+        # init succeeds
+
+        class _Proc:
+            returncode = 0
+            stdout = ""
+            stderr = ""
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "run", selective_timeout_run)
+
+    gate = TerraformGate()
+    result = gate.run(ws)
+
+    assert len(result.checks) == 2
+    assert result.checks[0].argv == ("init", "-backend=false", "-input=false", "-no-color")
+    assert result.checks[0].exit_code == 0
+    assert result.checks[1].argv == ("validate", "-no-color")
+    assert result.checks[1].exit_code == 124
+    assert result.checks[1].examined == 0
+
+
+def test_chant_gate_kubeconform_timeout_recorded_as_check(tmp_path, monkeypatch):
+    """TimeoutExpired on kubeconform call records a check with exit_code 124
+    and preserves the chant build check."""
+    import subprocess
+    import shutil
+    from bench.stages.gates import ChantGate
+    from bench.stages import lint as lint_mod
+
+    ws = tmp_path / "chant-ws"
+    (ws / "node_modules" / ".bin").mkdir(parents=True, exist_ok=True)
+    (ws / "src").mkdir(exist_ok=True)
+    (ws / "src" / "test.ts").write_text("export const x = 1;")
+
+    # Mock workspace_bin to return a fake chant path
+    monkeypatch.setattr(lint_mod, "workspace_bin",
+                        lambda ws, name: f"/fake/bin/{name}" if name == "chant" else None)
+    monkeypatch.setattr(shutil, "which", lambda name: f"/fake/bin/{name}" if name == "kubeconform" else None)
+
+    def selective_timeout_run(*args, **kwargs):
+        # The gate runs chant build first, then kubeconform on its output.
+        if args[0][0] == "/fake/bin/chant":
+            build_out = ws / "build" / "manifests.yaml"
+            build_out.parent.mkdir(parents=True, exist_ok=True)
+            build_out.write_text("apiVersion: v1\nkind: ConfigMap\nmetadata:\n  name: x\n")
+
+            class _Proc:
+                returncode = 0
+                stdout = ""
+                stderr = ""
+            return _Proc()
+        raise subprocess.TimeoutExpired(cmd=args[0], timeout=kwargs.get("timeout"))
+
+    monkeypatch.setattr(subprocess, "run", selective_timeout_run)
+
+    gate = ChantGate()
+    result = gate.run(ws)
+
+    # Should have two checks: chant build and kubeconform
+    assert len(result.checks) == 2
+    assert result.checks[0].tool == "chant"
+    assert result.checks[0].exit_code == 0
+    assert result.checks[1].tool == "kubeconform"
+    assert result.checks[1].exit_code == 124
+    assert result.checks[1].examined == 0
